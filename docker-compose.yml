@@ -1,0 +1,19 @@
+# NginUX — runs anywhere Docker runs (Windows, Linux, NAS, macOS).
+#   docker compose up -d   →   UI at http://localhost:4600
+services:
+  nginux:
+    build: .
+    image: nginux:0.1.0
+    container_name: nginux
+    restart: unless-stopped
+    ports:
+      - "4600:4600" # control-plane UI + API
+      - "80:80" # proxied HTTP traffic (data plane)
+      - "443:443" # proxied HTTPS traffic (data plane)
+    volumes:
+      - nginux-data:/data # sqlite db, generated nginx config, certs
+    environment:
+      - LOG_LEVEL=info
+
+volumes:
+  nginux-data:

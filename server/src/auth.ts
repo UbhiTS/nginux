@@ -1,0 +1,317 @@
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { db, getSettings } from "./db.ts";
+import { listHosts } from "./repo.ts";
+import { generateSecret } from "./totp.ts";
+import { emitEvent } from "./events.ts";
+
+export type Role = "admin" | "editor" | "readonly" | "scoped";
+
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  role: Role;
+  scope: string;
+  twofaEnabled: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+const SESSION_COOKIE = "nginux_session";
+const SESSION_TTL_MS = 7 * 86400_000;
+
+// ---------- password hashing (scrypt) ----------
+export function hashPassword(password: string): string {
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, 64);
+  return `${salt.toString("hex")}:${hash.toString("hex")}`;
+}
+
+export function verifyPassword(password: string, stored: string): boolean {
+  const [saltHex, hashHex] = stored.split(":");
+  if (!saltHex || !hashHex) return false;
+  const hash = scryptSync(password, Buffer.from(saltHex, "hex"), 64);
+  const expected = Buffer.from(hashHex, "hex");
+  return hash.length === expected.length && timingSafeEqual(hash, expected);
+}
+
+// ---------- user mapping ----------
+type Row = Record<string, unknown>;
+function toUser(r: Row): User {
+  return {
+    id: String(r.id),
+    username: String(r.username),
+    email: String(r.email),
+    role: r.role as Role,
+    scope: String(r.scope),
+    twofaEnabled: !!r.twofaEnabled,
+    createdAt: String(r.createdAt),
+    lastLoginAt: r.lastLoginAt ? String(r.lastLoginAt) : null,
+  };
+}
+
+export function listUsers(): User[] {
+  return (db.prepare("SELECT * FROM users ORDER BY createdAt").all() as Row[]).map(toUser);
+}
+
+export function getUserById(id: string): User | null {
+  const r = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as Row | undefined;
+  return r ? toUser(r) : null;
+}
+
+function getRawByUsername(username: string): Row | undefined {
+  return db.prepare("SELECT * FROM users WHERE username = ?").get(username) as Row | undefined;
+}
+
+export function createUser(input: {
+  username: string;
+  email?: string;
+  password: string;
+  role?: Role;
+  scope?: string;
+}): User {
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO users (id, username, email, passwordHash, role, scope, twofaEnabled, backupCodes, createdAt)
+     VALUES (?,?,?,?,?,?,0,'[]',?)`,
+  ).run(
+    id,
+    input.username,
+    input.email ?? "",
+    hashPassword(input.password),
+    input.role ?? "readonly",
+    input.scope ?? "",
+    new Date().toISOString(),
+  );
+  return getUserById(id)!;
+}
+
+export function deleteUser(id: string): boolean {
+  return db.prepare("DELETE FROM users WHERE id = ?").run(id).changes > 0;
+}
+
+// ---------- 2FA ----------
+export function beginTwofaSetup(userId: string): { secret: string } {
+  const secret = generateSecret();
+  db.prepare("UPDATE users SET twofaSecret = ? WHERE id = ?").run(secret, userId);
+  return { secret };
+}
+
+export function getTwofaSecret(userId: string): string | null {
+  const r = db.prepare("SELECT twofaSecret FROM users WHERE id = ?").get(userId) as Row | undefined;
+  return r?.twofaSecret ? String(r.twofaSecret) : null;
+}
+
+export function enableTwofa(userId: string): string[] {
+  const codes = Array.from({ length: 8 }, () => randomBytes(4).toString("hex"));
+  db.prepare("UPDATE users SET twofaEnabled = 1, backupCodes = ? WHERE id = ?").run(
+    JSON.stringify(codes),
+    userId,
+  );
+  return codes;
+}
+
+export function userNeeds2fa(username: string): boolean {
+  const r = getRawByUsername(username);
+  return !!r && !!r.twofaEnabled;
+}
+
+// ---------- credential check ----------
+export function checkCredentials(username: string, password: string): Row | null {
+  const r = getRawByUsername(username);
+  if (!r) return null;
+  return verifyPassword(password, String(r.passwordHash)) ? r : null;
+}
+
+// ---------- sessions ----------
+export function createSession(userId: string, device: string, ip: string): string {
+  const token = randomBytes(32).toString("hex");
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO sessions (token, userId, device, ip, createdAt, expiresAt) VALUES (?,?,?,?,?,?)",
+  ).run(
+    token,
+    userId,
+    device,
+    ip,
+    new Date(now).toISOString(),
+    new Date(now + SESSION_TTL_MS).toISOString(),
+  );
+  db.prepare("UPDATE users SET lastLoginAt = ? WHERE id = ?").run(new Date(now).toISOString(), userId);
+  return token;
+}
+
+export function userForSession(token: string | undefined): User | null {
+  if (!token) return null;
+  const s = db.prepare("SELECT * FROM sessions WHERE token = ?").get(token) as Row | undefined;
+  if (!s) return null;
+  if (Date.parse(String(s.expiresAt)) < Date.now()) {
+    destroySession(token);
+    return null;
+  }
+  return getUserById(String(s.userId));
+}
+
+export function destroySession(token: string): void {
+  db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+}
+
+export function listSessions(): Array<{ token: string; userId: string; username: string; device: string; ip: string; lastActive: string }> {
+  const rows = db
+    .prepare(
+      `SELECT s.token, s.userId, s.device, s.ip, s.createdAt, u.username
+       FROM sessions s JOIN users u ON u.id = s.userId ORDER BY s.createdAt DESC`,
+    )
+    .all() as Row[];
+  return rows.map((r) => ({
+    token: String(r.token),
+    userId: String(r.userId),
+    username: String(r.username),
+    device: String(r.device),
+    ip: String(r.ip),
+    lastActive: String(r.createdAt),
+  }));
+}
+
+// ---------- cookies ----------
+export function parseCookie(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  for (const part of header.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k) out[k] = decodeURIComponent(v.join("="));
+  }
+  return out;
+}
+
+export function sessionCookie(token: string): string {
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}`;
+}
+export function clearCookie(): string {
+  return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`;
+}
+export { SESSION_COOKIE };
+
+// ---------- audit log ----------
+export interface AuditEvent {
+  id: number;
+  ts: string;
+  type: string;
+  severity: "info" | "notice" | "warn" | "danger";
+  actor: string;
+  summary: string;
+  ip: string;
+  meta: Record<string, unknown>;
+}
+
+export function logEvent(e: Omit<AuditEvent, "id" | "ts"> & { ts?: string }): void {
+  db.prepare(
+    "INSERT INTO audit_events (ts, type, severity, actor, summary, ip, meta) VALUES (?,?,?,?,?,?,?)",
+  ).run(
+    e.ts ?? new Date().toISOString(),
+    e.type,
+    e.severity,
+    e.actor,
+    e.summary,
+    e.ip ?? "",
+    JSON.stringify(e.meta ?? {}),
+  );
+  // Stream to SSE subscribers + webhooks (skip backdated seed events).
+  if (!e.ts) emitEvent(e.type, { actor: e.actor, summary: e.summary, severity: e.severity, ip: e.ip, ...e.meta });
+}
+
+export function listEvents(opts: { type?: string; limit?: number } = {}): AuditEvent[] {
+  const limit = opts.limit ?? 100;
+  const rows = opts.type
+    ? (db.prepare("SELECT * FROM audit_events WHERE type LIKE ? ORDER BY id DESC LIMIT ?").all(opts.type + "%", limit) as Row[])
+    : (db.prepare("SELECT * FROM audit_events ORDER BY id DESC LIMIT ?").all(limit) as Row[]);
+  return rows.map((r) => ({
+    id: Number(r.id),
+    ts: String(r.ts),
+    type: String(r.type),
+    severity: r.severity as AuditEvent["severity"],
+    actor: String(r.actor),
+    summary: String(r.summary),
+    ip: String(r.ip),
+    meta: JSON.parse(String(r.meta)),
+  }));
+}
+
+// ---------- security posture ----------
+export function securityExposure() {
+  return listHosts().map((h) => ({
+    id: h.id,
+    name: h.name,
+    emoji: h.emoji,
+    domain: h.domain,
+    https: h.ssl,
+    login: h.requireLogin,
+    twofa: h.require2fa,
+    countryLock: h.countryLock,
+    wellProtected: h.ssl && h.requireLogin,
+  }));
+}
+
+export function securityOverview() {
+  const hosts = listHosts();
+  const exposed = hosts.length;
+  const unprotected = hosts.filter((h) => h.ssl && !h.requireLogin).length;
+  const noCountry = hosts.filter((h) => !h.countryLock).length;
+  // simple posture score: start at 100, subtract for gaps
+  let score = 100;
+  score -= unprotected * 8;
+  score -= noCountry * 2;
+  score = Math.max(40, Math.min(100, score));
+  const failed24h = (
+    db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM audit_events WHERE type = 'login.failed' AND ts > ?",
+      )
+      .get(new Date(Date.now() - 86400_000).toISOString()) as Row
+  ).n as number;
+  return {
+    score,
+    rating: score >= 90 ? "Strong" : score >= 70 ? "Good" : "Needs work",
+    exposed,
+    unprotected,
+    failedLogins24h: failed24h,
+    activeSessions: (db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as Row).n as number,
+  };
+}
+
+// ---------- seed ----------
+export function seedAuthIfEmpty(): { adminPassword?: string } {
+  const count = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as Row).n as number;
+  if (count > 0) return {};
+
+  const adminPassword = process.env.NGINUX_ADMIN_PASSWORD ?? "changeme";
+  const now = new Date().toISOString();
+  const settings = getSettings();
+
+  const admin = createUser({
+    username: "tarun",
+    email: settings.letsEncryptEmail || "admin@example.com",
+    password: adminPassword,
+    role: "admin",
+  });
+
+  // demo accounts so Users & Access isn't empty (2FA pre-enabled on some)
+  const priya = createUser({ username: "priya", email: "priya@home", password: randomBytes(9).toString("hex"), role: "editor" });
+  const media = createUser({ username: "media", email: "shared device", password: randomBytes(9).toString("hex"), role: "scoped", scope: "plex, ha" });
+  createUser({ username: "guest", email: "temporary access", password: randomBytes(9).toString("hex"), role: "readonly" });
+  for (const u of [priya, media]) {
+    beginTwofaSetup(u.id);
+    enableTwofa(u.id);
+  }
+
+  // A little history so Login activity / events aren't empty on first run.
+  const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+  logEvent({ type: "login.success", severity: "info", actor: "tarun", summary: "Signed in with password", ip: "203.0.113.10", meta: { location: "Home, CA" }, ts: ago(6) });
+  logEvent({ type: "login.success", severity: "notice", actor: "priya", summary: "Signed in from a new device", ip: "203.0.113.45", meta: { location: "Pune, IN", newDevice: true }, ts: ago(3) });
+  logEvent({ type: "login.failed", severity: "danger", actor: "admin", summary: "47 failed logins — IP auto-banned", ip: "198.51.100.211", meta: { location: "Russia", count: 47 }, ts: ago(2) });
+  logEvent({ type: "host.updated", severity: "notice", actor: "tarun", summary: "Disabled login on cloud.ubhi.io", ip: "203.0.113.10", meta: {}, ts: ago(12) });
+  logEvent({ type: "system.seed", severity: "info", actor: "system", summary: "Initial admin and demo accounts created", ip: "", meta: {} });
+  void now;
+  return { adminPassword };
+}

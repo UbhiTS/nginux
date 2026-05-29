@@ -1,0 +1,42 @@
+# dependencies & build output
+node_modules/
+dist/
+web/dist/
+
+# logs
+*.log
+
+# secrets / local env — NEVER commit
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+*.sqlite
+*.sqlite-*
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# editor / tooling local state
+.claude/
+.vscode/
+.idea/
+
+# internal design artifacts (kept local, not published)
+mockup.html
+NginUI-PRD.md
+
+# NginUX runtime data (sqlite db, password hashes, 2FA secrets, certs, client CAs)
+data/
+server/data/
+
+# generated nginx artifacts (regenerated at runtime / in the container)
+nginx/conf.d/*.conf
+nginx/stream.d/*.conf
+nginx/banned.conf
+!nginx/conf.d/.gitkeep
+!nginx/stream.d/.gitkeep
