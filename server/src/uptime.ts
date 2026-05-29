@@ -97,19 +97,30 @@ export function startUptimeMonitor() {
   // health instead of probing unreachable IPs. In prod, do real TCP probes.
   const demo = process.env.NODE_ENV !== "production" && process.env.NGINUX_REAL_PROBES !== "1";
 
+  let running = false;
   const tick = async () => {
-    for (const h of listHosts()) {
+    if (running) return; // never overlap sweeps
+    running = true;
+    try {
+      const hosts = listHosts();
       if (demo) {
-        const up = h.health !== "down";
-        push(h.id, up, up ? 20 + Math.floor(Math.random() * 120) : 0);
+        for (const h of hosts) {
+          const up = h.health !== "down";
+          push(h.id, up, up ? 20 + Math.floor(Math.random() * 120) : 0);
+        }
       } else {
-        const { up, ms } = await probe(h.forwardHost, h.forwardPort, 4000);
-        recordCheck(h.id, up, ms);
+        // Probe all hosts concurrently so one slow/down host can't stall the sweep.
+        await Promise.all(hosts.map(async (h) => {
+          const { up, ms } = await probe(h.forwardHost, h.forwardPort, 4000);
+          recordCheck(h.id, up, ms);
+        }));
       }
+    } finally {
+      running = false;
     }
   };
   void tick();
-  setInterval(tick, 15000).unref?.();
+  setInterval(() => void tick(), 15000).unref?.();
 
   // Seed one synthetic past incident in demo so the UI has history.
   if (demo) {

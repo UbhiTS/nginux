@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { db, getSettings } from "./db.ts";
 import { listHosts } from "./repo.ts";
 import { generateSecret } from "./totp.ts";
@@ -19,6 +19,10 @@ export interface User {
 
 const SESSION_COOKIE = "nginux_session";
 const SESSION_TTL_MS = 7 * 86400_000;
+const IS_PROD = process.env.NODE_ENV === "production";
+// A fixed bogus hash so an unknown username still costs one scrypt — closes the
+// timing oracle that would otherwise reveal which usernames exist.
+const DUMMY_HASH = hashPassword("nginux-dummy-password-for-constant-time");
 
 // ---------- password hashing (scrypt) ----------
 export function hashPassword(password: string): string {
@@ -102,13 +106,33 @@ export function getTwofaSecret(userId: string): string | null {
   return r?.twofaSecret ? String(r.twofaSecret) : null;
 }
 
+const hashCode = (c: string) => createHash("sha256").update(c).digest("hex");
+
 export function enableTwofa(userId: string): string[] {
-  const codes = Array.from({ length: 8 }, () => randomBytes(4).toString("hex"));
+  // Show the user strong (80-bit) codes once; store only their hashes at rest.
+  const codes = Array.from({ length: 8 }, () => randomBytes(10).toString("hex"));
   db.prepare("UPDATE users SET twofaEnabled = 1, backupCodes = ? WHERE id = ?").run(
-    JSON.stringify(codes),
+    JSON.stringify(codes.map(hashCode)),
     userId,
   );
   return codes;
+}
+
+/** Consume a one-time backup code (constant-time match); true if it was valid. */
+export function useBackupCode(userId: string, code: string): boolean {
+  const r = db.prepare("SELECT backupCodes FROM users WHERE id = ?").get(userId) as Row | undefined;
+  if (!r?.backupCodes) return false;
+  const stored: string[] = JSON.parse(String(r.backupCodes));
+  const target = Buffer.from(hashCode(code.trim()), "hex");
+  let matchIdx = -1;
+  stored.forEach((h, i) => {
+    const buf = Buffer.from(h, "hex");
+    if (buf.length === target.length && timingSafeEqual(buf, target)) matchIdx = i;
+  });
+  if (matchIdx === -1) return false;
+  stored.splice(matchIdx, 1);
+  db.prepare("UPDATE users SET backupCodes = ? WHERE id = ?").run(JSON.stringify(stored), userId);
+  return true;
 }
 
 export function userNeeds2fa(username: string): boolean {
@@ -119,8 +143,9 @@ export function userNeeds2fa(username: string): boolean {
 // ---------- credential check ----------
 export function checkCredentials(username: string, password: string): Row | null {
   const r = getRawByUsername(username);
-  if (!r) return null;
-  return verifyPassword(password, String(r.passwordHash)) ? r : null;
+  // Always run one scrypt so unknown vs. known usernames take the same time.
+  const ok = verifyPassword(password, r ? String(r.passwordHash) : DUMMY_HASH);
+  return r && ok ? r : null;
 }
 
 // ---------- sessions ----------
@@ -184,12 +209,19 @@ export function parseCookie(header: string | undefined): Record<string, string> 
   return out;
 }
 
+// `Secure` in production (the control plane must be served over HTTPS); left
+// off in dev so http://localhost still works. Override with NGINUX_SECURE_COOKIES.
+const SECURE_COOKIE = process.env.NGINUX_SECURE_COOKIES
+  ? process.env.NGINUX_SECURE_COOKIES === "1" || process.env.NGINUX_SECURE_COOKIES === "true"
+  : IS_PROD;
+const secureFlag = SECURE_COOKIE ? "; Secure" : "";
+
 export function sessionCookie(token: string): string {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}`;
+  return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}${secureFlag}`;
 }
 export function clearCookie(): string {
-  return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`;
+  return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secureFlag}`;
 }
 export { SESSION_COOKIE };
 
@@ -285,33 +317,36 @@ export function seedAuthIfEmpty(): { adminPassword?: string } {
   const count = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as Row).n as number;
   if (count > 0) return {};
 
-  const adminPassword = process.env.NGINUX_ADMIN_PASSWORD ?? "changeme";
-  const now = new Date().toISOString();
+  // In production never ship a static default — require an explicit password or
+  // generate a strong random one (logged once on first boot so it can be reset).
+  const adminPassword = process.env.NGINUX_ADMIN_PASSWORD
+    ?? (IS_PROD ? randomBytes(12).toString("base64url") : "changeme");
+  const generated = !process.env.NGINUX_ADMIN_PASSWORD && IS_PROD;
   const settings = getSettings();
 
-  const admin = createUser({
+  createUser({
     username: "tarun",
     email: settings.letsEncryptEmail || "admin@example.com",
     password: adminPassword,
     role: "admin",
   });
 
-  // demo accounts so Users & Access isn't empty (2FA pre-enabled on some)
-  const priya = createUser({ username: "priya", email: "priya@home", password: randomBytes(9).toString("hex"), role: "editor" });
-  const media = createUser({ username: "media", email: "shared device", password: randomBytes(9).toString("hex"), role: "scoped", scope: "plex, ha" });
-  createUser({ username: "guest", email: "temporary access", password: randomBytes(9).toString("hex"), role: "readonly" });
-  for (const u of [priya, media]) {
-    beginTwofaSetup(u.id);
-    enableTwofa(u.id);
+  // Demo accounts + sample history are for dev/screenshots only — never seed
+  // functional extra accounts (with stored TOTP secrets) into a real deployment.
+  if (!IS_PROD) {
+    const priya = createUser({ username: "priya", email: "priya@home", password: randomBytes(9).toString("hex"), role: "editor" });
+    const media = createUser({ username: "media", email: "shared device", password: randomBytes(9).toString("hex"), role: "scoped", scope: "plex, ha" });
+    createUser({ username: "guest", email: "temporary access", password: randomBytes(9).toString("hex"), role: "readonly" });
+    for (const u of [priya, media]) {
+      beginTwofaSetup(u.id);
+      enableTwofa(u.id);
+    }
+    const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    logEvent({ type: "login.success", severity: "info", actor: "tarun", summary: "Signed in with password", ip: "203.0.113.10", meta: { location: "Home, CA" }, ts: ago(6) });
+    logEvent({ type: "login.success", severity: "notice", actor: "priya", summary: "Signed in from a new device", ip: "203.0.113.45", meta: { location: "Pune, IN", newDevice: true }, ts: ago(3) });
+    logEvent({ type: "login.failed", severity: "danger", actor: "admin", summary: "47 failed logins — IP auto-banned", ip: "198.51.100.211", meta: { location: "Russia", count: 47 }, ts: ago(2) });
+    logEvent({ type: "host.updated", severity: "notice", actor: "tarun", summary: "Disabled login on cloud.ubhi.io", ip: "203.0.113.10", meta: {}, ts: ago(12) });
   }
-
-  // A little history so Login activity / events aren't empty on first run.
-  const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
-  logEvent({ type: "login.success", severity: "info", actor: "tarun", summary: "Signed in with password", ip: "203.0.113.10", meta: { location: "Home, CA" }, ts: ago(6) });
-  logEvent({ type: "login.success", severity: "notice", actor: "priya", summary: "Signed in from a new device", ip: "203.0.113.45", meta: { location: "Pune, IN", newDevice: true }, ts: ago(3) });
-  logEvent({ type: "login.failed", severity: "danger", actor: "admin", summary: "47 failed logins — IP auto-banned", ip: "198.51.100.211", meta: { location: "Russia", count: 47 }, ts: ago(2) });
-  logEvent({ type: "host.updated", severity: "notice", actor: "tarun", summary: "Disabled login on cloud.ubhi.io", ip: "203.0.113.10", meta: {}, ts: ago(12) });
-  logEvent({ type: "system.seed", severity: "info", actor: "system", summary: "Initial admin and demo accounts created", ip: "", meta: {} });
-  void now;
-  return { adminPassword };
+  logEvent({ type: "system.seed", severity: "info", actor: "system", summary: "Initial admin account created", ip: "", meta: {} });
+  return { adminPassword: generated ? adminPassword : process.env.NGINUX_ADMIN_PASSWORD ? undefined : adminPassword };
 }

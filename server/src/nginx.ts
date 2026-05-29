@@ -15,6 +15,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONF_DIR = process.env.NGINX_CONF_DIR ?? join(__dirname, "..", "..", "nginx", "conf.d");
 const STREAM_DIR = process.env.NGINX_STREAM_DIR ?? join(__dirname, "..", "..", "nginx", "stream.d");
 const NGINX_BIN = process.env.NGINX_BIN ?? "nginx";
+// Where nginx reaches the control plane for forward-auth (same container).
+const CONTROL_URL = process.env.NGINUX_CONTROL_URL ?? "http://127.0.0.1:4600";
+const FORWARD_SECRET = process.env.NGINUX_FORWARD_SECRET ?? "";
 
 /** Generate a stream (TCP/UDP) server block. Lives in the nginx `stream {}` context. */
 export function generateStreamConfig(h: ProxyHost): string {
@@ -134,11 +137,24 @@ export function generateHostConfig(h: ProxyHost): string {
     proxy_set_header Connection "upgrade";`
     : "";
 
-  // Forward-auth gate (Phase 2 wires the real auth service; directive is ready).
+  // Forward-auth gate: ask the control plane whether the session may pass.
   const authBlock = h.requireLogin
     ? `
     # Require NginUX login before reaching the app
     auth_request /__nginux_auth;`
+    : "";
+  // The internal location auth_request calls; passes the original host so the
+  // control plane can enforce per-host policy, plus an optional shared secret.
+  const authLocation = h.requireLogin
+    ? `    location = /__nginux_auth {
+        internal;
+        proxy_pass ${CONTROL_URL}/api/auth/forward;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-Host $host;
+        proxy_set_header X-Original-URI $request_uri;${FORWARD_SECRET ? `\n        proxy_set_header X-NginUX-Forward-Secret "${FORWARD_SECRET}";` : ""}
+    }
+`
     : "";
 
   // GeoIP country lock (Phase 2 wires the real geo map; placeholder var here).
@@ -215,7 +231,7 @@ ${extra ? extra + "\n" : ""}`;
     listen ${listen};${http2}
     server_name ${h.domain};${sslBlock}
 ${protections.length ? protections.join("\n") + "\n" : ""}
-${pathBlocks}    location / {
+${authLocation}${pathBlocks}    location / {
 ${locationBody}    }
 }`);
 
@@ -270,6 +286,15 @@ export async function applyConfig(): Promise<ApplyResult> {
   writeAllConfigs();
 
   if (!(await nginxInstalled())) {
+    // In production nginx must be present; refuse to claim success when we
+    // can't validate, so unvalidated config is never treated as applied.
+    if (process.env.NODE_ENV === "production") {
+      return {
+        ok: false,
+        nginxAvailable: false,
+        message: "nginx binary not found — configuration was written but could not be validated or reloaded.",
+      };
+    }
     return {
       ok: true,
       nginxAvailable: false,

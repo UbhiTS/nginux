@@ -16,6 +16,9 @@ export const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
   PRAGMA journal_mode = WAL;
+  PRAGMA synchronous = NORMAL;   -- safe + fast with WAL
+  PRAGMA busy_timeout = 5000;    -- wait instead of throwing SQLITE_BUSY under concurrency
+  PRAGMA foreign_keys = ON;
 
   CREATE TABLE IF NOT EXISTS hosts (
     id            TEXT PRIMARY KEY,
@@ -222,6 +225,40 @@ function migrateHosts() {
   }
 }
 migrateHosts();
+
+// Indexes on hot query paths (filtered/ordered scans that grow over time).
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_sessions_userId   ON sessions(userId);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expiresAt ON sessions(expiresAt);
+  CREATE INDEX IF NOT EXISTS idx_audit_type_ts      ON audit_events(type, ts);
+  CREATE INDEX IF NOT EXISTS idx_audit_ts           ON audit_events(ts);
+  CREATE INDEX IF NOT EXISTS idx_client_certs_host  ON client_certs(hostId);
+  CREATE INDEX IF NOT EXISTS idx_incidents_host     ON incidents(hostId, endedAt);
+  CREATE INDEX IF NOT EXISTS idx_bans_expiresAt     ON bans(expiresAt);
+  CREATE INDEX IF NOT EXISTS idx_approvals_status   ON approvals(status, ts);
+`);
+
+/** Trim the audit log so it can't grow without bound. Keeps recent rows by time
+ *  and an absolute cap by count; returns how many rows were removed. */
+export function pruneAuditLog(retainDays = Number(process.env.NGINUX_AUDIT_RETAIN_DAYS ?? 90), hardCap = 50_000): number {
+  const cutoff = new Date(Date.now() - retainDays * 86400_000).toISOString();
+  let removed = Number(db.prepare("DELETE FROM audit_events WHERE ts < ?").run(cutoff).changes);
+  removed += Number(db.prepare(
+    "DELETE FROM audit_events WHERE id NOT IN (SELECT id FROM audit_events ORDER BY id DESC LIMIT ?)",
+  ).run(hardCap).changes);
+  return removed;
+}
+
+/** Cheap liveness probe for the health endpoint. */
+export function dbOk(): boolean {
+  try { db.prepare("SELECT 1").get(); return true; } catch { return false; }
+}
+
+/** Close the database cleanly (called on shutdown). */
+export function closeDb(): void {
+  try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* ignore */ }
+  db.close();
+}
 
 // ---- row <-> domain mapping (sqlite stores booleans as 0/1) ----
 type HostRow = Record<string, unknown>;

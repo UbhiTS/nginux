@@ -17,7 +17,23 @@ permissions:
   packages: write   # push to GHCR
 
 jobs:
+  # Gate publishing on a green typecheck + web build so broken code never ships.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck --workspace server
+      - run: npx tsc --noEmit
+        working-directory: web
+      - run: npm run build --workspace web
+
   release:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history for tags)
@@ -68,6 +84,8 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.version.outputs.next }}
+          provenance: true
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

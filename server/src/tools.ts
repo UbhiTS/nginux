@@ -5,6 +5,32 @@ import { createHost, deleteHost, getHost, listHosts, updateHost } from "./repo.t
 import { ensureCert, getCert, issue, listCerts } from "./certs.ts";
 import { applyConfig } from "./nginx.ts";
 import type { AgentPrincipal, Scope } from "./tokens.ts";
+import { isHeaderName, isHost, isHostPort, isHostname, isIpOrCidr, isLocationPath } from "./validate.ts";
+import type { NewProxyHost, ProxyHost } from "./types.ts";
+
+// Agents reach updateHost/createHost WITHOUT the REST zod schema, so validate
+// here too. Fields an agent may never set via tools (raw-config / managed).
+const FORBIDDEN_TOOL_FIELDS = new Set(["id", "domain", "customNginx", "health", "certExpiresAt", "createdAt", "updatedAt"]);
+const splitList = (s: string) => String(s).split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+const splitLines = (s: string) => String(s).split("\n").map((x) => x.trim()).filter(Boolean);
+
+/** Strip forbidden fields and validate injection-prone ones; throws on bad input. */
+function sanitizeHostPatch(raw: Record<string, unknown>): Partial<ProxyHost> {
+  const patch: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (FORBIDDEN_TOOL_FIELDS.has(k)) continue;
+    patch[k] = v;
+  }
+  if (typeof patch.forwardHost === "string" && !isHost(patch.forwardHost)) throw new Error("Invalid forwardHost.");
+  if (typeof patch.serverIp === "string" && patch.serverIp && !isHost(patch.serverIp)) throw new Error("Invalid serverIp.");
+  for (const f of ["ipAllow", "ipDeny"]) {
+    if (typeof patch[f] === "string" && !splitList(patch[f] as string).every(isIpOrCidr)) throw new Error(`Invalid ${f} entry.`);
+  }
+  if (typeof patch.upstreams === "string" && !splitLines(patch.upstreams as string).every(isHostPort)) throw new Error("Invalid upstreams entry.");
+  if (typeof patch.customHeaders === "string" && !splitLines(patch.customHeaders as string).every((l) => { const i = l.indexOf(":"); return i > 0 && isHeaderName(l.slice(0, i).trim()) && !/[\n\r]/.test(l.slice(i + 1)); })) throw new Error("Invalid customHeaders.");
+  if (typeof patch.pathRules === "string" && !splitLines(patch.pathRules as string).every((l) => { const [p, t, ...rest] = l.split(/\s+/); return rest.length === 0 && isLocationPath(p) && isHostPort(t); })) throw new Error("Invalid pathRules.");
+  return patch as Partial<ProxyHost>;
+}
 
 export type Tier = "read" | "low" | "medium" | "high";
 export type Principal = AgentPrincipal | { kind: "user"; name: string; scopes: Scope[]; user: User };
@@ -81,13 +107,19 @@ export const TOOLS: Record<string, Tool> = {
     }, ["name", "domain", "forwardHost", "forwardPort"]),
     summarize: (a) => `expose ${a.name} at ${a.domain}`,
     handler: async (a) => {
+      const domain = String(a.domain);
+      const forwardHost = String(a.forwardHost);
+      if (!isHostname(domain)) throw new Error("Invalid domain.");
+      if (!isHost(forwardHost)) throw new Error("Invalid forwardHost.");
+      const port = Number(a.forwardPort);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid forwardPort.");
       const host = createHost({
-        name: String(a.name), emoji: "⚙️", domain: String(a.domain),
-        forwardScheme: "http", forwardHost: String(a.forwardHost), forwardPort: Number(a.forwardPort),
+        name: String(a.name), emoji: "⚙️", domain,
+        forwardScheme: "http", forwardHost, forwardPort: port,
         preset: String(a.preset ?? "custom"), websockets: false, http2: true, ssl: true,
         requireLogin: a.requireLogin !== false, require2fa: false, countryLock: false,
-        serverGroup: String(a.forwardHost), serverIp: String(a.forwardHost), enabled: true,
-      });
+        serverGroup: forwardHost, serverIp: forwardHost, enabled: true,
+      } as NewProxyHost);
       ensureCert(host.domain);
       await applyConfig();
       return host;
@@ -98,7 +130,7 @@ export const TOOLS: Record<string, Tool> = {
     description: "Edit a host's routing or options.",
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `update service ${a.id}`,
-    handler: async (a) => { const { id, ...patch } = a; const h = updateHost(String(id), patch); await applyConfig(); return h; },
+    handler: async (a) => { const { id, ...patch } = a; const h = updateHost(String(id), sanitizeHostPatch(patch)); await applyConfig(); return h; },
   },
   disable_login: {
     name: "disable_login", title: "Disable login on a host", scope: "security", tier: "high",

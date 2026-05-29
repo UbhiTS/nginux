@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
-import { getSettings, saveSettings, seedIfEmpty } from "./db.ts";
+import { closeDb, dbOk, getSettings, pruneAuditLog, saveSettings, seedIfEmpty } from "./db.ts";
 import { PRESETS, getPreset } from "./presets.ts";
 import {
   createHost,
@@ -36,11 +36,14 @@ import {
   seedAuthIfEmpty,
   securityExposure,
   securityOverview,
+  useBackupCode,
   SESSION_COOKIE,
   sessionCookie,
   userForSession,
+  type Role,
   type User,
 } from "./auth.ts";
+import type { ProxyHost } from "./types.ts";
 import { otpauthURL, verifyTotp } from "./totp.ts";
 import {
   deleteCert,
@@ -81,6 +84,16 @@ import { addBan, listBans, removeBan, startBanEngine } from "./bans.ts";
 import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert } from "./clientcerts.ts";
 import { generateSniPassthrough } from "./nginx.ts";
 import {
+  assertSafeOutboundUrl,
+  hasNginxMetachars,
+  isHeaderName,
+  isHost,
+  isHostPort,
+  isHostname,
+  isIpOrCidr,
+  isLocationPath,
+} from "./validate.ts";
+import {
   createChannel,
   deleteChannel,
   initAlertEngine,
@@ -108,88 +121,229 @@ const principal = (req: FastifyRequest): Principal | null => {
   if (u) return { kind: "user", name: u.username, scopes: ALL_SCOPES, user: u };
   return resolveToken(bearerFrom(req.headers.authorization));
 };
-const clientIp = (req: FastifyRequest) =>
-  (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip;
+// Only believe X-Forwarded-For when explicitly told to trust the proxy in front
+// of us (e.g. set NGINUX_TRUST_PROXY=true when nginx forwards to the control
+// plane). Otherwise an attacker could spoof XFF to forge audit IPs / dodge bans.
+const TRUST_PROXY: boolean | string =
+  process.env.NGINUX_TRUST_PROXY === "1" || process.env.NGINUX_TRUST_PROXY === "true"
+    ? true
+    : (process.env.NGINUX_TRUST_PROXY || false);
+const clientIp = (req: FastifyRequest) => req.ip; // resolved by Fastify per trustProxy
 const device = (req: FastifyRequest) => (req.headers["user-agent"] as string)?.slice(0, 120) || "unknown";
 
-const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
+const app = Fastify({
+  logger: { level: process.env.LOG_LEVEL ?? "info" },
+  trustProxy: TRUST_PROXY,
+  bodyLimit: 2 * 1024 * 1024, // 2 MB — generous for config import, bounded for safety
+  requestTimeout: 30_000,
+});
+
+// Central error handler: bad input → 400 with field detail; everything else is
+// logged in full server-side but returns a generic message (no internal leak).
+app.setErrorHandler((err, req, reply) => {
+  if (err instanceof z.ZodError) {
+    return reply.code(400).send({ error: "Invalid input", issues: err.issues });
+  }
+  const status = (err as { statusCode?: number }).statusCode ?? 500;
+  if (status >= 500) {
+    req.log.error({ err }, "request failed");
+    return reply.code(status).send({ error: "Something went wrong on our end." });
+  }
+  return reply.code(status).send({ error: (err as Error).message });
+});
 
 // Auth guard. Human UI routes need a session; agent routes (MCP + events)
 // accept a session OR a Bearer API token (agents never use 2FA).
 const OPEN_PATHS = new Set(["/api/health", "/api/auth/login", "/api/auth/forward"]);
+const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+/** CSRF defense: a cookie-authenticated mutation carrying a cross-origin
+ *  Origin/Referer is rejected. Browsers always send Origin on cross-site
+ *  writes; native clients (no Origin header) and Bearer agents are unaffected. */
+function crossOriginBlocked(req: FastifyRequest): boolean {
+  if (!MUTATING.has(req.method)) return false;
+  const origin = (req.headers.origin as string) || (req.headers.referer as string);
+  if (!origin) return false; // non-browser client
+  const host = (req.headers["x-forwarded-host"] as string) || req.headers.host;
+  try { return new URL(origin).host !== host; } catch { return true; }
+}
+
 app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   if (!req.url.startsWith("/api")) return;
   const path = req.url.split("?")[0];
   if (OPEN_PATHS.has(path)) return;
-  if (path === "/api/mcp" || path.startsWith("/api/events") || path.startsWith("/api/logs") || path === "/api/metrics/prometheus") {
+  const isAgentPath = path === "/api/mcp" || path.startsWith("/api/events") || path.startsWith("/api/logs") || path === "/api/metrics/prometheus";
+  if (isAgentPath) {
     if (!principal(req)) return reply.code(401).send({ error: "Valid session or API token required" });
     return;
   }
   if (!currentUser(req)) return reply.code(401).send({ error: "Authentication required" });
+  if (crossOriginBlocked(req)) return reply.code(403).send({ error: "Cross-origin request blocked." });
 });
 
 function requireAdmin(req: FastifyRequest, reply: FastifyReply): User | null {
+  return requireRole(req, reply, "admin");
+}
+
+/** Allow only the listed roles; 403 otherwise. Returns the user when allowed. */
+function requireRole(req: FastifyRequest, reply: FastifyReply, ...roles: Role[]): User | null {
   const u = currentUser(req);
-  if (!u || u.role !== "admin") {
-    reply.code(403).send({ error: "Admin role required" });
+  if (!u || !roles.includes(u.role)) {
+    reply.code(403).send({ error: `This action requires one of: ${roles.join(", ")}.` });
     return null;
   }
   return u;
 }
 
+/** Does a `scoped` user's scope list cover this host? (matches id, name, or domain) */
+function scopedAllows(user: User, host: Pick<ProxyHost, "id" | "name" | "domain">): boolean {
+  const keys = user.scope.split(/[\s,]+/).map((s) => s.toLowerCase()).filter(Boolean);
+  return keys.includes(host.id.toLowerCase()) || keys.includes(host.name.toLowerCase()) || keys.includes(host.domain.toLowerCase());
+}
+
+/**
+ * Gate a host-mutating request: admin/editor may touch any host; scoped may
+ * only touch hosts in their scope and may not create/delete; readonly is denied.
+ * Returns the user when allowed, else sends the response and returns null.
+ */
+function requireHostAccess(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  host: Pick<ProxyHost, "id" | "name" | "domain"> | null,
+  opts: { allowScoped?: boolean } = {},
+): User | null {
+  const u = currentUser(req);
+  if (!u) { reply.code(401).send({ error: "Authentication required" }); return null; }
+  if (u.role === "admin" || u.role === "editor") return u;
+  if (u.role === "scoped" && opts.allowScoped && host && scopedAllows(u, host)) return u;
+  reply.code(403).send({ error: "You don't have permission to manage this service." });
+  return null;
+}
+
+/** customNginx is a raw-directive escape hatch — only admins may set it. */
+function rejectPrivilegedFields(req: FastifyRequest, reply: FastifyReply, body: { customNginx?: string }): boolean {
+  if (body.customNginx !== undefined && body.customNginx !== "" && currentUser(req)?.role !== "admin") {
+    reply.code(403).send({ error: "Only an admin may set custom nginx directives." });
+    return false;
+  }
+  return true;
+}
+
 // ---------- validation ----------
+const splitEntries = (s: string): string[] => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+const splitLines = (s: string): string[] => s.split("\n").map((x) => x.trim()).filter(Boolean);
+
+// Each entry of an IP allow/deny list must be a valid IP or CIDR.
+const ipListField = z.string().default("").refine(
+  (s) => splitEntries(s).every(isIpOrCidr),
+  "IP allow/deny entries must be valid IPv4/IPv6 addresses or CIDRs.",
+);
+// "Name: value" per line; header name must be a token, value free of CR/LF.
+const customHeadersField = z.string().default("").refine(
+  (s) => splitLines(s).every((line) => {
+    const i = line.indexOf(":");
+    return i > 0 && isHeaderName(line.slice(0, i).trim()) && !/[\n\r]/.test(line.slice(i + 1));
+  }),
+  'Custom headers must be "Header-Name: value" per line.',
+);
+// "/path host:port" per line — both parts strictly validated (config injection sink).
+const pathRulesField = z.string().default("").refine(
+  (s) => splitLines(s).every((line) => {
+    const [p, t, ...rest] = line.split(/\s+/);
+    return rest.length === 0 && isLocationPath(p) && isHostPort(t);
+  }),
+  'Path rules must be "/path host:port" per line.',
+);
+// Extra upstream targets, "host:port" per line.
+const upstreamsField = z.string().default("").refine(
+  (s) => splitLines(s).every(isHostPort),
+  'Upstream targets must be "host:port" per line.',
+);
+// Raw nginx directives are admin-only (enforced in the route) and may never
+// contain block braces, which would let a value break out of the location block.
+const customNginxField = z.string().default("").refine(
+  (s) => !/[{}]/.test(s),
+  "Custom nginx directives may not contain { or }.",
+);
+
 const hostInput = z.object({
-  name: z.string().min(1),
-  emoji: z.string().default("⚙️"),
-  domain: z.string().min(1),
+  name: z.string().min(1).max(100),
+  emoji: z.string().max(16).default("⚙️"),
+  domain: z.string().min(1).max(253).refine(isHostname, "Invalid domain/hostname."),
   forwardScheme: z.enum(["http", "https"]).default("http"),
-  forwardHost: z.string().min(1),
+  forwardHost: z.string().min(1).refine(isHost, "Invalid forward host (must be a hostname or IP)."),
   forwardPort: z.number().int().min(1).max(65535),
-  preset: z.string().default("custom"),
+  preset: z.string().max(64).default("custom"),
   websockets: z.boolean().default(false),
   http2: z.boolean().default(true),
   ssl: z.boolean().default(true),
   requireLogin: z.boolean().default(false),
   require2fa: z.boolean().default(false),
   countryLock: z.boolean().default(false),
-  serverGroup: z.string().default("default"),
-  serverIp: z.string().default(""),
+  serverGroup: z.string().max(64).default("default"),
+  serverIp: z.string().max(64).default("").refine((s) => s === "" || isHost(s), "Invalid server IP."),
   enabled: z.boolean().default(true),
   maintenanceMode: z.boolean().default(false),
   securityHeaders: z.boolean().default(true),
   hsts: z.boolean().default(false),
   rateLimit: z.boolean().default(false),
   blockExploits: z.boolean().default(false),
-  ipAllow: z.string().default(""),
-  ipDeny: z.string().default(""),
-  customHeaders: z.string().default(""),
-  customNginx: z.string().default(""),
-  upstreams: z.string().default(""),
+  ipAllow: ipListField,
+  ipDeny: ipListField,
+  customHeaders: customHeadersField,
+  customNginx: customNginxField,
+  upstreams: upstreamsField,
   lbMethod: z.enum(["round_robin", "least_conn", "ip_hash"]).default("round_robin"),
   protocol: z.enum(["http", "tcp", "udp", "grpc", "sni"]).default("http"),
   listenPort: z.number().int().min(0).max(65535).default(0),
-  pathRules: z.string().default(""),
+  pathRules: pathRulesField,
   mtls: z.boolean().default(false),
   rateLimitKbps: z.number().int().min(0).max(1_000_000).default(0),
   maxConns: z.number().int().min(0).max(100_000).default(0),
 });
 
+// A domain used as a filesystem path segment (certs) must be a plain hostname.
+const domainParam = z.string().min(1).max(253).refine(isHostname, "Invalid domain.");
+
 // ---------- health ----------
-app.get("/api/health", async () => ({
-  status: "ok",
-  service: "nginux",
-  version: "0.1.0",
-  time: new Date().toISOString(),
-}));
+app.get("/api/health", async (_req, reply) => {
+  const db = dbOk();
+  return reply.code(db ? 200 : 503).send({
+    status: db ? "ok" : "degraded",
+    service: "nginux",
+    version: "0.1.0",
+    db,
+    time: new Date().toISOString(),
+  });
+});
 
 // ---------- presets ----------
 app.get("/api/presets", async () => Object.values(PRESETS));
 
 // ---------- settings ----------
+const settingsInput = z.object({
+  instanceName: z.string().max(120),
+  baseDomain: z.string().max(253),
+  publicUrl: z.string().max(512),
+  theme: z.enum(["dark", "medium", "light"]),
+  letsEncryptEmail: z.string().max(254),
+  homeCountry: z.string().max(2),
+  publicIp: z.string().max(64),
+  gatewayIp: z.string().max(64),
+  dnsProvider: z.enum(["none", "godaddy", "cloudflare"]),
+  godaddyApiKey: z.string().max(256),
+  godaddySecret: z.string().max(256),
+  cloudflareApiToken: z.string().max(256),
+  acmeStaging: z.boolean(),
+  agentAutoApprove: z.boolean(),
+  gitOpsEnabled: z.boolean(),
+}).partial();
+
 app.get("/api/settings", async () => getSettings());
-app.put("/api/settings", async (req) => {
-  const patch = z.record(z.string(), z.any()).parse(req.body);
-  return saveSettings(patch);
+app.put("/api/settings", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  const parsed = settingsInput.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  return saveSettings(parsed.data);
 });
 
 // ---------- hosts ----------
@@ -203,8 +357,10 @@ app.get("/api/hosts/:id", async (req, reply) => {
 });
 
 app.post("/api/hosts", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
   const parsed = hostInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
   if (getHostByDomain(parsed.data.domain)) {
     return reply.code(409).send({ error: `${parsed.data.domain} is already in use.` });
   }
@@ -223,8 +379,12 @@ app.post("/api/hosts", async (req, reply) => {
 
 app.put("/api/hosts/:id", async (req, reply) => {
   const { id } = req.params as { id: string };
+  const existing = getHost(id);
+  if (!existing) return reply.code(404).send({ error: "Service not found" });
+  if (!requireHostAccess(req, reply, existing, { allowScoped: true })) return;
   const parsed = hostInput.partial().safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
   snapshot(`Before updating a service`, currentUser(req)?.username ?? "system");
   const host = updateHost(id, parsed.data);
   if (!host) return reply.code(404).send({ error: "Service not found" });
@@ -236,6 +396,7 @@ app.put("/api/hosts/:id", async (req, reply) => {
 });
 
 app.delete("/api/hosts/:id", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
   const { id } = req.params as { id: string };
   snapshot(`Before removing a service`, currentUser(req)?.username ?? "system");
   if (!deleteHost(id)) return reply.code(404).send({ error: "Service not found" });
@@ -255,13 +416,22 @@ app.post("/api/hosts/:id/client-certs", async (req, reply) => {
   const { id } = req.params as { id: string };
   const host = getHost(id);
   if (!host) return reply.code(404).send({ error: "Service not found" });
-  const { name } = z.object({ name: z.string().min(1) }).parse(req.body);
-  const issued = issueClientCert(id, host.domain, name);
-  logEvent({ type: "cert.client_issued", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Issued client cert "${name}" for ${host.domain}`, ip: clientIp(req), meta: {} });
+  if (!requireHostAccess(req, reply, host, { allowScoped: true })) return;
+  const parsed = z.object({ name: z.string().min(1).max(64) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const issued = issueClientCert(id, host.domain, parsed.data.name);
+  logEvent({ type: "cert.client_issued", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Issued client cert "${parsed.data.name}" for ${host.domain}`, ip: clientIp(req), meta: {} });
   return reply.code(201).send(issued); // cert + key shown once
 });
-app.delete("/api/hosts/:id/client-certs/:certId", async (req) => {
-  const { certId } = req.params as { certId: string };
+app.delete("/api/hosts/:id/client-certs/:certId", async (req, reply) => {
+  const { id, certId } = req.params as { id: string; certId: string };
+  const host = getHost(id);
+  if (!host) return reply.code(404).send({ error: "Service not found" });
+  if (!requireHostAccess(req, reply, host, { allowScoped: true })) return;
+  // Only revoke a cert that actually belongs to this host (prevents cross-host IDOR).
+  if (!listClientCerts(id).some((c) => c.id === certId)) {
+    return reply.code(404).send({ error: "Certificate not found for this service." });
+  }
   return { ok: revokeClientCert(certId) };
 });
 
@@ -302,8 +472,9 @@ app.post("/api/test-connection", async (req, reply) => {
 
 // ---------- config versioning / backup / restore / export ----------
 app.get("/api/config/versions", async () => listVersions());
-app.post("/api/config/versions", async (req) => {
-  const { label } = z.object({ label: z.string().default("Manual snapshot") }).parse(req.body ?? {});
+app.post("/api/config/versions", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  const { label } = z.object({ label: z.string().max(120).default("Manual snapshot") }).parse(req.body ?? {});
   return snapshot(label, currentUser(req)?.username ?? "admin");
 });
 app.get("/api/config/versions/:id/diff", async (req, reply) => {
@@ -313,6 +484,7 @@ app.get("/api/config/versions/:id/diff", async (req, reply) => {
   return d;
 });
 app.post("/api/config/versions/:id/restore", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   snapshot("Before restore", currentUser(req)?.username ?? "admin");
   const r = restoreVersion(id);
@@ -326,7 +498,10 @@ app.get("/api/config/export", async () => {
   return { version: "0.1.0", exportedAt: new Date().toISOString(), hosts: listHosts(), settings: getSettings() };
 });
 app.post("/api/config/import", async (req, reply) => {
-  const { conf } = z.object({ conf: z.string().min(1) }).parse(req.body);
+  if (!requireAdmin(req, reply)) return;
+  const parsed = z.object({ conf: z.string().min(1).max(1_000_000) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const { conf } = parsed.data;
   snapshot("Before import", currentUser(req)?.username ?? "admin");
   const result = importNginxConf(conf);
   const apply = await applyConfig();
@@ -360,22 +535,48 @@ app.get("/api/logs/recent", async (req) => {
   const { filter, limit } = req.query as { filter?: string; limit?: string };
   return recentLogs(filter, limit ? Number(limit) : undefined);
 });
+let sseClients = 0;
+const SSE_MAX = Number(process.env.NGINUX_SSE_MAX ?? 200);
+
 app.get("/api/logs/stream", (req, reply) => {
+  if (sseClients >= SSE_MAX) return reply.code(503).send({ error: "Too many open streams." });
+  sseClients++;
   reply.hijack();
   reply.raw.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
   reply.raw.write(": connected\n\n");
   const unsub = subscribeLog((e) => reply.raw.write(`event: log\ndata: ${JSON.stringify(e)}\n\n`));
   const hb = setInterval(() => reply.raw.write(": ping\n\n"), 25000);
-  req.raw.on("close", () => { clearInterval(hb); unsub(); });
+  req.raw.on("close", () => { clearInterval(hb); unsub(); sseClients--; });
 });
 
 // ---------- auth ----------
+// Sliding-window in-memory limiter so brute force against the control plane is
+// throttled even when requests bypass nginx and hit port 4600 directly.
+const LOGIN_MAX = 10;          // attempts
+const LOGIN_WINDOW_MS = 60_000; // per minute, per key (ip + username)
+const loginHits = new Map<string, number[]>();
+function rateLimited(key: string, max: number, windowMs: number): boolean {
+  const now = Date.now();
+  const hits = (loginHits.get(key) ?? []).filter((t) => now - t < windowMs);
+  hits.push(now);
+  loginHits.set(key, hits);
+  if (loginHits.size > 5000) { // crude cap so the map can't grow unbounded
+    for (const [k, v] of loginHits) { if (v.every((t) => now - t >= windowMs)) loginHits.delete(k); }
+  }
+  return hits.length > max;
+}
+
 const loginInput = z.object({ username: z.string(), password: z.string(), token: z.string().optional() });
 app.post("/api/auth/login", async (req, reply) => {
   const parsed = loginInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: "Invalid input" });
   const { username, password, token } = parsed.data;
   const ip = clientIp(req);
+
+  if (rateLimited(`${ip}:${username}`.toLowerCase(), LOGIN_MAX, LOGIN_WINDOW_MS)) {
+    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts — throttled", ip, meta: {} });
+    return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
+  }
 
   const row = checkCredentials(username, password);
   if (!row) {
@@ -386,7 +587,9 @@ app.post("/api/auth/login", async (req, reply) => {
   if (row.twofaEnabled) {
     if (!token) return reply.send({ twofaRequired: true });
     const secret = getTwofaSecret(String(row.id));
-    if (!secret || !verifyTotp(token, secret)) {
+    // Accept a TOTP code or a one-time backup code.
+    const ok = (secret && verifyTotp(token, secret)) || useBackupCode(String(row.id), token);
+    if (!ok) {
       logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Incorrect 2FA code", ip, meta: {} });
       return reply.code(401).send({ error: "That 2FA code didn't match.", twofaRequired: true });
     }
@@ -412,8 +615,22 @@ app.get("/api/auth/me", async (req, reply) => {
 });
 
 // auth_request target for nginx forward-auth: 200 = allowed, 401 = block.
+// nginx passes the original host so we can enforce that host's policy, and an
+// optional shared secret so the endpoint can't be usefully called directly.
+const FORWARD_SECRET = process.env.NGINUX_FORWARD_SECRET || "";
 app.get("/api/auth/forward", async (req, reply) => {
-  return currentUser(req) ? reply.code(200).send({ ok: true }) : reply.code(401).send({ ok: false });
+  if (FORWARD_SECRET && req.headers["x-nginux-forward-secret"] !== FORWARD_SECRET) {
+    return reply.code(401).send({ ok: false });
+  }
+  const u = currentUser(req);
+  if (!u) return reply.code(401).send({ ok: false });
+  // If we can identify the target host, enforce its per-host requirements.
+  const originalHost = (req.headers["x-original-host"] as string) || (req.headers["x-forwarded-host"] as string);
+  if (originalHost) {
+    const host = getHostByDomain(originalHost.split(":")[0]);
+    if (host?.require2fa && !u.twofaEnabled) return reply.code(401).send({ ok: false });
+  }
+  return reply.code(200).send({ ok: true });
 });
 
 app.post("/api/auth/2fa/setup", async (req, reply) => {
@@ -465,7 +682,11 @@ app.delete("/api/users/:id", async (req, reply) => {
   return { ok: true };
 });
 
-app.get("/api/sessions", async () => listSessions());
+app.get("/api/sessions", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  // Never return the raw session token to the client — mask to a short id.
+  return listSessions().map((s) => ({ ...s, token: "…" + s.token.slice(-6) }));
+});
 
 // ---------- audit + security posture ----------
 app.get("/api/audit", async (req) => {
@@ -478,12 +699,19 @@ app.get("/api/security/exposure", async () => securityExposure());
 // ---------- IP bans (fail2ban-style) ----------
 app.get("/api/bans", async () => listBans());
 app.post("/api/bans", async (req, reply) => {
-  const { ip, reason } = z.object({ ip: z.string().min(3), reason: z.string().default("Manually banned") }).parse(req.body);
+  if (!requireAdmin(req, reply)) return;
+  const parsed = z.object({
+    ip: z.string().refine(isIpOrCidr, "Must be a valid IP or CIDR."),
+    reason: z.string().max(200).default("Manually banned"),
+  }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const { ip, reason } = parsed.data;
   const ban = addBan(ip, reason, "manual");
   logEvent({ type: "security.ip_banned", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: `Banned ${ip}`, ip: clientIp(req), meta: { source: "manual" } });
   return reply.code(201).send(ban);
 });
-app.delete("/api/bans/:ip", async (req) => {
+app.delete("/api/bans/:ip", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { ip } = req.params as { ip: string };
   const ok = removeBan(decodeURIComponent(ip));
   if (ok) logEvent({ type: "security.ip_unbanned", severity: "info", actor: currentUser(req)?.username ?? "admin", summary: `Unbanned ${ip}`, ip: clientIp(req), meta: {} });
@@ -494,7 +722,10 @@ app.delete("/api/bans/:ip", async (req) => {
 app.get("/api/certificates", async () => listCerts());
 
 app.post("/api/certificates/:domain/issue", async (req, reply) => {
-  const { domain } = req.params as { domain: string };
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
+  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
+  const domain = dp.data;
   const { method } = z
     .object({ method: z.enum(["selfsigned", "http-01", "dns-01"]).default("selfsigned") })
     .parse(req.body ?? {});
@@ -509,7 +740,10 @@ app.post("/api/certificates/:domain/issue", async (req, reply) => {
 });
 
 app.post("/api/certificates/:domain/renew", async (req, reply) => {
-  const { domain } = req.params as { domain: string };
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
+  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
+  const domain = dp.data;
   const cert = getCert(domain);
   if (!cert) return reply.code(404).send({ error: "No certificate for that domain." });
   try {
@@ -521,25 +755,30 @@ app.post("/api/certificates/:domain/renew", async (req, reply) => {
   }
 });
 
-app.put("/api/certificates/:domain/autorenew", async (req) => {
-  const { domain } = req.params as { domain: string };
+app.put("/api/certificates/:domain/autorenew", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
+  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
   const { on } = z.object({ on: z.boolean() }).parse(req.body);
-  setAutoRenew(domain, on);
-  return getCert(domain);
+  setAutoRenew(dp.data, on);
+  return getCert(dp.data);
 });
 
-app.delete("/api/certificates/:domain", async (req) => {
-  const { domain } = req.params as { domain: string };
-  deleteCert(domain);
+app.delete("/api/certificates/:domain", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
+  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
+  deleteCert(dp.data);
   return { ok: true };
 });
 
 // ---------- agents: tokens ----------
 app.get("/api/tokens", async () => listTokens());
 app.post("/api/tokens", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const body = z
     .object({
-      name: z.string().min(1),
+      name: z.string().min(1).max(64),
       scopes: z.array(z.enum(["read", "report", "control", "security"])).min(1),
       trust: z.enum(["untrusted", "trusted"]).default("untrusted"),
     })
@@ -548,7 +787,8 @@ app.post("/api/tokens", async (req, reply) => {
   logEvent({ type: "agent.token_created", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Created API token "${body.name}"`, ip: clientIp(req), meta: { scopes: body.scopes } });
   return reply.code(201).send({ token, record }); // raw token shown once
 });
-app.delete("/api/tokens/:id", async (req) => {
+app.delete("/api/tokens/:id", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   revokeToken(id);
   return { ok: true };
@@ -561,12 +801,14 @@ app.get("/api/agents/approvals", async (req) => {
   return listApprovals(status);
 });
 app.post("/api/agents/approvals/:id/approve", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   const ap = await decideApproval(id, true, currentUser(req)?.username ?? "admin");
   if (!ap) return reply.code(404).send({ error: "Approval not found" });
   return ap;
 });
 app.post("/api/agents/approvals/:id/deny", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   const ap = await decideApproval(id, false, currentUser(req)?.username ?? "admin");
   if (!ap) return reply.code(404).send({ error: "Approval not found" });
@@ -582,11 +824,16 @@ app.get("/api/agents/overview", async () => ({
 // ---------- agents: webhooks ----------
 app.get("/api/webhooks", async () => listWebhooks());
 app.post("/api/webhooks", async (req, reply) => {
-  const body = z.object({ url: z.string().url(), events: z.array(z.string()).default(["*"]) }).parse(req.body);
-  const { webhook, secret } = createWebhook(body.url, body.events);
+  if (!requireAdmin(req, reply)) return;
+  const parsed = z.object({ url: z.string().url(), events: z.array(z.string().max(64)).max(50).default(["*"]) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  try { assertSafeOutboundUrl(parsed.data.url); }
+  catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid URL." }); }
+  const { webhook, secret } = createWebhook(parsed.data.url, parsed.data.events);
   return reply.code(201).send({ webhook, secret }); // secret shown once
 });
-app.delete("/api/webhooks/:id", async (req) => {
+app.delete("/api/webhooks/:id", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   deleteWebhook(id);
   return { ok: true };
@@ -595,30 +842,41 @@ app.delete("/api/webhooks/:id", async (req) => {
 // ---------- notification channels ----------
 app.get("/api/channels", async () => listChannels());
 app.post("/api/channels", async (req, reply) => {
-  const body = z
+  if (!requireAdmin(req, reply)) return;
+  const parsed = z
     .object({
       type: z.enum(["ntfy", "gotify", "pushover", "discord", "slack", "telegram", "webhook", "email"]),
-      name: z.string().min(1),
-      config: z.record(z.string(), z.string()).default({}),
-      events: z.array(z.string()).default(["*"]),
+      name: z.string().min(1).max(64),
+      config: z.record(z.string(), z.string().max(2048)).default({}),
+      events: z.array(z.string().max(64)).max(50).default(["*"]),
     })
-    .parse(req.body);
+    .safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const body = parsed.data;
+  // SSRF guard: any user-supplied destination URL must be a safe http(s) target.
+  for (const key of ["url", "server"]) {
+    const v = body.config[key];
+    if (v) { try { assertSafeOutboundUrl(v); } catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid URL." }); } }
+  }
   const ch = createChannel({ type: body.type as ChannelType, name: body.name, config: body.config, events: body.events });
   logEvent({ type: "alert.channel_added", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Added ${body.type} notification channel "${body.name}"`, ip: clientIp(req), meta: {} });
   return reply.code(201).send(ch);
 });
-app.put("/api/channels/:id/enabled", async (req) => {
+app.put("/api/channels/:id/enabled", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
   setChannelEnabled(id, enabled);
   return { ok: true };
 });
-app.delete("/api/channels/:id", async (req) => {
+app.delete("/api/channels/:id", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   deleteChannel(id);
   return { ok: true };
 });
-app.post("/api/channels/:id/test", async (req) => {
+app.post("/api/channels/:id/test", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   return testChannel(id);
 });
@@ -629,6 +887,7 @@ app.post("/api/mcp", async (req, reply) => {
   const body = req.body as Record<string, unknown> | Record<string, unknown>[];
   const handle = (m: Record<string, unknown>) => handleMcp(me, m as never);
   if (Array.isArray(body)) {
+    if (body.length > 50) return reply.code(413).send({ error: "Batch too large (max 50)." });
     const out = (await Promise.all(body.map(handle))).filter(Boolean);
     return reply.send(out);
   }
@@ -639,6 +898,8 @@ app.post("/api/mcp", async (req, reply) => {
 
 // ---------- SSE event stream ----------
 app.get("/api/events/sse", (req, reply) => {
+  if (sseClients >= SSE_MAX) return reply.code(503).send({ error: "Too many open streams." });
+  sseClients++;
   reply.hijack();
   reply.raw.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -653,6 +914,7 @@ app.get("/api/events/sse", (req, reply) => {
   req.raw.on("close", () => {
     clearInterval(heartbeat);
     unsub();
+    sseClients--;
   });
 });
 
@@ -676,17 +938,38 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   app.log.info(`nginx apply on boot: ${result.message}`);
   // Daily auto-renewal + cert status refresh.
   startRenewalScheduler();
-  // Metrics: tail nginx access logs; in dev, feed synthetic traffic through the same pipeline.
+  // Metrics: tail nginx access logs; only feed synthetic traffic when explicitly
+  // asked (NGINUX_DEMO_TRAFFIC=1) or in an explicit dev run — never silently in prod.
   startLogTailer();
-  if (process.env.NODE_ENV !== "production" || process.env.NGINUX_DEMO_TRAFFIC === "1") {
+  const devRun = process.execArgv.includes("--watch"); // `npm run dev`, never `start`
+  if (process.env.NGINUX_DEMO_TRAFFIC === "1" || devRun) {
     startDemoTraffic();
-    app.log.info("demo traffic generator on (dev) — feeding the metrics pipeline");
+    app.log.info("demo traffic generator on — feeding the metrics pipeline");
   }
   // Uptime monitoring + alert routing + brute-force auto-ban.
   startUptimeMonitor();
   initAlertEngine();
   startBanEngine();
+  // Keep the audit log bounded.
+  pruneAuditLog();
+  setInterval(() => { try { pruneAuditLog(); } catch { /* ignore */ } }, 24 * 3600_000).unref?.();
 });
+
+// ---------- graceful shutdown ----------
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  app.log.info(`${signal} received — shutting down gracefully`);
+  const hardExit = setTimeout(() => process.exit(1), 10_000);
+  hardExit.unref?.();
+  try { await app.close(); } catch (e) { app.log.error({ e }, "error closing server"); }
+  try { closeDb(); } catch { /* ignore */ }
+  process.exit(0);
+}
+for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => void shutdown(sig));
+process.on("unhandledRejection", (reason) => app.log.error({ reason }, "unhandled promise rejection"));
+process.on("uncaughtException", (err) => app.log.error({ err }, "uncaught exception"));
 
 // ---------- helpers ----------
 function tcpProbe(host: string, port: number, timeoutMs: number): Promise<boolean> {

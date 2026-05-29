@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { db } from "./db.ts";
+import { isDangerousHost } from "./validate.ts";
 
 export interface NgxEvent {
   id: string;
@@ -74,6 +75,9 @@ async function deliverWebhooks(e: NgxEvent): Promise<void> {
   for (const r of rows) {
     const wh = toWebhook(r);
     if (!matches(wh.events, e.type)) continue;
+    // Defense in depth: never deliver to a link-local/metadata host even if a
+    // record predates URL validation.
+    try { if (isDangerousHost(new URL(wh.url).hostname)) continue; } catch { continue; }
     const body = JSON.stringify(e);
     const signature = createHmac("sha256", String(r.secret)).update(body).digest("hex");
     let status = "ok";

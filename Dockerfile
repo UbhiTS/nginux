@@ -2,25 +2,34 @@
 FROM node:24-alpine AS build
 WORKDIR /app
 
-# install workspace deps (cached on lockfile/manifests)
-COPY package.json ./
+# install workspace deps reproducibly (cached on lockfile/manifests)
+COPY package.json package-lock.json ./
 COPY server/package.json ./server/
 COPY web/package.json ./web/
-RUN npm install
+RUN npm ci
 
 # build the web bundle
 COPY . .
 RUN npm run build --workspace web
 
+# ---------- deps stage: production-only node_modules ----------
+FROM node:24-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY server/package.json ./server/
+COPY web/package.json ./web/
+RUN npm ci --omit=dev
+
 # ---------- runtime stage: nginx (data plane) + node (control plane) ----------
 FROM node:24-alpine AS runtime
 WORKDIR /app
 
-# nginx is the data plane; openssl makes the bootstrap self-signed cert
-RUN apk add --no-cache nginx openssl
+# nginx is the data plane; openssl bootstraps the self-signed cert; tini is a
+# proper init (PID 1) that reaps zombies and forwards signals to both processes.
+RUN apk add --no-cache nginx openssl tini
 
-# app code + deps (server runs straight from TS via Node 24 type-stripping)
-COPY --from=build /app/node_modules ./node_modules
+# prod-only deps + app code (server runs straight from TS via type-stripping)
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/server ./server
 COPY --from=build /app/web/dist ./web/dist
@@ -46,4 +55,9 @@ ENV NODE_ENV=production \
 EXPOSE 4600 80 443
 VOLUME ["/data"]
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Container is healthy only when the control plane answers and the DB is live.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:4600/api/health >/dev/null 2>&1 || exit 1
+
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]

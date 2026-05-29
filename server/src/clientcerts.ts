@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import forge from "node-forge";
 import { db } from "./db.ts";
+import { assertWithin } from "./validate.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CERT_DIR = process.env.CERT_DIR ?? join(__dirname, "..", "data", "certs");
@@ -24,7 +25,7 @@ export function clientCaPath(domain: string): string {
 
 /** Create the per-host client CA if it doesn't exist yet. */
 export function ensureClientCA(domain: string): void {
-  const dir = join(CERT_DIR, domain);
+  const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   const caCrt = join(dir, "client-ca.crt");
   if (existsSync(caCrt)) return;
   mkdirSync(dir, { recursive: true });
@@ -64,7 +65,7 @@ export function revokeClientCert(id: string): boolean {
 /** Issue a client cert signed by the host's client CA. Returns PEM (shown once). */
 export function issueClientCert(hostId: string, domain: string, name: string): { cert: string; key: string; record: ClientCert } {
   ensureClientCA(domain);
-  const dir = join(CERT_DIR, domain);
+  const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   const caCert = forge.pki.certificateFromPem(readFileSync(join(dir, "client-ca.crt"), "utf8"));
   const caKey = forge.pki.privateKeyFromPem(readFileSync(join(dir, "client-ca.key"), "utf8"));
 

@@ -6,6 +6,7 @@ import acme from "acme-client";
 import { db, getSettings } from "./db.ts";
 import { getDnsProvider, recordName } from "./dns.ts";
 import { logEvent } from "./auth.ts";
+import { assertWithin } from "./validate.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CERT_DIR = process.env.CERT_DIR ?? join(__dirname, "..", "data", "certs");
@@ -85,7 +86,7 @@ export function deleteCert(domain: string) {
 }
 
 function writeFiles(domain: string, keyPem: string, certPem: string) {
-  const dir = join(CERT_DIR, domain);
+  const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "privkey.pem"), keyPem);
   writeFileSync(join(dir, "fullchain.pem"), certPem);

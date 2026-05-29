@@ -1,5 +1,6 @@
 #!/bin/sh
-set -e
+# Runs under tini (PID 1), which reaps zombies and forwards signals to us.
+set -eu
 
 # Persistent dirs on the mounted volume
 mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs
@@ -14,17 +15,37 @@ if [ ! -f /data/nginx/selfsigned.crt ]; then
     -subj "/CN=nginux.local" >/dev/null 2>&1
 fi
 
-# Start nginx (data plane) in the background. The control plane writes configs
-# to /data/nginx/conf.d and reloads nginx on every change.
+NGINX_PID=""
+APP_PID=""
+
+# Forward shutdown to both processes so docker stop drains gracefully.
+term() {
+  echo "[nginux] shutting down"
+  [ -n "$APP_PID" ] && kill -TERM "$APP_PID" 2>/dev/null || true
+  nginx -s quit 2>/dev/null || { [ -n "$NGINX_PID" ] && kill -TERM "$NGINX_PID" 2>/dev/null; } || true
+}
+trap term TERM INT
+
+# Start nginx (data plane).
 echo "[nginux] starting nginx"
 nginx -g 'daemon off;' &
 NGINX_PID=$!
 
-# Start the control plane (UI + API + nginx orchestration) in the foreground.
+# Wait for nginx to write its pid file so the control plane's boot-time reload
+# doesn't race a not-yet-ready master.
+i=0
+while [ ! -s /run/nginx.pid ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+
+# Start the control plane (UI + API + nginx orchestration).
 echo "[nginux] starting control plane on :${PORT}"
 node --experimental-sqlite --disable-warning=ExperimentalWarning /app/server/src/index.ts &
 APP_PID=$!
 
-# If either process exits, bring the container down.
-wait -n "$NGINX_PID" "$APP_PID"
-exit $?
+# Supervise: if either process exits, stop the other and let the container exit.
+while kill -0 "$NGINX_PID" 2>/dev/null && kill -0 "$APP_PID" 2>/dev/null; do
+  sleep 1
+done
+
+echo "[nginux] a process exited — bringing the container down"
+term
+wait 2>/dev/null || true

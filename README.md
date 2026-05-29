@@ -225,9 +225,42 @@ Set via environment variables (the Docker image ships sensible defaults):
 | `NGINX_DEFAULT_CERT` / `NGINX_DEFAULT_KEY` | Bootstrap self-signed cert | `/data/nginx/selfsigned.*` |
 | `CERT_DIR` | Per-host certs & client CAs | `/data/certs` |
 | `NGINX_BIN` | Nginx binary for test/reload | `nginx` |
+| `NGINUX_ADMIN_PASSWORD` | First-run admin password. In production, a strong one is generated and logged once if unset (never defaults to `changeme`). | — |
+| `NGINUX_TRUST_PROXY` | Trust `X-Forwarded-For` from the proxy in front (set `true` in the container). Off by default to prevent IP spoofing. | `true` (compose) |
+| `NGINUX_SECURE_COOKIES` | Force the `Secure` cookie flag. Defaults on in production. | (prod on) |
+| `NGINUX_FORWARD_SECRET` | Shared secret nginx sends to the forward-auth endpoint so it can't be called directly. | — |
+| `NGINUX_CONTROL_URL` | Where nginx reaches the control plane for forward-auth. | `http://127.0.0.1:4600` |
+| `NGINUX_AUDIT_RETAIN_DAYS` | Audit-log retention before pruning. | `90` |
+| `NGINUX_SSE_MAX` | Max concurrent SSE connections. | `200` |
+| `NGINUX_DEMO_TRAFFIC` | Set `1` to feed synthetic traffic (never auto-on in prod). | — |
 
 Credentials (GoDaddy, Cloudflare, Let's Encrypt email, notification tokens) are
 entered in **Settings** at runtime — never baked into the image.
+
+---
+
+## Security model
+
+NginUX is built defense-in-depth, suitable for an internet-exposed control plane:
+
+- **Authentication:** scrypt password hashing with per-user salt and constant-time
+  comparison; CSPRNG session tokens (256-bit) in `HttpOnly`/`SameSite=Lax`/`Secure`
+  cookies; RFC-6238 TOTP 2FA with single-use, hashed-at-rest backup codes.
+- **Authorization (RBAC):** every mutating route is role-gated server-side —
+  `admin` (full), `editor` (host + cert management), `scoped` (only hosts in its
+  scope), `readonly` (GET only). Agent tokens are scope-checked per tool.
+- **Brute-force defense:** per-IP+username login rate limiting on the control
+  plane itself, plus the nginx-level fail2ban deny-list; constant-time path for
+  unknown usernames (no enumeration oracle).
+- **Injection-safe config generation:** domains, IPs/CIDRs, header names, path
+  rules, and upstream targets are strictly validated before they reach generated
+  nginx config; raw `customNginx` directives are admin-only and brace-free; cert
+  paths are path-traversal-contained. All SQL is parameterized.
+- **CSRF:** cookie-authenticated mutations require a same-origin `Origin`/`Referer`.
+- **SSRF:** outbound webhooks / notification targets can't point at the
+  cloud-metadata / link-local range.
+- **Transport:** trust `X-Forwarded-For` only from a configured proxy; the
+  container drops all Linux capabilities except those needed to bind low ports.
 
 ---
 
