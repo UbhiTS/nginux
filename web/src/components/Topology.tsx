@@ -134,10 +134,10 @@ export function Topology({
     const byteMax = Math.max(1, ...services.flatMap((s) => { const st = sx[s.domain]; return st ? [st.bytesIn, st.bytesOut] : [0]; }));
     const widthFor = (b: number) => (b <= 0 ? MIN_W : Math.min(MAX_W, MIN_W + (b / byteMax) * (MAX_W - MIN_W)));
 
-    // A paused service isn't served, but the internet may still hit its public
-    // address — so keep the internet → router leg alive (dots + width) and make
-    // only the router → service leg inert (thin, dashed, no through-traffic and
-    // no response), the same way we draw an unreachable host.
+    // A paused service isn't served, but the internet may still reach its public
+    // address. We draw both internet↔router lines (ingress + egress) solid and
+    // both gateway↔service lines dashed, with no travelling dots (handled in the
+    // `paused` branch below). `down` keeps the unreachable-host treatment.
     const paused = !svc.enabled;
     const down = svc.health === "down";
     const inert = down || paused; // router → service leg is dead
@@ -169,6 +169,21 @@ export function Topology({
     const color = PALETTE[i % PALETTE.length];
     const up = (p: Pt): Pt => ({ x: p.x, y: p.y - LINE_OFF });
     const dn = (p: Pt): Pt => ({ x: p.x, y: p.y + LINE_OFF });
+
+    // Paused: both internet↔router lines solid (traffic still arrives at the
+    // gateway) and both gateway↔service lines dashed (nothing passes to the app),
+    // with no dots — there's no live flow to animate while paused.
+    if (paused) {
+      const ps: Stroke[] = [
+        { d: segPath(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: MIN_W },
+        { d: segPath(dn(a1), dn(b1)), color, dashed: false, host: svc.domain, width: MIN_W },
+      ];
+      if (el) {
+        ps.push({ d: segPath(up(a2), up(b2)), color, dashed: true, host: svc.domain, width: MIN_W });
+        ps.push({ d: segPath(dn(a2), dn(b2)), color, dashed: true, host: svc.domain, width: MIN_W });
+      }
+      return { strokes: ps, flows: [], gen: 0, cycle: 8 };
+    }
 
     // Request (ingress) line — upper: width ∝ request bandwidth, pulses on the request batch.
     const fwdBase = live ? MIN_W : inW;
