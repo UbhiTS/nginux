@@ -20,7 +20,7 @@ interface Flow {
 const MAX_DOTS = 6;
 const DUR = 5.5; // same cycle length for every service → identical dot speed
 const BASE_TRAVEL = 0.34; // flight fraction used by the longest path (must fit a window span)
-const DOT_GAP = 0.007; // launch gap between consecutive dots (fraction of cycle) → tight stream
+const DOT_GAP = 0.014; // launch gap between consecutive dots (fraction of cycle) → spaced stream
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
