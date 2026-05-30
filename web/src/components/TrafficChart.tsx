@@ -49,6 +49,8 @@ export function TrafficChart() {
                 fontSize: 11,
                 color: "var(--text-faint)",
                 marginTop: 6,
+                paddingLeft: 34,
+                paddingRight: 10,
               }}
             >
               {traffic.axis.map((a) => (
@@ -83,29 +85,58 @@ function Metric({ label, value, suffix }: { label: string; value: string; suffix
   );
 }
 
+function fmtReq(n: number): string {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return String(Math.round(n));
+}
+
 function Chart({ data }: { data: number[] }) {
-  const W = 600;
-  const H = 170;
-  const pad = 8;
-  const max = Math.max(...data) * 1.1;
-  const px = (i: number) => pad + (i * (W - 2 * pad)) / (data.length - 1);
-  const py = (v: number) => H - pad - (v / max) * (H - 2 * pad);
+  const W = 600, H = 170, padL = 36, padR = 10, padT = 10, padB = 10;
+  const maxData = Math.max(1, ...data);
+  const max = maxData * 1.1;
+  const px = (i: number) => padL + (i * (W - padL - padR)) / (data.length - 1);
+  const py = (v: number) => H - padB - (v / max) * (H - padT - padB);
   const line = data.map((v, i) => `${i ? "L" : "M"}${px(i).toFixed(1)} ${py(v).toFixed(1)}`).join(" ");
   const area =
-    `M ${pad} ${H - pad} ` +
+    `M ${px(0).toFixed(1)} ${H - padB} ` +
     data.map((v, i) => `L${px(i).toFixed(1)} ${py(v).toFixed(1)}`).join(" ") +
-    ` L ${W - pad} ${H - pad} Z`;
+    ` L ${(W - padR).toFixed(1)} ${H - padB} Z`;
+
+  const hLevels = [0, 0.25, 0.5, 0.75, 1];
+  const vCount = 5;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: 170, display: "block" }}>
-      <defs>
-        <linearGradient id="tgrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.35} />
-          <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
-        </linearGradient>
-      </defs>
-      <path d={area} fill="url(#tgrad)" />
-      <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2.2} vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: "100%", height: 170, display: "block" }}>
+        <defs>
+          <linearGradient id="tgrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.35} />
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        {/* horizontal grid (request levels) */}
+        {hLevels.map((L) => {
+          const y = H - padB - L * (H - padT - padB);
+          return <line key={`h${L}`} x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--border)" strokeOpacity={0.5} strokeWidth={1} vectorEffect="non-scaling-stroke" />;
+        })}
+        {/* vertical grid (time) */}
+        {Array.from({ length: vCount }).map((_, j) => {
+          const x = padL + (j * (W - padL - padR)) / (vCount - 1);
+          return <line key={`v${j}`} x1={x} y1={padT} x2={x} y2={H - padB} stroke="var(--border)" strokeOpacity={0.5} strokeWidth={1} vectorEffect="non-scaling-stroke" />;
+        })}
+        <path d={area} fill="url(#tgrad)" />
+        <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2.2} vectorEffect="non-scaling-stroke" />
+      </svg>
+      {/* y-axis request-count labels (HTML overlay; vertical scale is 1:1 with px) */}
+      {[1, 0.5, 0].map((L) => {
+        const y = H - padB - L * (H - padT - padB);
+        return (
+          <span key={`yl${L}`} style={{ position: "absolute", left: 0, top: `${y - 6}px`, width: 30, textAlign: "right", fontSize: 10, color: "var(--text-faint)" }}>
+            {fmtReq(maxData * L)}
+          </span>
+        );
+      })}
+    </div>
   );
 }

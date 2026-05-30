@@ -27,9 +27,11 @@ const minuteBuckets = new Map<number, { count: number; bytes: number }>();
 const secondBuckets = new Map<number, { count: number; bytes: number }>();
 const statusClass = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
 const byHost = new Map<string, number>();
-// Per-minute, per-host counts so the Network Map can show traffic over a window
-// (and a short "live" window). Bounded to ~25h of minutes like minuteBuckets.
+// Per-minute, per-host counts so the Network Map can show traffic over a window.
+// Bounded to ~25h of minutes like minuteBuckets.
 const hostMinute = new Map<number, Map<string, number>>();
+// Per-second, per-host counts for the 60s "live" window (last ~2.5 min retained).
+const hostSecond = new Map<number, Map<string, number>>();
 const byIp = new Map<string, number>();
 const byPath = new Map<string, number>();
 const byCountry = new Map<string, number>();
@@ -66,6 +68,11 @@ export function ingest(e: LogEntry): void {
   sb.count++; sb.bytes += e.bytes;
   secondBuckets.set(second, sb);
   if (secondBuckets.size > 200) secondBuckets.delete(Math.min(...secondBuckets.keys()));
+
+  let hsec = hostSecond.get(second);
+  if (!hsec) { hsec = new Map(); hostSecond.set(second, hsec); }
+  hsec.set(e.host, (hsec.get(e.host) ?? 0) + 1);
+  if (hostSecond.size > 150) hostSecond.delete(Math.min(...hostSecond.keys()));
 
   let hm = hostMinute.get(minute);
   if (!hm) { hm = new Map(); hostMinute.set(minute, hm); }
@@ -134,24 +141,36 @@ export function summary() {
  *  "live" is a short rolling window so the map reacts to current load; longer
  *  ranges aggregate more. Falls back to all-time counts if the window is empty. */
 export function hostTraffic(range: string): { key: string; count: number }[] {
-  const spans: Record<string, number> = { live: 3, "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
-  const minutes = spans[range] ?? 3;
-  const nowMin = Math.floor(Date.now() / 60000);
+  const sorted = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
   const acc = new Map<string, number>();
-  for (let m = 0; m < minutes; m++) {
-    const hm = hostMinute.get(nowMin - m);
-    if (!hm) continue;
-    for (const [h, c] of hm) acc.set(h, (acc.get(h) ?? 0) + c);
+
+  if (range === "live") {
+    // True rolling 60-second window from per-second data.
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (let s = 0; s < 60; s++) {
+      const hs = hostSecond.get(nowSec - s);
+      if (!hs) continue;
+      for (const [h, c] of hs) acc.set(h, (acc.get(h) ?? 0) + c);
+    }
+  } else {
+    const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
+    const minutes = spans[range] ?? 60;
+    const nowMin = Math.floor(Date.now() / 60000);
+    for (let m = 0; m < minutes; m++) {
+      const hm = hostMinute.get(nowMin - m);
+      if (!hm) continue;
+      for (const [h, c] of hm) acc.set(h, (acc.get(h) ?? 0) + c);
+    }
   }
-  if (acc.size === 0) return [...byHost.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
-  return [...acc.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
+  if (acc.size === 0) return sorted(byHost);
+  return sorted(acc);
 }
 
 /** Time series for a range, sampled into ~30 buckets from real minute data. */
 export function trafficSeries(range: string): { range: string; data: number[]; total: string; peak: string; unit: string; axis: string[]; real: boolean } {
   // "live": last ~90s at 3s resolution, straight from the real per-second data.
   if (range === "live") {
-    const points = 30, perSec = 3;
+    const points = 30, perSec = 2; // 60s window at 2s resolution
     const nowSec = Math.floor(Date.now() / 1000);
     const data: number[] = [];
     let total = 0;
@@ -164,7 +183,7 @@ export function trafficSeries(range: string): { range: string; data: number[]; t
     return {
       range: "live", data,
       total: fmtNum(total), peak: fmtNum(Math.max(0, ...data)),
-      unit: "/3s", axis: ["90s", "60s", "30s", "now"], real: true,
+      unit: "/2s", axis: ["60s", "45s", "30s", "15s", "now"], real: true,
     };
   }
   const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
