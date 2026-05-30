@@ -42,17 +42,18 @@ export function Topology({
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traffic, setTraffic] = useState<Record<string, number>>({});
   const [range, setRange] = useState("live");
+  const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
 
   useEffect(() => {
     let alive = true;
     const pull = () =>
-      api.hostTraffic(range)
+      api.hostTraffic(range, metric)
         .then((hosts) => { if (alive) setTraffic(Object.fromEntries(hosts.map((h) => [h.key, h.count]))); })
         .catch(() => {});
     pull();
     const id = setInterval(pull, range === "live" ? 3000 : 8000);
     return () => { alive = false; clearInterval(id); };
-  }, [range]);
+  }, [range, metric]);
 
   const draw = useCallback(() => {
     const wrap = wrapRef.current;
@@ -153,12 +154,21 @@ export function Topology({
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-head">
         Network map
-        <div className="range-tabs" style={{ marginLeft: "auto" }}>
-          {["1h", "4h", "1d", "7d", "30d", "live"].map((r) => (
-            <button key={r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
-              {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
-            </button>
-          ))}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div className="range-tabs">
+            {(["requests", "bandwidth"] as const).map((m) => (
+              <button key={m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>
+                {m === "requests" ? "Requests" : "Bandwidth"}
+              </button>
+            ))}
+          </div>
+          <div className="range-tabs">
+            {["1h", "4h", "1d", "7d", "30d", "live"].map((r) => (
+              <button key={r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
+                {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="topo" ref={wrapRef}>

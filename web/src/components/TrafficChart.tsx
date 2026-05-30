@@ -6,42 +6,52 @@ const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
 
 export function TrafficChart() {
   const [range, setRange] = useState("live");
+  const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
   const [traffic, setTraffic] = useState<Traffic | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const pull = () => api.traffic(range).then((t) => { if (alive) setTraffic(t); }).catch(() => {});
+    const pull = () => api.traffic(range, metric).then((t) => { if (alive) setTraffic(t); }).catch(() => {});
     pull();
     // "live" refreshes in near-real-time; other ranges are mostly static.
     const id = setInterval(pull, range === "live" ? 3000 : 15000);
     return () => { alive = false; clearInterval(id); };
-  }, [range]);
+  }, [range, metric]);
 
   return (
     <div className="card">
       <div className="card-head">
         Traffic
-        <div className="range-tabs">
-          {RANGES.map((r) => (
-            <button
-              key={r}
-              className={`range${range === r ? " active" : ""}`}
-              onClick={() => setRange(r)}
-            >
-              {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
-            </button>
-          ))}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div className="range-tabs">
+            {(["requests", "bandwidth"] as const).map((m) => (
+              <button key={m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>
+                {m === "requests" ? "Requests" : "Bandwidth"}
+              </button>
+            ))}
+          </div>
+          <div className="range-tabs">
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                className={`range${range === r ? " active" : ""}`}
+                onClick={() => setRange(r)}
+              >
+                {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="card-pad">
         {traffic && (
           <>
             <div style={{ display: "flex", gap: 26, marginBottom: 12 }}>
-              <Metric label="Requests" value={traffic.total} />
+              <Metric label={metric === "bandwidth" ? "Bandwidth" : "Requests"} value={traffic.total} />
               <Metric label="Peak" value={traffic.peak} suffix={traffic.unit} />
               <Metric label="Avg p95" value="112" suffix="ms" />
             </div>
-            <Chart data={traffic.data} />
+            <Chart data={traffic.data} metric={metric} />
             <div
               style={{
                 display: "flex",
@@ -49,7 +59,7 @@ export function TrafficChart() {
                 fontSize: 11,
                 color: "var(--text-faint)",
                 marginTop: 6,
-                paddingLeft: 34,
+                paddingLeft: 40,
                 paddingRight: 10,
               }}
             >
@@ -91,11 +101,27 @@ function fmtReq(n: number): string {
   return String(Math.round(n));
 }
 
-function Chart({ data }: { data: number[] }) {
-  const W = 600, H = 170, padL = 36, padR = 10, padT = 10, padB = 10;
+function fmtBytes(n: number): string {
+  if (n >= 1e9) return (n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + "GB";
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "MB";
+  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "KB";
+  return Math.round(n) + "B";
+}
+
+/** Round up to a "nice" value (1/2/5 × 10ⁿ) for a clean bandwidth axis. */
+function niceCeil(n: number): number {
+  if (n <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(n)));
+  const f = n / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+}
+
+function Chart({ data, metric }: { data: number[]; metric: "requests" | "bandwidth" }) {
+  const W = 600, H = 170, padL = 40, padR = 10, padT = 10, padB = 10;
   const maxData = Math.max(1, ...data);
-  // Y-axis ceiling rounded up to the next multiple of 10 (min 10) so gridline labels are clean.
-  const max = Math.max(10, Math.ceil(maxData / 10) * 10);
+  const fmtY = metric === "bandwidth" ? fmtBytes : fmtReq;
+  // Requests: next multiple of 10 (min 10). Bandwidth: next 1/2/5×10ⁿ.
+  const max = metric === "bandwidth" ? niceCeil(maxData) : Math.max(10, Math.ceil(maxData / 10) * 10);
   const px = (i: number) => padL + (i * (W - padL - padR)) / (data.length - 1);
   const py = (v: number) => H - padB - (v / max) * (H - padT - padB);
   const line = data.map((v, i) => `${i ? "L" : "M"}${px(i).toFixed(1)} ${py(v).toFixed(1)}`).join(" ");
@@ -133,8 +159,8 @@ function Chart({ data }: { data: number[] }) {
       {[1, 0.5, 0].map((L) => {
         const y = H - padB - L * (H - padT - padB);
         return (
-          <span key={`yl${L}`} style={{ position: "absolute", left: 0, top: `${y - 6}px`, width: 30, textAlign: "right", fontSize: 10, color: "var(--text-faint)" }}>
-            {fmtReq(max * L)}
+          <span key={`yl${L}`} style={{ position: "absolute", left: 0, top: `${y - 6}px`, width: 34, textAlign: "right", fontSize: 10, color: "var(--text-faint)" }}>
+            {fmtY(max * L)}
           </span>
         );
       })}

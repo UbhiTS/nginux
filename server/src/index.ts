@@ -521,15 +521,15 @@ app.get("/api/topology", async () => {
 });
 
 app.get("/api/traffic", async (req) => {
-  const { range = "1d" } = req.query as { range?: string };
-  return trafficSeries(range);
+  const { range = "live", metric = "requests" } = req.query as { range?: string; metric?: string };
+  return trafficSeries(range, metric === "bandwidth" ? "bandwidth" : "requests");
 });
 
 // ---------- logs + metrics ----------
 app.get("/api/metrics/summary", async () => metricsSummary());
 app.get("/api/metrics/hosts", async (req) => {
-  const { range = "live" } = req.query as { range?: string };
-  return hostTraffic(range);
+  const { range = "live", metric = "requests" } = req.query as { range?: string; metric?: string };
+  return hostTraffic(range, metric === "bandwidth" ? "bandwidth" : "requests");
 });
 app.get("/api/metrics/traffic", async (req) => {
   const { range = "1d" } = req.query as { range?: string };

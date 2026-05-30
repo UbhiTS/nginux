@@ -27,11 +27,14 @@ const minuteBuckets = new Map<number, { count: number; bytes: number }>();
 const secondBuckets = new Map<number, { count: number; bytes: number }>();
 const statusClass = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
 const byHost = new Map<string, number>();
-// Per-minute, per-host counts so the Network Map can show traffic over a window.
-// Bounded to ~25h of minutes like minuteBuckets.
-const hostMinute = new Map<number, Map<string, number>>();
-// Per-second, per-host counts for the 60s "live" window (last ~2.5 min retained).
-const hostSecond = new Map<number, Map<string, number>>();
+// Per-minute, per-host requests + bytes so the Network Map can show either
+// metric over a window. Bounded to ~25h of minutes like minuteBuckets.
+type HostStat = { count: number; bytes: number };
+const hostMinute = new Map<number, Map<string, HostStat>>();
+// Per-second, per-host stats for the 60s "live" window (last ~2.5 min retained).
+const hostSecond = new Map<number, Map<string, HostStat>>();
+// Cumulative per-host bytes (fallback when a window has no data).
+const byHostBytes = new Map<string, number>();
 const byIp = new Map<string, number>();
 const byPath = new Map<string, number>();
 const byCountry = new Map<string, number>();
@@ -71,13 +74,17 @@ export function ingest(e: LogEntry): void {
 
   let hsec = hostSecond.get(second);
   if (!hsec) { hsec = new Map(); hostSecond.set(second, hsec); }
-  hsec.set(e.host, (hsec.get(e.host) ?? 0) + 1);
+  const hsv = hsec.get(e.host) ?? { count: 0, bytes: 0 };
+  hsv.count++; hsv.bytes += e.bytes; hsec.set(e.host, hsv);
   if (hostSecond.size > 150) hostSecond.delete(Math.min(...hostSecond.keys()));
 
   let hm = hostMinute.get(minute);
   if (!hm) { hm = new Map(); hostMinute.set(minute, hm); }
-  hm.set(e.host, (hm.get(e.host) ?? 0) + 1);
+  const hmv = hm.get(e.host) ?? { count: 0, bytes: 0 };
+  hmv.count++; hmv.bytes += e.bytes; hm.set(e.host, hmv);
   if (hostMinute.size > 1500) hostMinute.delete(Math.min(...hostMinute.keys()));
+
+  byHostBytes.set(e.host, (byHostBytes.get(e.host) ?? 0) + e.bytes);
 
   const cls = `${Math.floor(e.status / 100)}xx` as keyof typeof statusClass;
   if (cls in statusClass) statusClass[cls]++;
@@ -140,17 +147,18 @@ export function summary() {
 /** Per-host request counts over a time window (drives the Network Map dots).
  *  "live" is a short rolling window so the map reacts to current load; longer
  *  ranges aggregate more. Falls back to all-time counts if the window is empty. */
-export function hostTraffic(range: string): { key: string; count: number }[] {
+export function hostTraffic(range: string, metric: "requests" | "bandwidth" = "requests"): { key: string; count: number }[] {
+  const bw = metric === "bandwidth";
   const sorted = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
   const acc = new Map<string, number>();
+  const add = (h: string, v: HostStat) => acc.set(h, (acc.get(h) ?? 0) + (bw ? v.bytes : v.count));
 
   if (range === "live") {
     // True rolling 60-second window from per-second data.
     const nowSec = Math.floor(Date.now() / 1000);
     for (let s = 0; s < 60; s++) {
       const hs = hostSecond.get(nowSec - s);
-      if (!hs) continue;
-      for (const [h, c] of hs) acc.set(h, (acc.get(h) ?? 0) + c);
+      if (hs) for (const [h, v] of hs) add(h, v);
     }
   } else {
     const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
@@ -158,31 +166,35 @@ export function hostTraffic(range: string): { key: string; count: number }[] {
     const nowMin = Math.floor(Date.now() / 60000);
     for (let m = 0; m < minutes; m++) {
       const hm = hostMinute.get(nowMin - m);
-      if (!hm) continue;
-      for (const [h, c] of hm) acc.set(h, (acc.get(h) ?? 0) + c);
+      if (hm) for (const [h, v] of hm) add(h, v);
     }
   }
-  if (acc.size === 0) return sorted(byHost);
+  if (acc.size === 0) return sorted(bw ? byHostBytes : byHost);
   return sorted(acc);
 }
 
-/** Time series for a range, sampled into ~30 buckets from real minute data. */
-export function trafficSeries(range: string): { range: string; data: number[]; total: string; peak: string; unit: string; axis: string[]; real: boolean } {
-  // "live": last ~90s at 3s resolution, straight from the real per-second data.
+/** Time series for a range + metric (requests or bandwidth/bytes), sampled into
+ *  ~30 buckets from real minute/second data. */
+export function trafficSeries(range: string, metric: "requests" | "bandwidth" = "requests"): { range: string; data: number[]; total: string; peak: string; unit: string; axis: string[]; real: boolean } {
+  const bw = metric === "bandwidth";
+  const fmt = bw ? fmtBytes : fmtNum;
+  const pick = (b?: { count: number; bytes: number }) => (b ? (bw ? b.bytes : b.count) : 0);
+
+  // "live": 60s window at 2s resolution, straight from the real per-second data.
   if (range === "live") {
-    const points = 30, perSec = 2; // 60s window at 2s resolution
+    const points = 30, perSec = 2;
     const nowSec = Math.floor(Date.now() / 1000);
     const data: number[] = [];
     let total = 0;
     for (let i = points - 1; i >= 0; i--) {
       let sum = 0;
-      for (let s = 0; s < perSec; s++) sum += secondBuckets.get(nowSec - i * perSec - s)?.count ?? 0;
+      for (let s = 0; s < perSec; s++) sum += pick(secondBuckets.get(nowSec - i * perSec - s));
       data.push(sum);
       total += sum;
     }
     return {
       range: "live", data,
-      total: fmtNum(total), peak: fmtNum(Math.max(0, ...data)),
+      total: fmt(total), peak: fmt(Math.max(0, ...data)),
       unit: "/2s", axis: ["60s", "45s", "30s", "15s", "now"], real: true,
     };
   }
@@ -195,24 +207,29 @@ export function trafficSeries(range: string): { range: string; data: number[]; t
   let total = 0;
   for (let i = points - 1; i >= 0; i--) {
     let sum = 0;
-    for (let m = 0; m < per; m++) {
-      const minute = nowMin - i * per - m;
-      sum += minuteBuckets.get(minute)?.count ?? 0;
-    }
+    for (let m = 0; m < per; m++) sum += pick(minuteBuckets.get(nowMin - i * per - m));
     data.push(sum);
     total += sum;
   }
   const real = total > 0;
-  if (!real) return { ...synthetic(range), real: false };
-  const peak = Math.max(...data);
+  // Synthetic demo data only makes sense for request counts; bandwidth shows real (possibly 0).
+  if (!real && !bw) return { ...synthetic(range), real: false };
+  const peak = Math.max(0, ...data);
   return {
     range, data,
-    total: fmtNum(total),
-    peak: fmtNum(peak),
+    total: fmt(total),
+    peak: fmt(peak),
     unit: per === 1 ? "/min" : `/${per}m`,
     axis: axisFor(range),
-    real: true,
+    real,
   };
+}
+
+function fmtBytes(n: number): string {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + " GB";
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + " KB";
+  return Math.round(n) + " B";
 }
 
 function axisFor(range: string): string[] {

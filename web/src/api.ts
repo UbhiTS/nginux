@@ -54,7 +54,7 @@ export const api = {
   saveSettings: (patch: Partial<Settings>) =>
     req<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
   topology: () => req<Topology>("/topology"),
-  traffic: (range: string) => req<Traffic>(`/traffic?range=${range}`),
+  traffic: (range: string, metric: string = "requests") => req<Traffic>(`/traffic?range=${range}&metric=${metric}`),
 
   // ---- auth ----
   me: () => req<AuthUser>("/auth/me"),
@@ -130,7 +130,7 @@ export const api = {
 
   // ---- logs / metrics ----
   metricsSummary: () => req<MetricsSummary>("/metrics/summary"),
-  hostTraffic: (range: string) => req<{ key: string; count: number }[]>(`/metrics/hosts?range=${range}`),
+  hostTraffic: (range: string, metric: string = "requests") => req<{ key: string; count: number }[]>(`/metrics/hosts?range=${range}&metric=${metric}`),
   recentLogs: (filter?: string, limit = 200) =>
     req<LogEntry[]>(`/logs/recent?${filter ? `filter=${encodeURIComponent(filter)}&` : ""}limit=${limit}`),
 
