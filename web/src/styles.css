@@ -241,6 +241,14 @@ button { font-family: inherit; cursor: pointer; }
 .kv { display: flex; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid var(--border-soft); font-size: 13px; }
 .kv:last-child { border: none; }
 .kv .k { color: var(--text-dim); }
+/* security score card: ring with the number centered, text beside it */
+.score-card { display: flex; align-items: center; gap: 18px; }
+.ring { position: relative; width: 96px; height: 96px; flex-shrink: 0; }
+.ring svg { transform: rotate(-90deg); transform-origin: center; }
+.ring .num { position: absolute; inset: 0; display: grid; place-items: center; font-size: 26px; font-weight: 800; color: var(--text); }
+/* policy rows: fixed-width pill so the descriptions line up in a column */
+.kv .k.pol { display: flex; align-items: center; gap: 9px; }
+.kv .k.pol .pill { min-width: 78px; justify-content: center; flex-shrink: 0; }
 .kv .v { font-weight: 600; }
 .card-pad { padding: 18px 20px; }
 .card-head { padding: 15px 20px; border-bottom: 1px solid var(--border-soft); font-weight: 650; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }

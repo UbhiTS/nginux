@@ -233,10 +233,10 @@ function McpTab({ tools, tokens, reload, origin }: { tools: ToolDef[]; tokens: A
       </div>
       <div className="card">
         {tools.map((t) => (
-          <div key={t.name} className="arow" style={{ gridTemplateColumns: "1.4fr 2fr auto" }}>
+          <div key={t.name} className="arow" style={{ gridTemplateColumns: "1.4fr 2fr 90px" }}>
             <div className="mono">{t.name}</div>
             <div className="muted">{t.description}</div>
-            <span className={`pill ${tier(t.tier).cls}`}>{tier(t.tier).label}</span>
+            <span className={`pill ${tier(t.tier).cls}`} style={{ justifySelf: "end" }}>{tier(t.tier).label}</span>
           </div>
         ))}
       </div>
@@ -260,10 +260,10 @@ function SafetyTab({ pending, decide, settings, onPolicy }: { pending: Approval[
         <button className={`switch${settings.agentAutoApprove ? " on" : ""}`} onClick={() => onPolicy(!settings.agentAutoApprove)} />
       </div>
       <div className="card card-pad">
-        <div className="kv"><span className="k"><span className="pill n">Read-only</span> view config, status, metrics</span><span className="v muted">always allowed</span></div>
-        <div className="kv"><span className="k"><span className="pill g">Low</span> reversible (ban, renew, reload)</span><span className="v muted">trusted → auto</span></div>
-        <div className="kv"><span className="k"><span className="pill y">Medium</span> exposing (create/update host, DNS)</span><span className="v muted">trusted → auto</span></div>
-        <div className="kv" style={{ border: "none" }}><span className="k"><span className="pill r">High</span> destructive (delete, disable login)</span><span className="v muted">always asks a human</span></div>
+        <div className="kv"><span className="k pol"><span className="pill n">Read-only</span> view config, status, metrics</span><span className="v muted">always allowed</span></div>
+        <div className="kv"><span className="k pol"><span className="pill g">Low</span> reversible (ban, renew, reload)</span><span className="v muted">trusted → auto</span></div>
+        <div className="kv"><span className="k pol"><span className="pill y">Medium</span> exposing (create/update host, DNS)</span><span className="v muted">trusted → auto</span></div>
+        <div className="kv" style={{ border: "none" }}><span className="k pol"><span className="pill r">High</span> destructive (delete, disable login)</span><span className="v muted">always asks a human</span></div>
       </div>
     </>
   );
