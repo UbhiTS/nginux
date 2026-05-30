@@ -2,12 +2,17 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { Route } from "../App.tsx";
 import type { Topology as TopologyData, HealthStatus } from "../types.ts";
 import { healthClass } from "../types.ts";
+import { api } from "../api.ts";
 
 interface Path {
   d: string;
   color: string;
   dashed: boolean;
+  dots: number; // number of dots travelling the line ∝ traffic
+  dur: number; // seconds per loop
 }
+
+const MAX_DOTS = 7;
 
 const cssVar = (n: string) =>
   getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -28,9 +33,23 @@ export function Topology({
   const wrapRef = useRef<HTMLDivElement>(null);
   const internetRef = useRef<HTMLDivElement>(null);
   const gatewayRef = useRef<HTMLDivElement>(null);
-  const serverRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const svcRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [paths, setPaths] = useState<Path[]>([]);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  // requests per service domain (drives how many dots travel each line)
+  const [traffic, setTraffic] = useState<Record<string, number>>({});
+
+  // Poll per-host request counts; the map is "live".
+  useEffect(() => {
+    let alive = true;
+    const pull = () =>
+      api.metricsSummary()
+        .then((s) => { if (alive) setTraffic(Object.fromEntries(s.topHosts.map((h) => [h.key, h.count]))); })
+        .catch(() => {});
+    pull();
+    const id = setInterval(pull, 5000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   const draw = useCallback(() => {
     const wrap = wrapRef.current;
@@ -49,16 +68,38 @@ export function Topology({
       return `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
     };
 
+    // Busiest service sets the scale so dot counts are relative.
+    const allCounts = data.servers.flatMap((s) => s.services.map((svc) => traffic[svc.domain] ?? 0));
+    const max = Math.max(1, ...allCounts);
+    const dotsFor = (domain: string, status: HealthStatus) => {
+      if (status === "down") return 0;
+      const c = traffic[domain] ?? 0;
+      return Math.max(1, Math.round((c / max) * MAX_DOTS));
+    };
+
     const next: Path[] = [];
-    next.push({ d: link(anchor(net, "r"), anchor(gw, "l")), color: cssVar("--accent"), dashed: false });
+    // Internet → gateway (steady single dot).
+    next.push({ d: link(anchor(net, "r"), anchor(gw, "l")), color: cssVar("--accent"), dashed: false, dots: 2, dur: 2.4 });
+
+    // Gateway → each service.
+    let i = 0;
     for (const server of data.servers) {
-      const el = serverRefs.current.get(server.name);
-      if (!el) continue;
-      const { color, dashed } = colorFor(server.status);
-      next.push({ d: link(anchor(gw, "r"), anchor(el, "l")), color, dashed });
+      for (const svc of server.services) {
+        const el = svcRefs.current.get(svc.id);
+        if (!el) continue;
+        const { color, dashed } = colorFor(svc.health);
+        next.push({
+          d: link(anchor(gw, "r"), anchor(el, "l")),
+          color,
+          dashed,
+          dots: dotsFor(svc.domain, svc.health),
+          dur: 2.4 + (i % 4) * 0.45, // de-sync lines so dots don't pulse in unison
+        });
+        i++;
+      }
     }
     setPaths(next);
-  }, [data]);
+  }, [data, traffic]);
 
   useLayoutEffect(() => {
     const id = requestAnimationFrame(draw);
@@ -95,14 +136,19 @@ export function Topology({
                 fill="none"
                 stroke={p.color}
                 strokeWidth={2}
-                strokeOpacity={p.dashed ? 0.35 : 0.7}
+                strokeOpacity={p.dashed ? 0.35 : 0.6}
                 strokeDasharray={p.dashed ? "5 5" : undefined}
               />
-              {!p.dashed && (
-                <circle r={3.2} fill={p.color}>
-                  <animateMotion dur="2.4s" repeatCount="indefinite" path={p.d} />
+              {!p.dashed && Array.from({ length: p.dots }).map((_, k) => (
+                <circle key={k} r={3.2} fill={p.color}>
+                  <animateMotion
+                    dur={`${p.dur}s`}
+                    begin={`-${((k * p.dur) / Math.max(1, p.dots)).toFixed(2)}s`}
+                    repeatCount="indefinite"
+                    path={p.d}
+                  />
                 </circle>
-              )}
+              ))}
             </g>
           ))}
         </svg>
@@ -134,21 +180,22 @@ export function Topology({
 
         <div className="topo-tier tier-srv">
           {data.servers.map((server) => (
-            <div
-              key={server.name}
-              className="srv-card"
-              ref={(el) => {
-                if (el) serverRefs.current.set(server.name, el);
-                else serverRefs.current.delete(server.name);
-              }}
-            >
+            <div key={server.name} className="srv-card">
               <div className="srv-head">
                 <span className="srv-ico">🖥️</span>
                 <span className="srv-name">{server.name}</span>
                 <span className="srv-ip">{server.ip}</span>
               </div>
               {server.services.map((s) => (
-                <div key={s.id} className="svc" onClick={() => navigate({ name: "host", hostId: s.id })}>
+                <div
+                  key={s.id}
+                  className="svc"
+                  ref={(el) => {
+                    if (el) svcRefs.current.set(s.id, el);
+                    else svcRefs.current.delete(s.id);
+                  }}
+                  onClick={() => navigate({ name: "host", hostId: s.id })}
+                >
                   <span className="svc-emoji">{s.emoji}</span>
                   <div className="svc-body">
                     <div className="svc-name">
