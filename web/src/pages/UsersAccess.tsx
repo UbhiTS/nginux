@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type AuthUser, type Session } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
+import { QrCode } from "../components/QrCode.tsx";
 
 type Tab = "users" | "sessions";
 const avatarColor = ["var(--purple)", "var(--accent)", "var(--green)", "var(--text-faint)"];
@@ -174,15 +175,23 @@ export function UsersAccess({
               <div className="card card-pad" style={{ marginBottom: 18 }}>
                 <div style={{ fontWeight: 650, marginBottom: 8 }}>Set up two-factor authentication</div>
                 <p className="muted" style={{ fontSize: 13 }}>
-                  Add this key to your authenticator app, then enter the 6-digit code to confirm.
+                  Scan this QR code with your authenticator app — or enter the key manually — then enter the 6-digit code to confirm.
                 </p>
-                <div className="code" style={{ margin: "12px 0", whiteSpace: "normal", wordBreak: "break-all" }}>
-                  {enroll.secret}
-                </div>
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <input className="input mono" style={{ maxWidth: 160, letterSpacing: 4, textAlign: "center" }} maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} placeholder="123456" />
-                  <button className="btn btn-primary" onClick={verifyEnroll}>Verify &amp; enable</button>
-                  <button className="btn btn-ghost" onClick={() => setEnroll(null)}>Cancel</button>
+                <div style={{ display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap", margin: "14px 0" }}>
+                  <div style={{ background: "#fff", padding: 10, borderRadius: 10, flexShrink: 0, lineHeight: 0 }}>
+                    <QrCode value={enroll.otpauth} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 240 }}>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Or enter this key manually:</div>
+                    <div className="code" style={{ whiteSpace: "normal", wordBreak: "break-all", marginBottom: 14 }}>
+                      {enroll.secret}
+                    </div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <input className="input mono" style={{ maxWidth: 160, letterSpacing: 4, textAlign: "center" }} maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} placeholder="123456" />
+                      <button className="btn btn-primary" onClick={verifyEnroll}>Verify &amp; enable</button>
+                      <button className="btn btn-ghost" onClick={() => setEnroll(null)}>Cancel</button>
+                    </div>
+                  </div>
                 </div>
                 {err && <div className="test-result bad"><Icon.x /><div>{err}</div></div>}
               </div>
