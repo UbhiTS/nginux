@@ -4,7 +4,12 @@ import type { Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { api } from "../api.ts";
 
-interface Stroke { d: string; color: string; dashed: boolean; host: string; width: number; }
+interface Pulse { width: number; t0: number; t1: number; dur: number; begin: string; }
+interface Stroke { d: string; color: string; dashed: boolean; host: string; width: number; pulse?: Pulse; }
+
+const fmtCount = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n)));
+const fmtBytes = (n: number) => (n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : n >= 1e3 ? (n / 1e3).toFixed(0) + " KB" : Math.round(n) + " B");
+const fmtMbps = (bytes: number) => { const m = (bytes * 8) / 1e6 / 60; return m >= 10 ? m.toFixed(0) : m.toFixed(m >= 1 ? 1 : 2); };
 interface Flow {
   path: string; // path a dot travels
   host: string; // the service domain this flow belongs to
@@ -100,6 +105,7 @@ export function Topology({
     // Dots scale with requests; line width scales with bandwidth. Width is
     // normalized against the busiest direction across all services, so a small
     // request line stays thin and a heavy response line goes fat.
+    const live = range === "live";
     const reqMax = Math.max(1, ...services.map((s) => stats[s.domain]?.requests ?? 0));
     const byteMax = Math.max(1, ...services.flatMap((s) => {
       const st = stats[s.domain];
@@ -126,15 +132,6 @@ export function Topology({
       const el = svcRefs.current.get(svc.id);
       const b2 = el ? anchor(el, "l") : a2; // service row
 
-      // Request (ingress) line — upper, width ∝ request bandwidth.
-      nextStrokes.push({ d: seg(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: inW });
-      if (el) nextStrokes.push({ d: seg(up(a2), up(b2)), color, dashed: down, host: svc.domain, width: inW });
-      // Response (egress) line — lower, width ∝ response bandwidth (only when reachable).
-      if (el && !down) {
-        nextStrokes.push({ d: seg(dn(a1), dn(b1)), color, dashed: false, host: svc.domain, width: outW });
-        nextStrokes.push({ d: seg(dn(a2), dn(b2)), color, dashed: false, host: svc.domain, width: outW });
-      }
-
       // Phase offset so services don't move in unison (speed is unaffected).
       const begin = `-${(i * 1.37).toFixed(2)}s`;
 
@@ -147,6 +144,28 @@ export function Topology({
       const cycle = hasResp
         ? HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC + batch(respN) + HANDOFF_SEC / 2
         : HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC / 2;
+      const respStart = HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC;
+
+      // In live mode each line sits at min width and *swells* to its bandwidth
+      // only while its dot batch is in flight (request line on the request batch,
+      // response line on the response batch). Historical ranges show a steady
+      // width = aggregate bandwidth instead.
+      const reqPulse: Pulse | undefined = live && reqN > 0
+        ? { width: inW, t0: (HANDOFF_SEC / 2) / cycle, t1: (HANDOFF_SEC / 2 + reqBatch) / cycle, dur: cycle, begin }
+        : undefined;
+      const respPulse: Pulse | undefined = live && hasResp
+        ? { width: outW, t0: respStart / cycle, t1: (respStart + batch(respN)) / cycle, dur: cycle, begin }
+        : undefined;
+      const inBase = live ? MIN_W : inW;
+      const outBase = live ? MIN_W : outW;
+
+      // Request (ingress) line — upper. Response (egress) line — lower.
+      nextStrokes.push({ d: seg(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: inBase, pulse: reqPulse });
+      if (el) nextStrokes.push({ d: seg(up(a2), up(b2)), color, dashed: down, host: svc.domain, width: inBase, pulse: reqPulse });
+      if (el && !down) {
+        nextStrokes.push({ d: seg(dn(a1), dn(b1)), color, dashed: false, host: svc.domain, width: outBase, pulse: respPulse });
+        nextStrokes.push({ d: seg(dn(a2), dn(b2)), color, dashed: false, host: svc.domain, width: outBase, pulse: respPulse });
+      }
 
       nextFlows.push({
         path: reqPath, host: svc.domain, color, count: reqN, dur: cycle, begin,
@@ -154,7 +173,6 @@ export function Topology({
       });
       if (hasResp) {
         const respPath = through(dn(b2), dn(a2), dn(b1), dn(a1)); // service → gateway → internet (lower line)
-        const respStart = HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC;
         nextFlows.push({
           path: respPath, host: svc.domain, color, count: respN, dur: cycle, begin,
           t0: respStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle,
@@ -164,7 +182,7 @@ export function Topology({
 
     setStrokes(nextStrokes);
     setFlows(nextFlows);
-  }, [data, stats]);
+  }, [data, stats, range]);
 
   useLayoutEffect(() => {
     const id = requestAnimationFrame(draw);
@@ -185,6 +203,8 @@ export function Topology({
         <svg className="topo-lines" viewBox={`0 0 ${box.w} ${box.h}`} preserveAspectRatio="none">
           {strokes.map((s, i) => {
             const dim = hovered ? s.host !== hovered : false;
+            const p = s.pulse;
+            const eps = p ? Math.min(0.005, Math.max(0.001, (p.t1 - p.t0) / 4)) : 0;
             return (
               <path
                 key={`s${i}`}
@@ -195,7 +215,19 @@ export function Topology({
                 strokeLinecap="round"
                 strokeOpacity={dim ? 0.07 : s.dashed ? 0.3 : 0.45}
                 strokeDasharray={s.dashed ? "5 5" : undefined}
-              />
+              >
+                {p && p.width > s.width && p.t1 > p.t0 && (
+                  <animate
+                    attributeName="stroke-width"
+                    dur={`${p.dur}s`}
+                    begin={p.begin}
+                    repeatCount="indefinite"
+                    calcMode="linear"
+                    keyTimes={`0;${+p.t0.toFixed(4)};${+(p.t0 + eps).toFixed(4)};${+(p.t1 - eps).toFixed(4)};${+p.t1.toFixed(4)};1`}
+                    values={`${s.width};${s.width};${p.width};${p.width};${s.width};${s.width}`}
+                  />
+                )}
+              </path>
             );
           })}
           {flows.flatMap((f, fi) => {
@@ -294,6 +326,21 @@ export function Topology({
                         {s.health === "down" ? " · unreachable" : ""}
                       </div>
                     </div>
+                    {(() => {
+                      const st = stats[s.domain];
+                      if (!st || (st.requests === 0 && st.bytesIn === 0 && st.bytesOut === 0)) return null;
+                      const rps = st.requests / 60;
+                      return (
+                        <div className="svc-metrics">
+                          <span className="m-req">{range === "live" ? `${rps >= 10 ? Math.round(rps) : rps.toFixed(1)}/s` : `${fmtCount(st.requests)} req`}</span>
+                          <span className="m-bw" title="in / out">
+                            {range === "live"
+                              ? `${fmtMbps(st.bytesIn)} / ${fmtMbps(st.bytesOut)} Mbps`
+                              : `${fmtBytes(st.bytesIn)} / ${fmtBytes(st.bytesOut)}`}
+                          </span>
+                        </div>
+                      );
+                    })()}
                     <span className="svc-stat">
                       <span className={`dot ${healthClass[s.health]}`} />
                     </span>
