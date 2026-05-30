@@ -4,7 +4,7 @@ set -eu
 
 # Persistent dirs on the mounted volume
 mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs
-touch /data/logs/access.log /data/logs/stream.log /data/nginx/banned.conf
+touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/nginx/banned.conf
 
 # Bootstrap a self-signed cert so SSL server blocks are valid before ACME runs.
 if [ ! -f /data/nginx/selfsigned.crt ]; then
