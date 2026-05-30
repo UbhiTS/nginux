@@ -52,6 +52,7 @@ import {
   deleteCert,
   ensureCert,
   getCert,
+  getCertDetails,
   issue,
   listCerts,
   setAutoRenew,
@@ -823,12 +824,23 @@ app.put("/api/certificates/:domain/autorenew", async (req, reply) => {
   return getCert(dp.data);
 });
 
+app.get("/api/certificates/:domain/details", async (req, reply) => {
+  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
+  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
+  const details = getCertDetails(dp.data);
+  if (!details) return reply.code(404).send({ error: "No certificate file for that domain yet." });
+  return details;
+});
+
 app.delete("/api/certificates/:domain", async (req, reply) => {
   if (!requireRole(req, reply, "admin", "editor")) return;
   const dp = domainParam.safeParse((req.params as { domain: string }).domain);
   if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
   deleteCert(dp.data);
-  return { ok: true };
+  // Re-apply so any host on this domain drops back to the bootstrap cert cleanly.
+  const apply = await applyConfig();
+  logEvent({ type: "cert.deleted", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Deleted certificate for ${dp.data}`, ip: clientIp(req), meta: {} });
+  return { ok: true, apply };
 });
 
 // ---------- agents: tokens ----------

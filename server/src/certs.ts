@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import forge from "node-forge";
@@ -95,6 +95,68 @@ export function setAutoRenew(domain: string, on: boolean) {
 }
 export function deleteCert(domain: string) {
   db.prepare("DELETE FROM certificates WHERE domain = ?").run(domain);
+  // Remove the on-disk key/cert too, so any host on this domain falls back to the
+  // shared bootstrap cert on the next config apply instead of a dangling path.
+  try {
+    rmSync(assertWithin(CERT_DIR, join(CERT_DIR, domain)), { recursive: true, force: true });
+  } catch {
+    /* nothing to remove */
+  }
+}
+
+export interface CertDetails {
+  subject: string;
+  issuer: string;
+  serialNumber: string;
+  fingerprintSha256: string;
+  sans: string[];
+  notBefore: string;
+  notAfter: string;
+  signatureAlgorithm: string;
+  publicKey: string;
+  selfSigned: boolean;
+}
+
+/** Parse the live cert file for a domain and surface the fields a human cares
+ *  about. Returns null when no cert file exists (e.g. host on the bootstrap cert). */
+export function getCertDetails(domain: string): CertDetails | null {
+  const file = join(assertWithin(CERT_DIR, join(CERT_DIR, domain)), "fullchain.pem");
+  if (!existsSync(file)) return null;
+  let cert: forge.pki.Certificate;
+  try {
+    cert = forge.pki.certificateFromPem(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+  const field = (dn: forge.pki.Certificate["subject"], name: string) =>
+    String(dn.getField(name)?.value ?? "");
+  const subjectCN = field(cert.subject, "CN");
+  const issuerCN = field(cert.issuer, "CN");
+  const issuerO = field(cert.issuer, "O");
+
+  const altExt = cert.getExtension("subjectAltName") as
+    | { altNames?: { value: string }[] }
+    | undefined;
+  const sans = (altExt?.altNames ?? []).map((a) => a.value).filter(Boolean);
+
+  const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
+  const fingerprint = forge.md.sha256.create().update(der).digest().toHex().match(/.{2}/g)!.join(":");
+
+  const pk = cert.publicKey as forge.pki.rsa.PublicKey;
+  const bits = pk?.n ? pk.n.bitLength() : 0;
+
+  return {
+    subject: subjectCN || domain,
+    issuer: issuerCN || issuerO || "Unknown",
+    serialNumber: (cert.serialNumber || "").replace(/^0+/, "") || "0",
+    fingerprintSha256: fingerprint,
+    sans,
+    notBefore: cert.validity.notBefore.toISOString(),
+    notAfter: cert.validity.notAfter.toISOString(),
+    signatureAlgorithm: String(forge.pki.oids[cert.signatureOid] ?? cert.signatureOid),
+    publicKey: bits ? `RSA ${bits}-bit` : "RSA",
+    selfSigned: subjectCN === issuerCN && field(cert.subject, "O") === issuerO,
+  };
 }
 
 function writeFiles(domain: string, keyPem: string, certPem: string) {

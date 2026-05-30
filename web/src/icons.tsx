@@ -8,6 +8,11 @@ const S = ({ children, ...p }: P & { children: React.ReactNode }) => (
 );
 
 export const Icon = {
+  trash: (p: P) => (
+    <S {...p}>
+      <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6M10 11v6M14 11v6" />
+    </S>
+  ),
   dashboard: (p: P) => (
     <S {...p}>
       <rect x="3" y="3" width="7" height="7" rx="1" />

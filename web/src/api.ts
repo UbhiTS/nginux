@@ -111,6 +111,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ on }),
     }),
+  certDetails: (domain: string) => req<CertDetails>(`/certificates/${encodeURIComponent(domain)}/details`),
+  deleteCert: (domain: string) => req<{ ok: boolean }>(`/certificates/${encodeURIComponent(domain)}`, { method: "DELETE" }),
 
   // ---- agents / MCP ----
   agentsOverview: () => req<AgentsOverview>("/agents/overview"),
@@ -166,6 +168,19 @@ export const api = {
   deleteChannel: (id: string) => req<{ ok: boolean }>(`/channels/${id}`, { method: "DELETE" }),
   testChannel: (id: string) => req<{ ok: boolean; status: string }>(`/channels/${id}/test`, { method: "POST" }),
 };
+
+export interface CertDetails {
+  subject: string;
+  issuer: string;
+  serialNumber: string;
+  fingerprintSha256: string;
+  sans: string[];
+  notBefore: string;
+  notAfter: string;
+  signatureAlgorithm: string;
+  publicKey: string;
+  selfSigned: boolean;
+}
 
 export interface ConfigVersion {
   id: string;
