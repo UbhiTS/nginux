@@ -26,8 +26,10 @@ export function Wizard({
   const [login, setLogin] = useState(true);
   const [twofa, setTwofa] = useState(true);
   const [country, setCountry] = useState(true);
+  const [certMethod, setCertMethod] = useState<"selfsigned" | "http-01" | "dns-01">("selfsigned");
   const [creating, setCreating] = useState(false);
   const [apply, setApply] = useState<ApplyResult | null>(null);
+  const [certResult, setCertResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const base = settings?.baseDomain ?? "example.com";
   const country2 = settings?.homeCountry ?? "your country";
@@ -58,13 +60,15 @@ export function Wizard({
   const create = async () => {
     if (!preset || !parsed) return;
     setApply(null);
+    setCertResult(null);
     setStep(5);
     setCreating(true);
+    const domain = `${sub}.${base}`;
     try {
       const res = await api.createHost({
         name: preset.label.split(" ")[0] === "Custom" ? sub || "Service" : preset.label.split(" / ")[0],
         emoji: preset.emoji,
-        domain: `${sub}.${base}`,
+        domain,
         forwardScheme: parsed.scheme,
         forwardHost: parsed.host,
         forwardPort: parsed.port,
@@ -80,6 +84,17 @@ export function Wizard({
         enabled: true,
       });
       setApply(res.apply);
+      // If they asked for a trusted certificate, request it now as part of setup.
+      // A failure here doesn't undo the service — it's live on the self-signed
+      // bootstrap cert — so we surface it as a soft warning they can retry.
+      if (ssl && certMethod !== "selfsigned") {
+        try {
+          await api.issueCert(domain, certMethod);
+          setCertResult({ ok: true, message: "Trusted Let's Encrypt certificate installed." });
+        } catch (e) {
+          setCertResult({ ok: false, message: e instanceof Error ? e.message : "Certificate request failed." });
+        }
+      }
       await reload();
     } catch (e) {
       // The create failed (e.g. nginx rejected the config and the host was rolled
@@ -212,6 +227,23 @@ export function Wizard({
               <Toggle on={login} set={setLogin} title="Require login to access this app" desc="Visitors sign in through NginUX before reaching the app." icon={<Icon.users />} />
               <Toggle on={twofa} set={setTwofa} title="Require 2FA (two-factor)" desc="A one-time code on top of the password." icon={<Icon.lock />} />
               <Toggle on={country} set={setCountry} title={`Only allow my country (${country2})`} desc="Block visitors from elsewhere. Your own devices are always allowed." icon={<Icon.globe />} />
+              {ssl && (
+                <div style={{ marginTop: 18 }}>
+                  <div className="section-title" style={{ marginBottom: 8 }}>Certificate</div>
+                  <label className={`radio-card${certMethod === "selfsigned" ? " sel" : ""}`} onClick={() => setCertMethod("selfsigned")}>
+                    <div className="rc-top"><input type="radio" checked={certMethod === "selfsigned"} readOnly /> Self-signed (instant)</div>
+                    <div className="rc-desc">Works right away, but browsers show a "not secure" warning. You can upgrade anytime from Certificates.</div>
+                  </label>
+                  <label className={`radio-card${certMethod === "http-01" ? " sel" : ""}`} onClick={() => setCertMethod("http-01")}>
+                    <div className="rc-top"><input type="radio" checked={certMethod === "http-01"} readOnly /> Trusted · Let's Encrypt (HTTP)</div>
+                    <div className="rc-desc">Free trusted certificate. Needs port 80 reachable from the internet (forward TCP 80 → this server) and public DNS for {sub || "this"}.{base}.</div>
+                  </label>
+                  <label className={`radio-card${certMethod === "dns-01" ? " sel" : ""}`} onClick={() => setCertMethod("dns-01")}>
+                    <div className="rc-top"><input type="radio" checked={certMethod === "dns-01"} readOnly /> Trusted · Let's Encrypt (DNS)</div>
+                    <div className="rc-desc">Free trusted certificate, no open ports needed. Requires a DNS provider connected in Settings.</div>
+                  </label>
+                </div>
+              )}
               {apply && !apply.ok && (
                 <div className="test-result bad" style={{ marginTop: 14 }}>
                   <Icon.x />
@@ -244,6 +276,16 @@ export function Wizard({
                   </div>
                   <h2>{apply?.ok ? "You did it! 🎉" : "Something needs attention"}</h2>
                   <p className="wsub" style={{ marginBottom: 0 }}>{apply?.message}</p>
+                  {apply?.ok && certResult && (
+                    <div className={`test-result ${certResult.ok ? "ok" : "bad"}`} style={{ justifyContent: "center", marginTop: 14, textAlign: "left" }}>
+                      {certResult.ok ? <Icon.check /> : <Icon.alert />}
+                      <div>
+                        {certResult.ok
+                          ? certResult.message
+                          : `Live on a temporary self-signed certificate — couldn't get a trusted one yet: ${certResult.message} Retry from Certificates once the prerequisites are met.`}
+                      </div>
+                    </div>
+                  )}
                   <div className="url-box">
                     🔒 https://{sub}.{base}
                   </div>
