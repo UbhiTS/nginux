@@ -108,7 +108,11 @@ export function Wizard({
         }
         const kind = (e as { kind?: string })?.kind ?? "other";
         const message = e instanceof Error ? e.message : "Certificate request failed.";
-        const retryable = kind === "timeout" || kind === "dns" || kind === "other";
+        // A timeout or unreachable host means a prerequisite is missing (port 80
+        // closed, DNS not pointed/propagated) — a quick retry won't fix that, so
+        // we stop and let them fix it and retry from Certificates. Only genuinely
+        // transient failures retry.
+        const retryable = kind === "dns" || kind === "other";
         if (!retryable || attempt === MAX_CERT_ATTEMPTS) {
           setCertResult({ ok: false, message });
           return;
@@ -343,7 +347,7 @@ export function Wizard({
                   <h2 style={{ marginTop: 16 }}>Setting up {sub}.{base}…</h2>
                   <p className="wsub" style={{ marginBottom: certPhase === "setup" ? undefined : 14 }}>
                     {certPhase === "issuing"
-                      ? `Requesting a trusted certificate from Let's Encrypt… (attempt ${certAttempt} of ${MAX_CERT_ATTEMPTS}). This can take up to a minute.`
+                      ? `Requesting a trusted certificate from Let's Encrypt… (attempt ${certAttempt} of ${MAX_CERT_ATTEMPTS}). Give it up to ~45s, or cancel and keep the self-signed cert.`
                       : certPhase === "backoff"
                       ? `Let's Encrypt didn't answer — retrying in ${retryIn}s…`
                       : "Creating the service and applying the configuration."}

@@ -206,8 +206,10 @@ export async function issueSelfSigned(domain: string): Promise<Certificate> {
   return getCert(domain)!;
 }
 
-// How long a single ACME issuance may run before we give up (configurable).
-const ACME_TIMEOUT_MS = Number(process.env.ACME_TIMEOUT_MS ?? 90000);
+// How long a single ACME issuance may run before we give up (configurable). A
+// challenge that's going to succeed validates well within this; a longer wait
+// almost always means a missing prerequisite (port 80 closed / DNS not set up).
+const ACME_TIMEOUT_MS = Number(process.env.ACME_TIMEOUT_MS ?? 45000);
 const ACCOUNT_KEY_PATH = join(CERT_DIR, "acme-account.key");
 
 /** A categorized ACME failure so the UI can decide whether a retry is worthwhile. */
