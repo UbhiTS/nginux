@@ -134,14 +134,16 @@ export function Topology({
     const byteMax = Math.max(1, ...services.flatMap((s) => { const st = sx[s.domain]; return st ? [st.bytesIn, st.bytesOut] : [0]; }));
     const widthFor = (b: number) => (b <= 0 ? MIN_W : Math.min(MAX_W, MIN_W + (b / byteMax) * (MAX_W - MIN_W)));
 
-    // Paused services aren't served, so render them inert (thin dashed line, no
-    // travelling dots) just like an unreachable host — never animate traffic.
+    // A paused service isn't served, but the internet may still hit its public
+    // address — so keep the internet → router leg alive (dots + width) and make
+    // only the router → service leg inert (thin, dashed, no through-traffic and
+    // no response), the same way we draw an unreachable host.
     const paused = !svc.enabled;
     const down = svc.health === "down";
-    const inert = down || paused;
-    const st = paused ? undefined : sx[svc.domain];
+    const inert = down || paused; // router → service leg is dead
+    const st = sx[svc.domain];
     const req = st?.requests ?? 0;
-    const reqN = paused ? 0 : req > 0 ? Math.max(1, Math.round((req / reqMax) * MAX_DOTS)) : (down ? 0 : 1);
+    const reqN = req > 0 ? Math.max(1, Math.round((req / reqMax) * MAX_DOTS)) : (down ? 0 : 1);
     const a1 = { x: layout.netA.x, y: layout.yAt(layout.netA.y, i) };
     const b1 = { x: layout.gwLeft.x, y: layout.yAt(layout.gwLeft.y, i) };
     const a2 = { x: layout.gwRight.x, y: layout.yAt(layout.gwRight.y, i) };
@@ -180,7 +182,7 @@ export function Topology({
       : undefined;
 
     const strokes: Stroke[] = [{ d: segPath(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: fwdBase, pulse: fwdPulse }];
-    if (el) strokes.push({ d: segPath(up(a2), up(b2)), color, dashed: inert, host: svc.domain, width: fwdBase, pulse: fwdPulse });
+    if (el) strokes.push({ d: segPath(up(a2), up(b2)), color, dashed: inert, host: svc.domain, width: inert ? MIN_W : fwdBase, pulse: inert ? undefined : fwdPulse });
     if (hasResp) {
       strokes.push({ d: segPath(dn(a1), dn(b1)), color, dashed: false, host: svc.domain, width: retBase, pulse: retPulse });
       strokes.push({ d: segPath(dn(a2), dn(b2)), color, dashed: false, host: svc.domain, width: retBase, pulse: retPulse });

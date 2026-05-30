@@ -138,7 +138,9 @@ export function HostDetail({
           {toggling ? <span className="spinner" /> : null}
           {host.enabled ? "Disable" : "Enable"}
         </button>
-        {!editing && <button className="btn" onClick={startEdit}>Edit</button>}
+        <button className="btn" onClick={editing ? () => setEditing(false) : startEdit}>
+          {editing ? "Cancel" : "Edit"}
+        </button>
         <button className="btn btn-danger" onClick={() => setConfirmDel(true)}>
           Delete
         </button>
