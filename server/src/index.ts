@@ -23,6 +23,7 @@ import {
   changePassword,
   checkCredentials,
   clearCookie,
+  cookieSecure,
   createSession,
   createUser,
   deleteUser,
@@ -604,14 +605,14 @@ app.post("/api/auth/login", async (req, reply) => {
 
   const sessionToken = createSession(String(row.id), device(req), ip);
   logEvent({ type: "login.success", severity: "info", actor: username, summary: "Signed in", ip, meta: {} });
-  reply.header("set-cookie", sessionCookie(sessionToken));
+  reply.header("set-cookie", sessionCookie(sessionToken, cookieSecure(req.protocol === "https")));
   return { user: getUserById(String(row.id)) };
 });
 
 app.post("/api/auth/logout", async (req, reply) => {
   const tok = parseCookie(req.headers.cookie)[SESSION_COOKIE];
   if (tok) destroySession(tok);
-  reply.header("set-cookie", clearCookie());
+  reply.header("set-cookie", clearCookie(cookieSecure(req.protocol === "https")));
   return { ok: true };
 });
 

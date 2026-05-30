@@ -237,19 +237,23 @@ export function parseCookie(header: string | undefined): Record<string, string> 
   return out;
 }
 
-// `Secure` in production (the control plane must be served over HTTPS); left
-// off in dev so http://localhost still works. Override with NGINUX_SECURE_COOKIES.
-const SECURE_COOKIE = process.env.NGINUX_SECURE_COOKIES
-  ? process.env.NGINUX_SECURE_COOKIES === "1" || process.env.NGINUX_SECURE_COOKIES === "true"
-  : IS_PROD;
-const secureFlag = SECURE_COOKIE ? "; Secure" : "";
-
-export function sessionCookie(token: string): string {
-  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}${secureFlag}`;
+// Whether to mark the session cookie `Secure`. A Secure cookie is dropped by the
+// browser on plain-HTTP pages, which would break LAN access over http://host:4600.
+// So decide per-request from the actual protocol (HTTPS → Secure), unless an
+// explicit override is set via NGINUX_SECURE_COOKIES (1/true to force, 0/false off).
+const SECURE_OVERRIDE = process.env.NGINUX_SECURE_COOKIES;
+export function cookieSecure(isHttps: boolean): boolean {
+  if (SECURE_OVERRIDE === "1" || SECURE_OVERRIDE === "true") return true;
+  if (SECURE_OVERRIDE === "0" || SECURE_OVERRIDE === "false") return false;
+  return isHttps;
 }
-export function clearCookie(): string {
-  return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secureFlag}`;
+
+export function sessionCookie(token: string, secure = false): string {
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
+}
+export function clearCookie(secure = false): string {
+  return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
 }
 export { SESSION_COOKIE };
 
