@@ -34,7 +34,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout }: Props
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-logo">N</div>
+        <img className="brand-logo" src="/favicon.svg" alt="NginUX" />
         <div className="brand-name">
           NginUX<small>reverse proxy, simplified</small>
         </div>

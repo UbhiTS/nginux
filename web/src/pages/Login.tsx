@@ -33,7 +33,7 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 }}>
       <div className="card" style={{ width: 380, padding: 32 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22 }}>
-          <div className="brand-logo">N</div>
+          <img className="brand-logo" src="/favicon.svg" alt="NginUX" />
           <div className="brand-name">
             NginUX<small>reverse proxy, simplified</small>
           </div>

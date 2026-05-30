@@ -1,20 +1,44 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3b82f6"/>
-      <stop offset="1" stop-color="#a371f7"/>
+    <linearGradient id="bg" x1="4" y1="2" x2="60" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff2d9b"/>
+      <stop offset="0.5" stop-color="#7a2bff"/>
+      <stop offset="1" stop-color="#15e0f5"/>
     </linearGradient>
-    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="64" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+    <radialGradient id="glow" cx="0.3" cy="0.22" r="0.95">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.6"/>
       <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff7c2"/>
+      <stop offset="1" stop-color="#ffd000"/>
     </linearGradient>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="1.4"/>
+    </filter>
   </defs>
-  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#g)"/>
-  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#sheen)"/>
-  <g fill="none" stroke="#ffffff" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M18 46 V18"/>
-    <path d="M18 18 L46 46"/>
-    <path d="M46 46 V18"/>
+
+  <!-- vivid badge + top sheen -->
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#bg)"/>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#glow)"/>
+
+  <!-- orbit ring (network/proxy motif) -->
+  <circle cx="32" cy="32" r="20.5" fill="none" stroke="#ffffff" stroke-opacity="0.4" stroke-width="1.6" stroke-dasharray="2.5 5.5" stroke-linecap="round"/>
+
+  <!-- glowing network nodes on the orbit -->
+  <circle cx="12.5" cy="26" r="3.4" fill="#15e0f5" filter="url(#soft)"/>
+  <circle cx="12.5" cy="26" r="2.4" fill="#ffffff"/>
+  <circle cx="50" cy="44" r="3.4" fill="#ff2d9b" filter="url(#soft)"/>
+  <circle cx="50" cy="44" r="2.4" fill="#ffffff"/>
+
+  <!-- bold N monogram -->
+  <g fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 45 V19"/>
+    <path d="M22 19 L42 45"/>
+    <path d="M42 45 V19"/>
   </g>
-  <circle cx="46" cy="18" r="4.5" fill="#ffffff"/>
+
+  <!-- sparkle: "look at me" -->
+  <g filter="url(#soft)"><path d="M47 8 L49 15 L56 17 L49 19 L47 26 L45 19 L38 17 L45 15 Z" fill="#ffd000" opacity="0.9"/></g>
+  <path d="M47 10 L48.4 15.6 L54 17 L48.4 18.4 L47 24 L45.6 18.4 L40 17 L45.6 15.6 Z" fill="url(#spark)"/>
 </svg>
