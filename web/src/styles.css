@@ -100,6 +100,7 @@ button { font-family: inherit; cursor: pointer; }
 .nav-child.active { background: var(--accent-soft); color: var(--text); border-left-color: var(--accent); }
 .nav-child .ce { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
 .nav-child .dot { margin-left: auto; }
+.nav-child.is-paused { opacity: .55; }
 .nav-add { color: var(--accent); font-weight: 600; }
 .nav-add .ce { font-weight: 700; }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border-soft); display: flex; align-items: center; gap: 10px; }
@@ -143,6 +144,7 @@ button { font-family: inherit; cursor: pointer; }
 .dot.g { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
 .dot.y { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-soft); }
 .dot.r { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+.dot.n { background: var(--text-faint); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-faint) 20%, transparent); }
 .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 20px; }
 .pill svg { width: 12px; height: 12px; }
 .pill.g { background: var(--green-soft); color: var(--green); }

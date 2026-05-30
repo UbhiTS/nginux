@@ -72,12 +72,12 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout }: Props
           {hosts.map((h) => (
             <div
               key={h.id}
-              className={`nav-child${route.name === "host" && route.hostId === h.id ? " active" : ""}`}
+              className={`nav-child${route.name === "host" && route.hostId === h.id ? " active" : ""}${h.enabled ? "" : " is-paused"}`}
               onClick={() => navigate({ name: "host", hostId: h.id })}
             >
               <span className="ce">{h.emoji}</span>
               {h.name}
-              <span className={`dot ${healthClass[h.health]}`} />
+              <span className={`dot ${h.enabled ? healthClass[h.health] : "n"}`} title={h.enabled ? undefined : "Paused"} />
             </div>
           ))}
           <div className="nav-child nav-add" onClick={() => navigate({ name: "wizard" })}>
