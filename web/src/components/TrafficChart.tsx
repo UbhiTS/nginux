@@ -2,14 +2,19 @@ import { useEffect, useState } from "react";
 import { api } from "../api.ts";
 import type { Traffic } from "../types.ts";
 
-const RANGES = ["1h", "4h", "1d", "7d", "30d"];
+const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
 
 export function TrafficChart() {
-  const [range, setRange] = useState("1d");
+  const [range, setRange] = useState("live");
   const [traffic, setTraffic] = useState<Traffic | null>(null);
 
   useEffect(() => {
-    api.traffic(range).then(setTraffic).catch(() => setTraffic(null));
+    let alive = true;
+    const pull = () => api.traffic(range).then((t) => { if (alive) setTraffic(t); }).catch(() => {});
+    pull();
+    // "live" refreshes in near-real-time; other ranges are mostly static.
+    const id = setInterval(pull, range === "live" ? 3000 : 15000);
+    return () => { alive = false; clearInterval(id); };
   }, [range]);
 
   return (
@@ -23,7 +28,7 @@ export function TrafficChart() {
               className={`range${range === r ? " active" : ""}`}
               onClick={() => setRange(r)}
             >
-              {r}
+              {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
             </button>
           ))}
         </div>

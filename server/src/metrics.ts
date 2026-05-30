@@ -23,6 +23,8 @@ export interface LogEntry {
 const RING_MAX = 500;
 const ring: LogEntry[] = [];
 const minuteBuckets = new Map<number, { count: number; bytes: number }>();
+// Per-second totals for the "live" view (last ~3 minutes retained).
+const secondBuckets = new Map<number, { count: number; bytes: number }>();
 const statusClass = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
 const byHost = new Map<string, number>();
 // Per-minute, per-host counts so the Network Map can show traffic over a window
@@ -58,6 +60,12 @@ export function ingest(e: LogEntry): void {
     const oldest = Math.min(...minuteBuckets.keys());
     minuteBuckets.delete(oldest);
   }
+
+  const second = Math.floor(Date.parse(e.ts) / 1000);
+  const sb = secondBuckets.get(second) ?? { count: 0, bytes: 0 };
+  sb.count++; sb.bytes += e.bytes;
+  secondBuckets.set(second, sb);
+  if (secondBuckets.size > 200) secondBuckets.delete(Math.min(...secondBuckets.keys()));
 
   let hm = hostMinute.get(minute);
   if (!hm) { hm = new Map(); hostMinute.set(minute, hm); }
@@ -141,6 +149,24 @@ export function hostTraffic(range: string): { key: string; count: number }[] {
 
 /** Time series for a range, sampled into ~30 buckets from real minute data. */
 export function trafficSeries(range: string): { range: string; data: number[]; total: string; peak: string; unit: string; axis: string[]; real: boolean } {
+  // "live": last ~90s at 3s resolution, straight from the real per-second data.
+  if (range === "live") {
+    const points = 30, perSec = 3;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const data: number[] = [];
+    let total = 0;
+    for (let i = points - 1; i >= 0; i--) {
+      let sum = 0;
+      for (let s = 0; s < perSec; s++) sum += secondBuckets.get(nowSec - i * perSec - s)?.count ?? 0;
+      data.push(sum);
+      total += sum;
+    }
+    return {
+      range: "live", data,
+      total: fmtNum(total), peak: fmtNum(Math.max(0, ...data)),
+      unit: "/3s", axis: ["90s", "60s", "30s", "now"], real: true,
+    };
+  }
   const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
   const minutes = spans[range] ?? 60;
   const nowMin = Math.floor(Date.now() / 60000);
