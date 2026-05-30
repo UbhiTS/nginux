@@ -292,6 +292,7 @@ button { font-family: inherit; cursor: pointer; }
 .svc { display: flex; align-items: center; gap: 11px; padding: 10px 14px; cursor: pointer; border-bottom: 1px solid var(--border-soft); transition: .12s; }
 .svc:last-child { border-bottom: none; }
 .svc:hover { background: var(--accent-soft); }
+.svc-tag { width: 4px; height: 24px; border-radius: 3px; flex-shrink: 0; }
 .svc-emoji { font-size: 17px; width: 22px; text-align: center; }
 .svc-body { flex: 1; min-width: 0; }
 .svc-name { font-weight: 600; font-size: 13px; }

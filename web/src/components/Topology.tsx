@@ -1,27 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Route } from "../App.tsx";
-import type { Topology as TopologyData, HealthStatus } from "../types.ts";
+import type { Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { api } from "../api.ts";
 
-interface Path {
+interface Line {
   d: string;
   color: string;
   dashed: boolean;
-  dots: number; // number of dots travelling the line ∝ traffic
-  dur: number; // seconds per loop
+  dots: number; // dots travelling the line ∝ traffic
+  dur: number; // seconds per loop (busier = faster, so streams overtake)
 }
 
-const MAX_DOTS = 7;
-
-const cssVar = (n: string) =>
-  getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-
-function colorFor(status: HealthStatus): { color: string; dashed: boolean } {
-  if (status === "down") return { color: cssVar("--red"), dashed: true };
-  if (status === "degraded") return { color: cssVar("--yellow"), dashed: false };
-  return { color: cssVar("--green"), dashed: false };
-}
+const MAX_DOTS = 8;
+// Categorical palette — distinguishable for 12 services, readable on light & dark.
+const PALETTE = [
+  "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
+  "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
+];
 
 export function Topology({
   data,
@@ -34,9 +30,8 @@ export function Topology({
   const internetRef = useRef<HTMLDivElement>(null);
   const gatewayRef = useRef<HTMLDivElement>(null);
   const svcRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [paths, setPaths] = useState<Path[]>([]);
+  const [paths, setPaths] = useState<Line[]>([]);
   const [box, setBox] = useState({ w: 0, h: 0 });
-  // requests per service domain (drives how many dots travel each line)
   const [traffic, setTraffic] = useState<Record<string, number>>({});
 
   // Poll per-host request counts; the map is "live".
@@ -68,37 +63,45 @@ export function Topology({
       return `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
     };
 
-    // Busiest service sets the scale so dot counts are relative.
-    const allCounts = data.servers.flatMap((s) => s.services.map((svc) => traffic[svc.domain] ?? 0));
-    const max = Math.max(1, ...allCounts);
-    const dotsFor = (domain: string, status: HealthStatus) => {
-      if (status === "down") return 0;
-      const c = traffic[domain] ?? 0;
-      return Math.max(1, Math.round((c / max) * MAX_DOTS));
-    };
+    const services = data.servers.flatMap((s) => s.services); // top-to-bottom render order
+    const n = services.length;
+    if (n === 0) { setPaths([]); return; }
 
-    const next: Path[] = [];
-    // Internet → gateway (steady single dot).
-    next.push({ d: link(anchor(net, "r"), anchor(gw, "l")), color: cssVar("--accent"), dashed: false, dots: 2, dur: 2.4 });
+    const netR = net.getBoundingClientRect();
+    const gwR = gw.getBoundingClientRect();
+    const netA = anchor(net, "r");
+    const gwLeft = anchor(gw, "l");
+    const gwRight = anchor(gw, "r");
 
-    // Gateway → each service.
-    let i = 0;
-    for (const server of data.servers) {
-      for (const svc of server.services) {
-        const el = svcRefs.current.get(svc.id);
-        if (!el) continue;
-        const { color, dashed } = colorFor(svc.health);
-        next.push({
-          d: link(anchor(gw, "r"), anchor(el, "l")),
-          color,
-          dashed,
-          dots: dotsFor(svc.domain, svc.health),
-          dur: 2.4 + (i % 4) * 0.45, // de-sync lines so dots don't pulse in unison
-        });
-        i++;
+    // One shared vertical gap, used for the internet→gateway lines AND for the
+    // (spaced) start points of the gateway→service lines.
+    const usable = Math.min(netR.height, gwR.height) - 14;
+    const gap = n > 1 ? Math.min(18, usable / (n - 1)) : 0;
+    const yAt = (cy: number, i: number) => cy + (i - (n - 1) / 2) * gap;
+
+    const max = Math.max(1, ...services.map((s) => traffic[s.domain] ?? 0));
+
+    const lines: Line[] = [];
+    services.forEach((svc, i) => {
+      const color = PALETTE[i % PALETTE.length];
+      const down = svc.health === "down";
+      const c = traffic[svc.domain] ?? 0;
+      const ratio = c / max;
+      const dots = down ? 0 : Math.max(1, Math.round(ratio * MAX_DOTS));
+      const dur = down ? 3 : 3.2 - ratio * 1.7; // busier lines flow faster → overtaking
+
+      // Segment 1: internet → gateway (spaced on both edges, parallel streams).
+      lines.push({
+        d: link({ x: netA.x, y: yAt(netA.y, i) }, { x: gwLeft.x, y: yAt(gwLeft.y, i) }),
+        color, dashed: down, dots, dur,
+      });
+      // Segment 2: gateway → service (spaced start, fans out to each service row).
+      const el = svcRefs.current.get(svc.id);
+      if (el) {
+        lines.push({ d: link({ x: gwRight.x, y: yAt(gwRight.y, i) }, anchor(el, "l")), color, dashed: down, dots, dur });
       }
-    }
-    setPaths(next);
+    });
+    setPaths(lines);
   }, [data, traffic]);
 
   useLayoutEffect(() => {
@@ -135,12 +138,12 @@ export function Topology({
                 d={p.d}
                 fill="none"
                 stroke={p.color}
-                strokeWidth={2}
-                strokeOpacity={p.dashed ? 0.35 : 0.6}
+                strokeWidth={1.6}
+                strokeOpacity={p.dashed ? 0.3 : 0.45}
                 strokeDasharray={p.dashed ? "5 5" : undefined}
               />
               {!p.dashed && Array.from({ length: p.dots }).map((_, k) => (
-                <circle key={k} r={3.2} fill={p.color}>
+                <circle key={k} r={3.1} fill={p.color}>
                   <animateMotion
                     dur={`${p.dur}s`}
                     begin={`-${((k * p.dur) / Math.max(1, p.dots)).toFixed(2)}s`}
@@ -186,31 +189,35 @@ export function Topology({
                 <span className="srv-name">{server.name}</span>
                 <span className="srv-ip">{server.ip}</span>
               </div>
-              {server.services.map((s) => (
-                <div
-                  key={s.id}
-                  className="svc"
-                  ref={(el) => {
-                    if (el) svcRefs.current.set(s.id, el);
-                    else svcRefs.current.delete(s.id);
-                  }}
-                  onClick={() => navigate({ name: "host", hostId: s.id })}
-                >
-                  <span className="svc-emoji">{s.emoji}</span>
-                  <div className="svc-body">
-                    <div className="svc-name">
-                      {s.name} <span className="port">:{s.port}</span>
+              {server.services.map((s) => {
+                const idx = data.servers.flatMap((sv) => sv.services).findIndex((x) => x.id === s.id);
+                return (
+                  <div
+                    key={s.id}
+                    className="svc"
+                    ref={(el) => {
+                      if (el) svcRefs.current.set(s.id, el);
+                      else svcRefs.current.delete(s.id);
+                    }}
+                    onClick={() => navigate({ name: "host", hostId: s.id })}
+                  >
+                    <span className="svc-tag" style={{ background: PALETTE[idx % PALETTE.length] }} />
+                    <span className="svc-emoji">{s.emoji}</span>
+                    <div className="svc-body">
+                      <div className="svc-name">
+                        {s.name} <span className="port">:{s.port}</span>
+                      </div>
+                      <div className={`svc-route${s.health === "down" ? " svc-down" : ""}`}>
+                        → {s.domain}
+                        {s.health === "down" ? " · unreachable" : ""}
+                      </div>
                     </div>
-                    <div className={`svc-route${s.health === "down" ? " svc-down" : ""}`}>
-                      → {s.domain}
-                      {s.health === "down" ? " · unreachable" : ""}
-                    </div>
+                    <span className="svc-stat">
+                      <span className={`dot ${healthClass[s.health]}`} />
+                    </span>
                   </div>
-                  <span className="svc-stat">
-                    <span className={`dot ${healthClass[s.health]}`} />
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ))}
         </div>
