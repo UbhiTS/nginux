@@ -102,7 +102,10 @@ export function startUptimeMonitor() {
     if (running) return; // never overlap sweeps
     running = true;
     try {
-      const hosts = listHosts();
+      // Paused (disabled) services aren't served, so don't probe them — that
+      // would record bogus uptime or fire false "down" alerts for a host the
+      // user intentionally took offline.
+      const hosts = listHosts().filter((h) => h.enabled);
       if (demo) {
         for (const h of hosts) {
           const up = h.health !== "down";

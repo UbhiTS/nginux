@@ -30,6 +30,7 @@ export function HostDetail({
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   const [certs, setCerts] = useState<Certificate[]>([]);
 
@@ -93,6 +94,19 @@ export function HostDetail({
     }
   };
 
+  // Pause/serve this service. Disabling drops its nginx server block so the
+  // public site stops responding; the config (and this page) stays intact.
+  const toggleEnabled = async () => {
+    setToggling(true);
+    try {
+      await api.updateHost(host.id, { enabled: !host.enabled });
+      await reload();
+      refetch();
+    } finally {
+      setToggling(false);
+    }
+  };
+
   return (
     <>
       <div className="topbar">
@@ -102,15 +116,28 @@ export function HostDetail({
         <h1>
           {host.emoji} {host.name}
         </h1>
-        <span className={`pill ${host.health === "down" ? "r" : host.health === "degraded" ? "y" : "g"}`}>
-          <span className={`dot ${host.health === "down" ? "r" : host.health === "degraded" ? "y" : "g"}`} />
-          {host.health === "down" ? "Can't reach" : "Online"}
-        </span>
+        {host.enabled ? (
+          <span className={`pill ${host.health === "down" ? "r" : host.health === "degraded" ? "y" : "g"}`}>
+            <span className={`dot ${host.health === "down" ? "r" : host.health === "degraded" ? "y" : "g"}`} />
+            {host.health === "down" ? "Can't reach" : "Online"}
+          </span>
+        ) : (
+          <span className="pill n">
+            <span className="dot n" />
+            Paused
+          </span>
+        )}
         <div style={{ flex: 1 }} />
-        <a className="btn btn-ghost" href={`https://${host.domain}`} target="_blank" rel="noreferrer">
-          <Icon.external />
-          Visit
-        </a>
+        {host.enabled && (
+          <a className="btn btn-ghost" href={`https://${host.domain}`} target="_blank" rel="noreferrer">
+            <Icon.external />
+            Visit
+          </a>
+        )}
+        <button className="btn" onClick={toggleEnabled} disabled={toggling}>
+          {toggling ? <span className="spinner" /> : null}
+          {host.enabled ? "Disable" : "Enable"}
+        </button>
         {!editing && <button className="btn" onClick={startEdit}>Edit</button>}
         <button className="btn btn-danger" onClick={() => setConfirmDel(true)}>
           Delete
@@ -130,17 +157,23 @@ export function HostDetail({
       )}
 
       <div className="content">
-        <div className={`summary-banner ${b.cls}`}>
-          <div className="big-check">{b.icon}</div>
+        <div className={`summary-banner ${host.enabled ? b.cls : "warn"}`}>
+          <div className="big-check">{host.enabled ? b.icon : <Icon.alert />}</div>
           <div>
-            <div className="st">{b.title}</div>
+            <div className="st">{host.enabled ? b.title : "Paused — this service isn't being served."}</div>
             <div className="sd">
-              {certDays !== null ? `Certificate valid for ${certDays} days` : "No certificate yet"} ·{" "}
-              {host.require2fa
-                ? "Protected by login + 2FA"
-                : host.requireLogin
-                  ? "Protected by login"
-                  : "No NginUX login required"}
+              {host.enabled ? (
+                <>
+                  {certDays !== null ? `Certificate valid for ${certDays} days` : "No certificate yet"} ·{" "}
+                  {host.require2fa
+                    ? "Protected by login + 2FA"
+                    : host.requireLogin
+                      ? "Protected by login"
+                      : "No NginUX login required"}
+                </>
+              ) : (
+                <>Its nginx config is removed while paused. Click <b>Enable</b> to serve it again.</>
+              )}
             </div>
           </div>
         </div>

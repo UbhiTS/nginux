@@ -27,9 +27,22 @@ export function Services({
 }) {
   const [pending, setPending] = useState<ProxyHost | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [toggling, setToggling] = useState<string | null>(null);
 
   const days = (iso: string | null) =>
     iso ? Math.round((Date.parse(iso) - Date.now()) / 86400_000) : null;
+
+  // Flip a service between served (enabled) and paused (disabled). Disabling
+  // removes its nginx server block so the site stops responding publicly.
+  const toggle = async (h: ProxyHost) => {
+    setToggling(h.id);
+    try {
+      await api.updateHost(h.id, { enabled: !h.enabled });
+      await reload();
+    } finally {
+      setToggling(null);
+    }
+  };
 
   const remove = async () => {
     if (!pending) return;
@@ -60,12 +73,13 @@ export function Services({
             <div>Status</div>
             <div>Certificate</div>
             <div>Address</div>
+            <div>Enabled</div>
             <div />
           </div>
           {hosts.map((h) => {
             const d = days(h.certExpiresAt);
             return (
-              <div key={h.id} className="host-row" onClick={() => navigate({ name: "host", hostId: h.id })}>
+              <div key={h.id} className={`host-row${h.enabled ? "" : " is-paused"}`} onClick={() => navigate({ name: "host", hostId: h.id })}>
                 <div className="host-main">
                   <div className="host-icon">{h.emoji}</div>
                   <div>
@@ -74,9 +88,9 @@ export function Services({
                   </div>
                 </div>
                 <div className="host-status-text">
-                  <span className={`dot ${healthClass[h.health]}`} />
-                  <span style={{ color: h.health === "down" ? "var(--red)" : undefined }}>
-                    {statusText(h)}
+                  <span className={`dot ${h.enabled ? healthClass[h.health] : "n"}`} />
+                  <span style={{ color: !h.enabled ? "var(--text-faint)" : h.health === "down" ? "var(--red)" : undefined }}>
+                    {h.enabled ? statusText(h) : "Paused · not served"}
                   </span>
                 </div>
                 <div className="host-meta">
@@ -86,6 +100,12 @@ export function Services({
                 <div className="host-meta mono">
                   {h.forwardHost}:{h.forwardPort}
                 </div>
+                <button
+                  className={`switch${h.enabled ? " on" : ""}`}
+                  title={h.enabled ? "Serving — click to pause" : "Paused — click to serve"}
+                  disabled={toggling === h.id}
+                  onClick={(e) => { e.stopPropagation(); void toggle(h); }}
+                />
                 <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); setPending(h); }}>
                   Delete
                 </button>
