@@ -174,6 +174,29 @@ export function hostTraffic(range: string, metric: "requests" | "bandwidth" = "r
   return [...acc.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
 }
 
+/** Per-host requests + in/out bytes over a window — drives the Network Map's
+ *  dual encoding (dots ∝ requests, line width ∝ bandwidth, per direction). */
+export interface HostStat { key: string; requests: number; bytesIn: number; bytesOut: number; }
+export function hostStats(range: string): HostStat[] {
+  const acc = new Map<string, Stat>();
+  const add = (h: string, v: Stat) => {
+    const a = acc.get(h) ?? emptyStat();
+    a.count += v.count; a.out += v.out; a.in += v.in;
+    acc.set(h, a);
+  };
+  if (range === "live") {
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (let s = 0; s < 60; s++) { const hs = hostSecond.get(nowSec - s); if (hs) for (const [h, v] of hs) add(h, v); }
+  } else {
+    const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
+    const minutes = spans[range] ?? 60;
+    const nowMin = Math.floor(Date.now() / 60000);
+    for (let m = 0; m < minutes; m++) { const hm = hostMinute.get(nowMin - m); if (hm) for (const [h, v] of hm) add(h, v); }
+  }
+  if (acc.size === 0) for (const [h, v] of byHostStat) add(h, v); // fallback to all-time
+  return [...acc.entries()].map(([key, v]) => ({ key, requests: v.count, bytesIn: v.in, bytesOut: v.out }));
+}
+
 /** Time series for a range + metric, optionally scoped to one host. For
  *  bandwidth, returns separate out (response) and in (request) byte series. */
 export function trafficSeries(

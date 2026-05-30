@@ -4,12 +4,12 @@ import type { Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { api } from "../api.ts";
 
-interface Stroke { d: string; color: string; dashed: boolean; host: string; }
+interface Stroke { d: string; color: string; dashed: boolean; host: string; width: number; }
 interface Flow {
-  path: string; // path a dot travels (full journey, through the gateway)
+  path: string; // path a dot travels
   host: string; // the service domain this flow belongs to
   color: string;
-  count: number; // dots in this batch ∝ traffic (the only traffic-driven variable)
+  count: number; // dots in this batch ∝ requests (not bandwidth)
   dur: number; // full cycle length in seconds (sized to fit its own content)
   begin: string; // negative offset so services don't sync (phase only, not speed)
   t0: number; // fraction of dur when the first dot launches
@@ -21,6 +21,9 @@ const MAX_DOTS = 6;
 const SPEED = 190; // px/second — identical for every dot
 const STEP_SEC = 0.09; // seconds between consecutive dots in a batch (controls spacing)
 const HANDOFF_SEC = 0.12; // brief pause between a batch finishing and the next starting
+const MIN_W = 1.4; // thinnest line (idle / tiny bandwidth)
+const MAX_W = 8; // thickest line (busiest direction across all services)
+const OFF = 4; // vertical gap between the request (upper) and response (lower) lines
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
@@ -30,7 +33,6 @@ export function Topology({
   data,
   navigate,
   range,
-  metric,
   hovered,
   onHover,
 }: {
@@ -48,18 +50,18 @@ export function Topology({
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [flows, setFlows] = useState<Flow[]>([]);
   const [box, setBox] = useState({ w: 0, h: 0 });
-  const [traffic, setTraffic] = useState<Record<string, number>>({});
+  const [stats, setStats] = useState<Record<string, { requests: number; bytesIn: number; bytesOut: number }>>({});
 
   useEffect(() => {
     let alive = true;
     const pull = () =>
-      api.hostTraffic(range, metric)
-        .then((hosts) => { if (alive) setTraffic(Object.fromEntries(hosts.map((h) => [h.key, h.count]))); })
+      api.hostStats(range)
+        .then((rows) => { if (alive) setStats(Object.fromEntries(rows.map((r) => [r.key, r]))); })
         .catch(() => {});
     pull();
     const id = setInterval(pull, range === "live" ? 3000 : 8000);
     return () => { alive = false; clearInterval(id); };
-  }, [range, metric]);
+  }, [range]);
 
   const draw = useCallback(() => {
     const wrap = wrapRef.current;
@@ -74,6 +76,8 @@ export function Topology({
       return { x: (side === "r" ? b.right : b.left) - r.left, y: b.top - r.top + b.height / 2 };
     };
     type P = { x: number; y: number };
+    const up = (p: P): P => ({ x: p.x, y: p.y - OFF });
+    const dn = (p: P): P => ({ x: p.x, y: p.y + OFF });
     const curve = (a: P, b: P) => { const mx = (a.x + b.x) / 2; return `C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`; };
     const seg = (a: P, b: P) => `M ${a.x} ${a.y} ${curve(a, b)}`;
     const dist = (a: P, b: P) => Math.hypot(b.x - a.x, b.y - a.y);
@@ -92,7 +96,16 @@ export function Topology({
     const usable = Math.min(netR.height, gwR.height) - 14;
     const gap = n > 1 ? Math.min(18, usable / (n - 1)) : 0;
     const yAt = (cy: number, i: number) => cy + (i - (n - 1) / 2) * gap;
-    const max = Math.max(1, ...services.map((s) => traffic[s.domain] ?? 0));
+
+    // Dots scale with requests; line width scales with bandwidth. Width is
+    // normalized against the busiest direction across all services, so a small
+    // request line stays thin and a heavy response line goes fat.
+    const reqMax = Math.max(1, ...services.map((s) => stats[s.domain]?.requests ?? 0));
+    const byteMax = Math.max(1, ...services.flatMap((s) => {
+      const st = stats[s.domain];
+      return st ? [st.bytesIn, st.bytesOut] : [0];
+    }));
+    const widthFor = (bytes: number) => (bytes <= 0 ? MIN_W : Math.min(MAX_W, MIN_W + (bytes / byteMax) * (MAX_W - MIN_W)));
 
     const nextStrokes: Stroke[] = [];
     const nextFlows: Flow[] = [];
@@ -100,10 +113,12 @@ export function Topology({
     services.forEach((svc, i) => {
       const color = PALETTE[i % PALETTE.length];
       const down = svc.health === "down";
-      const c = traffic[svc.domain] ?? 0;
-      const ratio = c / max;
-      const reqN = c > 0 ? Math.max(1, Math.round(ratio * MAX_DOTS)) : (down ? 0 : 1);
+      const st = stats[svc.domain];
+      const req = st?.requests ?? 0;
+      const reqN = req > 0 ? Math.max(1, Math.round((req / reqMax) * MAX_DOTS)) : (down ? 0 : 1);
       const respN = down ? 0 : reqN;
+      const inW = widthFor(st?.bytesIn ?? 0);
+      const outW = widthFor(st?.bytesOut ?? 0);
 
       const a1 = { x: netA.x, y: yAt(netA.y, i) };   // internet edge
       const b1 = { x: gwLeft.x, y: yAt(gwLeft.y, i) }; // gateway left
@@ -111,24 +126,24 @@ export function Topology({
       const el = svcRefs.current.get(svc.id);
       const b2 = el ? anchor(el, "l") : a2; // service row
 
-      // Visible lines: internet→gateway (always) and gateway→service (dead/dashed if down).
-      nextStrokes.push({ d: seg(a1, b1), color, dashed: false, host: svc.domain });
-      if (el) nextStrokes.push({ d: seg(a2, b2), color, dashed: down, host: svc.domain });
+      // Request (ingress) line — upper, width ∝ request bandwidth.
+      nextStrokes.push({ d: seg(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: inW });
+      if (el) nextStrokes.push({ d: seg(up(a2), up(b2)), color, dashed: down, host: svc.domain, width: inW });
+      // Response (egress) line — lower, width ∝ response bandwidth (only when reachable).
+      if (el && !down) {
+        nextStrokes.push({ d: seg(dn(a1), dn(b1)), color, dashed: false, host: svc.domain, width: outW });
+        nextStrokes.push({ d: seg(dn(a2), dn(b2)), color, dashed: false, host: svc.domain, width: outW });
+      }
 
       // Phase offset so services don't move in unison (speed is unaffected).
       const begin = `-${(i * 1.37).toFixed(2)}s`;
 
-      // Request batch: full path to the service (or just to the gateway if it's
-      // unreachable — the dots arrive at the router and are dropped).
-      const reqPath = down || !el ? seg(a1, b1) : through(a1, b1, a2, b2);
+      const reqPath = down || !el ? seg(up(a1), up(b1)) : through(up(a1), up(b1), up(a2), up(b2));
       const len = down || !el ? dist(a1, b1) : dist(a1, b1) + dist(b1, a2) + dist(a2, b2);
       const tf = len / SPEED; // flight time (s) — constant speed
-      const batch = (n: number) => (Math.max(1, n) - 1) * STEP_SEC + tf; // batch duration (s)
+      const batch = (m: number) => (Math.max(1, m) - 1) * STEP_SEC + tf; // batch duration (s)
       const hasResp = respN > 0 && !!el;
       const reqBatch = batch(reqN);
-      // Cycle is sized to its content: a half-handoff lead, the request batch, a
-      // handoff, the response batch, a half-handoff trail. Both transitions
-      // (req→resp and resp→req at the wrap) are therefore the same short gap.
       const cycle = hasResp
         ? HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC + batch(respN) + HANDOFF_SEC / 2
         : HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC / 2;
@@ -138,7 +153,7 @@ export function Topology({
         t0: (HANDOFF_SEC / 2) / cycle, step: STEP_SEC / cycle, travel: tf / cycle,
       });
       if (hasResp) {
-        const respPath = through(b2, a2, b1, a1); // service → gateway → internet
+        const respPath = through(dn(b2), dn(a2), dn(b1), dn(a1)); // service → gateway → internet (lower line)
         const respStart = HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC;
         nextFlows.push({
           path: respPath, host: svc.domain, color, count: respN, dur: cycle, begin,
@@ -149,7 +164,7 @@ export function Topology({
 
     setStrokes(nextStrokes);
     setFlows(nextFlows);
-  }, [data, traffic]);
+  }, [data, stats]);
 
   useLayoutEffect(() => {
     const id = requestAnimationFrame(draw);
@@ -176,8 +191,9 @@ export function Topology({
                 d={s.d}
                 fill="none"
                 stroke={s.color}
-                strokeWidth={1.6}
-                strokeOpacity={dim ? 0.08 : s.dashed ? 0.3 : 0.4}
+                strokeWidth={s.width}
+                strokeLinecap="round"
+                strokeOpacity={dim ? 0.07 : s.dashed ? 0.3 : 0.45}
                 strokeDasharray={s.dashed ? "5 5" : undefined}
               />
             );
@@ -213,6 +229,12 @@ export function Topology({
             });
           })}
         </svg>
+
+        <div className="topo-legend">
+          <span><span className="lg-dot" /> dots = requests</span>
+          <span><span className="lg-bar" /> line width = bandwidth</span>
+          <span className="lg-dim">upper line in · lower line out</span>
+        </div>
 
         <div className="topo-tier">
           <div className="node node-internet" ref={internetRef}>

@@ -320,6 +320,10 @@ button { font-family: inherit; cursor: pointer; }
 /* ---------- Topology tree ---------- */
 .topo { position: relative; display: grid; grid-template-columns: auto auto 1fr; gap: 64px; padding: 28px 26px; align-items: center; min-height: 280px; }
 .topo-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
+.topo-legend { position: absolute; left: 16px; bottom: 10px; z-index: 1; display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--text-dim); pointer-events: none; }
+.topo-legend .lg-dim { color: var(--text-faint); }
+.topo-legend .lg-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); margin-right: 6px; vertical-align: middle; }
+.topo-legend .lg-bar { display: inline-block; width: 16px; height: 6px; border-radius: 3px; background: var(--text-dim); margin-right: 6px; vertical-align: middle; }
 .topo-tier { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 16px; }
 .node { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 12px; padding: 15px 17px; text-align: center; min-width: 150px; }
 .node-ico { font-size: 26px; }

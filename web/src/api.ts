@@ -143,6 +143,7 @@ export const api = {
   // ---- logs / metrics ----
   metricsSummary: () => req<MetricsSummary>("/metrics/summary"),
   hostTraffic: (range: string, metric: string = "requests") => req<{ key: string; count: number }[]>(`/metrics/hosts?range=${range}&metric=${metric}`),
+  hostStats: (range: string) => req<HostStat[]>(`/metrics/host-stats?range=${range}`),
   recentLogs: (filter?: string, limit = 200) =>
     req<LogEntry[]>(`/logs/recent?${filter ? `filter=${encodeURIComponent(filter)}&` : ""}limit=${limit}`),
 
@@ -173,6 +174,13 @@ export const api = {
   deleteChannel: (id: string) => req<{ ok: boolean }>(`/channels/${id}`, { method: "DELETE" }),
   testChannel: (id: string) => req<{ ok: boolean; status: string }>(`/channels/${id}/test`, { method: "POST" }),
 };
+
+export interface HostStat {
+  key: string;
+  requests: number;
+  bytesIn: number;
+  bytesOut: number;
+}
 
 export interface GeoipStatus {
   present: boolean;
