@@ -18,8 +18,11 @@ export function Dashboard({
     api.topology().then(setTopology).catch(() => setTopology(null));
   }, [hosts]);
 
-  const online = hosts.filter((h) => h.health === "online").length;
-  const needsAttention = hosts.filter((h) => h.health !== "online").length;
+  const online = hosts.filter((h) => h.enabled && h.health === "online").length;
+  const paused = hosts.filter((h) => !h.enabled).length;
+  // Paused services are intentionally offline, so they don't count as "needs
+  // attention" — only enabled-but-unhealthy ones do.
+  const needsAttention = hosts.filter((h) => h.enabled && h.health !== "online").length;
   const withCert = hosts.filter((h) => h.certExpiresAt);
   const days = (iso: string) => Math.round((Date.parse(iso) - Date.now()) / 86400_000);
   const nextRenewal = withCert.length
@@ -47,6 +50,11 @@ export function Dashboard({
                 <>
                   <span className="dot y" />
                   <span style={{ color: "var(--yellow)" }}>{needsAttention} need attention</span>
+                </>
+              ) : paused > 0 ? (
+                <>
+                  <span className="dot n" />
+                  <span style={{ color: "var(--text-faint)" }}>{paused} paused</span>
                 </>
               ) : (
                 <span>All healthy</span>

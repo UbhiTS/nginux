@@ -359,6 +359,8 @@ button { font-family: inherit; cursor: pointer; }
 .svc-name .port { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); font-weight: 500; margin-left: 4px; }
 .svc-route { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); margin-top: 1px; }
 .svc-route.svc-down { color: var(--red); }
+.svc.svc-paused .svc-emoji, .svc.svc-paused .svc-body { opacity: .5; }
+.svc.svc-paused .svc-tag { opacity: .3; }
 .svc-stat { flex-shrink: 0; }
 .svc-metrics { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex-shrink: 0; font-family: var(--mono); line-height: 1.3; text-align: right; }
 .svc-metrics .m-req { font-size: 11px; color: var(--text); font-weight: 600; }

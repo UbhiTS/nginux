@@ -92,7 +92,7 @@ export function Topology({
   // identity changed — only when the actual service set/health changes (svcKey).
   const dataRef = useRef(data);
   dataRef.current = data;
-  const svcKey = data.servers.flatMap((s) => s.services).map((x) => `${x.id}:${x.health}`).join("|");
+  const svcKey = data.servers.flatMap((s) => s.services).map((x) => `${x.id}:${x.health}:${x.enabled}`).join("|");
 
   useEffect(() => {
     let alive = true;
@@ -127,26 +127,30 @@ export function Topology({
   // Build ONE service's strokes/flows + its own cycle length, from the latest
   // stats. Width is still normalized against the busiest direction across all
   // services so the in-thin / out-fat contrast holds.
-  const buildOne = useCallback((layout: NonNullable<ReturnType<typeof measure>>, svc: { id: string; domain: string; health: string }, i: number, live: boolean): SvcAnim & { cycle: number } => {
+  const buildOne = useCallback((layout: NonNullable<ReturnType<typeof measure>>, svc: { id: string; domain: string; health: string; enabled: boolean }, i: number, live: boolean): SvcAnim & { cycle: number } => {
     const sx = statsRef.current;
     const services = dataRef.current.servers.flatMap((s) => s.services);
     const reqMax = Math.max(1, ...services.map((s) => sx[s.domain]?.requests ?? 0));
     const byteMax = Math.max(1, ...services.flatMap((s) => { const st = sx[s.domain]; return st ? [st.bytesIn, st.bytesOut] : [0]; }));
     const widthFor = (b: number) => (b <= 0 ? MIN_W : Math.min(MAX_W, MIN_W + (b / byteMax) * (MAX_W - MIN_W)));
 
+    // Paused services aren't served, so render them inert (thin dashed line, no
+    // travelling dots) just like an unreachable host — never animate traffic.
+    const paused = !svc.enabled;
     const down = svc.health === "down";
-    const st = sx[svc.domain];
+    const inert = down || paused;
+    const st = paused ? undefined : sx[svc.domain];
     const req = st?.requests ?? 0;
-    const reqN = req > 0 ? Math.max(1, Math.round((req / reqMax) * MAX_DOTS)) : (down ? 0 : 1);
+    const reqN = paused ? 0 : req > 0 ? Math.max(1, Math.round((req / reqMax) * MAX_DOTS)) : (down ? 0 : 1);
     const a1 = { x: layout.netA.x, y: layout.yAt(layout.netA.y, i) };
     const b1 = { x: layout.gwLeft.x, y: layout.yAt(layout.gwLeft.y, i) };
     const a2 = { x: layout.gwRight.x, y: layout.yAt(layout.gwRight.y, i) };
     const b2a = layout.svcAnchor(svc.id);
     const el = !!b2a;
     const b2 = b2a ?? a2;
-    const len = down || !el ? distOf(a1, b1) : distOf(a1, b1) + distOf(b1, a2) + distOf(a2, b2);
+    const len = inert || !el ? distOf(a1, b1) : distOf(a1, b1) + distOf(b1, a2) + distOf(a2, b2);
     const tf = len / SPEED;
-    const hasResp = !down && el;
+    const hasResp = !inert && el;
     const respN = hasResp ? reqN : 0;
     const batch = (m: number) => (Math.max(1, m) - 1) * STEP_SEC + tf;
     const reqBatch = batch(reqN);
@@ -176,13 +180,13 @@ export function Topology({
       : undefined;
 
     const strokes: Stroke[] = [{ d: segPath(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: fwdBase, pulse: fwdPulse }];
-    if (el) strokes.push({ d: segPath(up(a2), up(b2)), color, dashed: down, host: svc.domain, width: fwdBase, pulse: fwdPulse });
+    if (el) strokes.push({ d: segPath(up(a2), up(b2)), color, dashed: inert, host: svc.domain, width: fwdBase, pulse: fwdPulse });
     if (hasResp) {
       strokes.push({ d: segPath(dn(a1), dn(b1)), color, dashed: false, host: svc.domain, width: retBase, pulse: retPulse });
       strokes.push({ d: segPath(dn(a2), dn(b2)), color, dashed: false, host: svc.domain, width: retBase, pulse: retPulse });
     }
 
-    const reqPath = down || !el ? segPath(up(a1), up(b1)) : throughPath(up(a1), up(b1), up(a2), up(b2));
+    const reqPath = inert || !el ? segPath(up(a1), up(b1)) : throughPath(up(a1), up(b1), up(a2), up(b2));
     const flows: Flow[] = [{ path: reqPath, host: svc.domain, color, count: reqN, dur: cycle, begin: "0s", t0: reqStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle }];
     if (hasResp) {
       flows.push({ path: throughPath(dn(b2), dn(a2), dn(b1), dn(a1)), host: svc.domain, color, count: respN, dur: cycle, begin: "0s", t0: respStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle });
@@ -369,7 +373,7 @@ export function Topology({
                 return (
                   <div
                     key={s.id}
-                    className="svc"
+                    className={`svc${s.enabled ? "" : " svc-paused"}`}
                     ref={(el) => {
                       if (el) svcRefs.current.set(s.id, el);
                       else svcRefs.current.delete(s.id);
@@ -384,12 +388,13 @@ export function Topology({
                       <div className="svc-name">
                         {s.name} <span className="port">:{s.port}</span>
                       </div>
-                      <div className={`svc-route${s.health === "down" ? " svc-down" : ""}`}>
+                      <div className={`svc-route${s.enabled && s.health === "down" ? " svc-down" : ""}`}>
                         → {s.domain}
-                        {s.health === "down" ? " · unreachable" : ""}
+                        {!s.enabled ? " · paused" : s.health === "down" ? " · unreachable" : ""}
                       </div>
                     </div>
                     {(() => {
+                      if (!s.enabled) return null;
                       const st = stats[s.domain];
                       if (!st || (st.requests === 0 && st.bytesIn === 0 && st.bytesOut === 0)) return null;
                       const rps = st.requests / 60;
@@ -405,7 +410,7 @@ export function Topology({
                       );
                     })()}
                     <span className="svc-stat">
-                      <span className={`dot ${healthClass[s.health]}`} />
+                      <span className={`dot ${s.enabled ? healthClass[s.health] : "n"}`} title={s.enabled ? undefined : "Paused"} />
                     </span>
                   </div>
                 );

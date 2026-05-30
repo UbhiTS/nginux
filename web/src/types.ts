@@ -84,6 +84,7 @@ export interface TopologyServer {
     port: number;
     health: HealthStatus;
     requireLogin: boolean;
+    enabled: boolean;
   }>;
 }
 

@@ -128,16 +128,18 @@ export function getTopology(gateway: { publicIp: string; gatewayIp: string }): T
       port: h.forwardPort,
       health: h.health,
       requireLogin: h.requireLogin,
+      enabled: h.enabled,
     });
   }
 
-  // A server's status is the worst of its services' statuses.
+  // A server's status is the worst of its *enabled* services' statuses — a paused
+  // service is intentionally offline, so it shouldn't drag the node to degraded.
   const rank: Record<HealthStatus, number> = { online: 0, unknown: 1, degraded: 2, down: 3 };
   for (const server of byServer.values()) {
-    server.status = server.services.reduce<HealthStatus>(
-      (worst, s) => (rank[s.health] > rank[worst] ? s.health : worst),
-      "online",
-    );
+    const active = server.services.filter((s) => s.enabled);
+    server.status = active.length
+      ? active.reduce<HealthStatus>((worst, s) => (rank[s.health] > rank[worst] ? s.health : worst), "online")
+      : "unknown";
   }
 
   return {
