@@ -206,10 +206,10 @@ export async function issueSelfSigned(domain: string): Promise<Certificate> {
   return getCert(domain)!;
 }
 
-// How long a single ACME issuance may run before we give up (configurable). A
-// challenge that's going to succeed validates well within this; a longer wait
-// almost always means a missing prerequisite (port 80 closed / DNS not set up).
-const ACME_TIMEOUT_MS = Number(process.env.ACME_TIMEOUT_MS ?? 45000);
+// How long a single ACME issuance may run before we give up (configurable).
+// Generous on purpose — DNS-01 propagation can legitimately take 60-90s with some
+// providers. We no longer retry timeouts, so this is one bounded attempt, not 3×.
+const ACME_TIMEOUT_MS = Number(process.env.ACME_TIMEOUT_MS ?? 120000);
 const ACCOUNT_KEY_PATH = join(CERT_DIR, "acme-account.key");
 
 /** A categorized ACME failure so the UI can decide whether a retry is worthwhile. */
