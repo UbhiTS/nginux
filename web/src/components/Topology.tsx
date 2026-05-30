@@ -35,6 +35,7 @@ export function Topology({
   const [paths, setPaths] = useState<Line[]>([]);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traffic, setTraffic] = useState<Record<string, number>>({});
+  const [dir, setDir] = useState<"in" | "out">("in"); // show one direction at a time
 
   // Poll per-host request counts; the map is "live".
   useEffect(() => {
@@ -138,10 +139,16 @@ export function Topology({
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-head">
         Network map
-        <span className="pill g">
-          <span className="dot g" />
-          live
-        </span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+          <div className="range-tabs">
+            <button className={`range${dir === "in" ? " active" : ""}`} onClick={() => setDir("in")}>Inbound</button>
+            <button className={`range${dir === "out" ? " active" : ""}`} onClick={() => setDir("out")}>Outbound</button>
+          </div>
+          <span className="pill g">
+            <span className="dot g" />
+            live
+          </span>
+        </div>
       </div>
       <div className="topo" ref={wrapRef}>
         <svg className="topo-lines" viewBox={`0 0 ${box.w} ${box.h}`} preserveAspectRatio="none">
@@ -155,28 +162,28 @@ export function Topology({
                 strokeOpacity={p.dashed ? 0.3 : 0.4}
                 strokeDasharray={p.dashed ? "5 5" : undefined}
               />
-              {/* requests → service (solid dots) */}
-              {Array.from({ length: p.inDots }).map((_, k) => (
-                <circle key={`in${k}`} r={3.1} fill={p.color}>
-                  <animateMotion
-                    dur={`${p.dur}s`}
-                    begin={`-${((k * p.dur) / Math.max(1, p.inDots)).toFixed(2)}s`}
-                    repeatCount="indefinite"
-                    path={p.fwd}
-                  />
-                </circle>
-              ))}
-              {/* responses → internet (smaller, lighter dots, opposite way) */}
-              {Array.from({ length: p.outDots }).map((_, k) => (
-                <circle key={`out${k}`} r={2} fill={p.color} fillOpacity={0.6}>
-                  <animateMotion
-                    dur={`${(p.dur * 1.15).toFixed(2)}s`}
-                    begin={`-${((k * p.dur) / Math.max(1, p.outDots)).toFixed(2)}s`}
-                    repeatCount="indefinite"
-                    path={p.rev}
-                  />
-                </circle>
-              ))}
+              {/* one direction at a time; dot count ∝ that service's traffic */}
+              {dir === "in"
+                ? Array.from({ length: p.inDots }).map((_, k) => (
+                    <circle key={`in${k}`} r={3.1} fill={p.color}>
+                      <animateMotion
+                        dur={`${p.dur}s`}
+                        begin={`-${((k * p.dur) / Math.max(1, p.inDots)).toFixed(2)}s`}
+                        repeatCount="indefinite"
+                        path={p.fwd}
+                      />
+                    </circle>
+                  ))
+                : Array.from({ length: p.outDots }).map((_, k) => (
+                    <circle key={`out${k}`} r={3.1} fill={p.color}>
+                      <animateMotion
+                        dur={`${p.dur}s`}
+                        begin={`-${((k * p.dur) / Math.max(1, p.outDots)).toFixed(2)}s`}
+                        repeatCount="indefinite"
+                        path={p.rev}
+                      />
+                    </circle>
+                  ))}
             </g>
           ))}
         </svg>
