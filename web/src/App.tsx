@@ -76,7 +76,7 @@ export function App() {
         {route.name === "services" && <Services hosts={hosts} navigate={navigate} reload={reload} />}
         {route.name === "host" && route.hostId && <HostDetail hostId={route.hostId} navigate={navigate} reload={reload} />}
         {route.name === "wizard" && <Wizard settings={settings} navigate={navigate} reload={reload} />}
-        {route.name === "settings" && <SettingsPage theme={theme} reload={reload} />}
+        {route.name === "settings" && <SettingsPage reload={reload} />}
         {route.name === "security" && <SecurityCenter />}
         {route.name === "useraccess" && <UsersAccess currentUser={user} refreshMe={refreshMe} />}
         {route.name === "certs" && <Certificates />}

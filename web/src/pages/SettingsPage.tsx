@@ -1,16 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, type Channel, type ConfigVersion } from "../api.ts";
 import type { Settings } from "../types.ts";
-import type { Theme } from "../theme.ts";
 import { Icon } from "../icons.tsx";
 
-const SWATCH: Record<Theme, string> = { dark: "#0d1117", medium: "#28333f", light: "#ffffff" };
-
 export function SettingsPage({
-  theme,
   reload,
 }: {
-  theme: { theme: Theme; setTheme: (t: Theme) => void };
   reload: () => Promise<void>;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -29,11 +24,6 @@ export function SettingsPage({
     await reload();
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  };
-
-  const pickTheme = (t: Theme) => {
-    theme.setTheme(t);
-    update({ theme: t });
   };
 
   if (!settings) {
@@ -69,22 +59,6 @@ export function SettingsPage({
             <div className="field" style={{ marginBottom: 0 }}>
               <label>NginUX address</label>
               <input className="input" value={settings.publicUrl} onChange={(e) => update({ publicUrl: e.target.value })} />
-            </div>
-          </div>
-
-          <div className="section-title">Appearance</div>
-          <div className="card card-pad" style={{ marginBottom: 20 }}>
-            <label style={{ display: "block", fontWeight: 600, fontSize: 13, marginBottom: 9 }}>Theme</label>
-            <div style={{ display: "flex", gap: 10 }}>
-              {(["dark", "medium", "light"] as Theme[]).map((t) => (
-                <button key={t} className={`theme-opt${theme.theme === t ? " active" : ""}`} onClick={() => pickTheme(t)}>
-                  <span className="sw" style={{ background: SWATCH[t] }} />
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
-                </button>
-              ))}
-            </div>
-            <div className="hint" style={{ marginTop: 10 }}>
-              Medium is a softer middle ground between dark and light.
             </div>
           </div>
 
