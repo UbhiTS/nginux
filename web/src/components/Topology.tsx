@@ -4,7 +4,8 @@ import type { Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { api } from "../api.ts";
 
-interface Pulse { width: number; t0: number; t1: number; dur: number; begin: string; }
+interface PulsePhase { t0: number; t1: number; width: number; }
+interface Pulse { dur: number; begin: string; phases: PulsePhase[]; }
 interface Stroke { d: string; color: string; dashed: boolean; host: string; width: number; pulse?: Pulse; }
 
 const fmtCount = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n)));
@@ -28,7 +29,6 @@ const STEP_SEC = 0.09; // seconds between consecutive dots in a batch (controls 
 const HANDOFF_SEC = 0.12; // brief pause between a batch finishing and the next starting
 const MIN_W = 1.4; // thinnest line (idle / tiny bandwidth)
 const MAX_W = 8; // thickest line (busiest direction across all services)
-const OFF = 4; // vertical gap between the request (upper) and response (lower) lines
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
@@ -81,8 +81,6 @@ export function Topology({
       return { x: (side === "r" ? b.right : b.left) - r.left, y: b.top - r.top + b.height / 2 };
     };
     type P = { x: number; y: number };
-    const up = (p: P): P => ({ x: p.x, y: p.y - OFF });
-    const dn = (p: P): P => ({ x: p.x, y: p.y + OFF });
     const curve = (a: P, b: P) => { const mx = (a.x + b.x) / 2; return `C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`; };
     const seg = (a: P, b: P) => `M ${a.x} ${a.y} ${curve(a, b)}`;
     const dist = (a: P, b: P) => Math.hypot(b.x - a.x, b.y - a.y);
@@ -135,7 +133,9 @@ export function Topology({
       // Phase offset so services don't move in unison (speed is unaffected).
       const begin = `-${(i * 1.37).toFixed(2)}s`;
 
-      const reqPath = down || !el ? seg(up(a1), up(b1)) : through(up(a1), up(b1), up(a2), up(b2));
+      // One line per service; the request dots travel out and the response dots
+      // travel back along the same path.
+      const reqPath = down || !el ? seg(a1, b1) : through(a1, b1, a2, b2);
       const len = down || !el ? dist(a1, b1) : dist(a1, b1) + dist(b1, a2) + dist(a2, b2);
       const tf = len / SPEED; // flight time (s) — constant speed
       const batch = (m: number) => (Math.max(1, m) - 1) * STEP_SEC + tf; // batch duration (s)
@@ -146,33 +146,26 @@ export function Topology({
         : HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC / 2;
       const respStart = HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC;
 
-      // In live mode each line sits at min width and *swells* to its bandwidth
-      // only while its dot batch is in flight (request line on the request batch,
-      // response line on the response batch). Historical ranges show a steady
-      // width = aggregate bandwidth instead.
-      const reqPulse: Pulse | undefined = live && reqN > 0
-        ? { width: inW, t0: (HANDOFF_SEC / 2) / cycle, t1: (HANDOFF_SEC / 2 + reqBatch) / cycle, dur: cycle, begin }
-        : undefined;
-      const respPulse: Pulse | undefined = live && hasResp
-        ? { width: outW, t0: respStart / cycle, t1: (respStart + batch(respN)) / cycle, dur: cycle, begin }
-        : undefined;
-      const inBase = live ? MIN_W : inW;
-      const outBase = live ? MIN_W : outW;
-
-      // Request (ingress) line — upper. Response (egress) line — lower.
-      nextStrokes.push({ d: seg(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: inBase, pulse: reqPulse });
-      if (el) nextStrokes.push({ d: seg(up(a2), up(b2)), color, dashed: down, host: svc.domain, width: inBase, pulse: reqPulse });
-      if (el && !down) {
-        nextStrokes.push({ d: seg(dn(a1), dn(b1)), color, dashed: false, host: svc.domain, width: outBase, pulse: respPulse });
-        nextStrokes.push({ d: seg(dn(a2), dn(b2)), color, dashed: false, host: svc.domain, width: outBase, pulse: respPulse });
+      // Static width = egress bandwidth (the dominant direction). In live mode the
+      // line instead sits at min and swells to the current bandwidth only while
+      // dots travel — thin (ingress) on the way out, thick (egress) on the way back.
+      const base = live ? MIN_W : outW;
+      const phases: PulsePhase[] = [];
+      if (live) {
+        if (reqN > 0) phases.push({ t0: (HANDOFF_SEC / 2) / cycle, t1: (HANDOFF_SEC / 2 + reqBatch) / cycle, width: inW });
+        if (hasResp) phases.push({ t0: respStart / cycle, t1: (respStart + batch(respN)) / cycle, width: outW });
       }
+      const pulse: Pulse | undefined = phases.length ? { dur: cycle, begin, phases } : undefined;
+
+      nextStrokes.push({ d: seg(a1, b1), color, dashed: false, host: svc.domain, width: base, pulse });
+      if (el) nextStrokes.push({ d: seg(a2, b2), color, dashed: down, host: svc.domain, width: base, pulse });
 
       nextFlows.push({
         path: reqPath, host: svc.domain, color, count: reqN, dur: cycle, begin,
         t0: (HANDOFF_SEC / 2) / cycle, step: STEP_SEC / cycle, travel: tf / cycle,
       });
       if (hasResp) {
-        const respPath = through(dn(b2), dn(a2), dn(b1), dn(a1)); // service → gateway → internet (lower line)
+        const respPath = through(b2, a2, b1, a1); // service → gateway → internet (same line, reverse)
         nextFlows.push({
           path: respPath, host: svc.domain, color, count: respN, dur: cycle, begin,
           t0: respStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle,
@@ -204,7 +197,20 @@ export function Topology({
           {strokes.map((s, i) => {
             const dim = hovered ? s.host !== hovered : false;
             const p = s.pulse;
-            const eps = p ? Math.min(0.005, Math.max(0.001, (p.t1 - p.t0) / 4)) : 0;
+            // Build a keyframe envelope: min between phases, swell to each phase's
+            // width while that batch is in flight.
+            let anim: { keyTimes: string; values: string } | null = null;
+            if (p && p.phases.length) {
+              const kt: number[] = [0];
+              const val: number[] = [s.width];
+              for (const ph of p.phases) {
+                const e = Math.min(0.004, Math.max(0.001, (ph.t1 - ph.t0) / 4));
+                kt.push(+ph.t0.toFixed(4), +(ph.t0 + e).toFixed(4), +(ph.t1 - e).toFixed(4), +ph.t1.toFixed(4));
+                val.push(s.width, ph.width, ph.width, s.width);
+              }
+              kt.push(1); val.push(s.width);
+              anim = { keyTimes: kt.join(";"), values: val.join(";") };
+            }
             return (
               <path
                 key={`s${i}`}
@@ -216,15 +222,15 @@ export function Topology({
                 strokeOpacity={dim ? 0.07 : s.dashed ? 0.3 : 0.45}
                 strokeDasharray={s.dashed ? "5 5" : undefined}
               >
-                {p && p.width > s.width && p.t1 > p.t0 && (
+                {anim && p && (
                   <animate
                     attributeName="stroke-width"
                     dur={`${p.dur}s`}
                     begin={p.begin}
                     repeatCount="indefinite"
                     calcMode="linear"
-                    keyTimes={`0;${+p.t0.toFixed(4)};${+(p.t0 + eps).toFixed(4)};${+(p.t1 - eps).toFixed(4)};${+p.t1.toFixed(4)};1`}
-                    values={`${s.width};${s.width};${p.width};${p.width};${s.width};${s.width}`}
+                    keyTimes={anim.keyTimes}
+                    values={anim.values}
                   />
                 )}
               </path>
@@ -265,7 +271,7 @@ export function Topology({
         <div className="topo-legend">
           <span><span className="lg-dot" /> dots = requests</span>
           <span><span className="lg-bar" /> line width = bandwidth</span>
-          <span className="lg-dim">upper line in · lower line out</span>
+          <span className="lg-dim">per-service in/out shown on each row</span>
         </div>
 
         <div className="topo-tier">
