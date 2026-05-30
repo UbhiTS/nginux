@@ -81,6 +81,8 @@ export const api = {
   createUser: (body: { username: string; password: string; role: string; email?: string; scope?: string }) =>
     req<AuthUser>("/users", { method: "POST", body: JSON.stringify(body) }),
   deleteUser: (id: string) => req<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
+  adminSetUserPassword: (id: string, newPassword: string) =>
+    req<{ ok: boolean }>(`/users/${id}/password`, { method: "POST", body: JSON.stringify({ newPassword }) }),
   sessions: () => req<Session[]>("/sessions"),
   audit: (type?: string, limit = 50) =>
     req<AuditEvent[]>(`/audit?${type ? `type=${type}&` : ""}limit=${limit}`),

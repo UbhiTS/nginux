@@ -18,6 +18,7 @@ import {
 } from "./repo.ts";
 import { applyConfig, generateHostConfig, generateStreamConfig } from "./nginx.ts";
 import {
+  adminSetPassword,
   beginTwofaSetup,
   changePassword,
   checkCredentials,
@@ -698,6 +699,20 @@ app.delete("/api/users/:id", async (req, reply) => {
   if (id === admin.id) return reply.code(400).send({ error: "You can't delete your own account." });
   deleteUser(id);
   logEvent({ type: "user.deleted", severity: "warn", actor: admin.username, summary: `Deleted a user`, ip: clientIp(req), meta: { id } });
+  return { ok: true };
+});
+
+// Admin reset of another user's password (no current password needed; the user
+// is forced to change it on next login and their sessions are revoked).
+app.post("/api/users/:id/password", async (req, reply) => {
+  const admin = requireAdmin(req, reply);
+  if (!admin) return;
+  const { id } = req.params as { id: string };
+  const parsed = z.object({ newPassword: z.string().min(8, "Use at least 8 characters.").max(200) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  if (!adminSetPassword(id, parsed.data.newPassword)) return reply.code(404).send({ error: "User not found" });
+  const target = getUserById(id);
+  logEvent({ type: "user.password_reset", severity: "warn", actor: admin.username, summary: `Reset password for ${target?.username ?? id}`, ip: clientIp(req), meta: { id } });
   return { ok: true };
 });
 

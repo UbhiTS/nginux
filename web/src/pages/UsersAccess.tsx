@@ -29,6 +29,34 @@ export function UsersAccess({
   const [pwOk, setPwOk] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
 
+  // admin reset of another user's password
+  const [resetUser, setResetUser] = useState<AuthUser | null>(null);
+  const [rpNew, setRpNew] = useState("");
+  const [rpConfirm, setRpConfirm] = useState("");
+  const [rpErr, setRpErr] = useState("");
+  const [rpBusy, setRpBusy] = useState(false);
+  const [rpDone, setRpDone] = useState("");
+
+  const openReset = (u: AuthUser) => { setResetUser(u); setRpNew(""); setRpConfirm(""); setRpErr(""); setRpDone(""); };
+  const submitReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRpErr("");
+    if (rpNew.length < 8) return setRpErr("Use at least 8 characters.");
+    if (rpNew !== rpConfirm) return setRpErr("The two passwords don't match.");
+    if (!resetUser) return;
+    setRpBusy(true);
+    try {
+      await api.adminSetUserPassword(resetUser.id, rpNew);
+      setRpDone(`Password reset for ${resetUser.username}. They'll be asked to change it on next sign-in.`);
+      setResetUser(null);
+      load();
+    } catch (e2) {
+      setRpErr(e2 instanceof Error ? e2.message : "Couldn't reset the password.");
+    } finally {
+      setRpBusy(false);
+    }
+  };
+
   const resetPw = () => { setPwCur(""); setPwNext(""); setPwConfirm(""); setPwErr(""); };
   const submitPw = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,6 +191,10 @@ export function UsersAccess({
               </div>
             )}
 
+            {rpDone && (
+              <div className="test-result ok" style={{ marginBottom: 18 }}><Icon.check /><div>{rpDone}</div></div>
+            )}
+
             <div className="card atable">
               <div className="ahead" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr auto" }}>
                 <div>User</div>
@@ -191,19 +223,24 @@ export function UsersAccess({
                     <span className={`pill ${u.twofaEnabled ? "g" : "r"}`}>{u.twofaEnabled ? "On" : "Not set up"}</span>
                   </div>
                   <div className="muted">{u.lastLoginAt ? fmt(u.lastLoginAt) : "never"}</div>
-                  <div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                     {currentUser.role === "admin" && u.id !== currentUser.id && (
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={async () => {
-                          if (confirm(`Delete ${u.username}?`)) {
-                            await api.deleteUser(u.id);
-                            load();
-                          }
-                        }}
-                      >
-                        Delete
-                      </button>
+                      <>
+                        <button className="btn btn-ghost btn-sm" onClick={() => openReset(u)}>
+                          Reset password
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={async () => {
+                            if (confirm(`Delete ${u.username}?`)) {
+                              await api.deleteUser(u.id);
+                              load();
+                            }
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -231,6 +268,28 @@ export function UsersAccess({
           </div>
         )}
       </div>
+
+      {resetUser && (
+        <div className="modal-backdrop" onClick={() => setResetUser(null)}>
+          <div className="card card-pad modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 650, marginBottom: 4 }}>Reset password — {resetUser.username}</div>
+            <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+              Set a temporary password. {resetUser.username} will be required to choose a new one at next sign-in, and any active sessions will be signed out.
+            </p>
+            <form onSubmit={submitReset}>
+              <div className="field"><label>New password</label>
+                <input className="input" type="password" value={rpNew} onChange={(e) => setRpNew(e.target.value)} autoFocus /></div>
+              <div className="field"><label>Confirm new password</label>
+                <input className="input" type="password" value={rpConfirm} onChange={(e) => setRpConfirm(e.target.value)} /></div>
+              {rpErr && <div className="test-result bad" style={{ marginTop: 0, marginBottom: 12 }}><Icon.x /><div>{rpErr}</div></div>}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn btn-primary" disabled={rpBusy}>{rpBusy ? <span className="spinner" /> : null}Reset password</button>
+                <button type="button" className="btn btn-ghost" onClick={() => setResetUser(null)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -50,6 +50,16 @@ export function changePassword(userId: string, currentPassword: string, newPassw
   return true;
 }
 
+/** Admin reset: set a user's password without their current one, force a change
+ *  on their next login, and kill their existing sessions. */
+export function adminSetPassword(userId: string, newPassword: string): boolean {
+  const exists = db.prepare("SELECT id FROM users WHERE id = ?").get(userId);
+  if (!exists) return false;
+  db.prepare("UPDATE users SET passwordHash = ?, mustChangePassword = 1 WHERE id = ?").run(hashPassword(newPassword), userId);
+  destroyUserSessions(userId);
+  return true;
+}
+
 // ---------- user mapping ----------
 type Row = Record<string, unknown>;
 function toUser(r: Row): User {
@@ -191,6 +201,10 @@ export function userForSession(token: string | undefined): User | null {
 
 export function destroySession(token: string): void {
   db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+}
+
+export function destroyUserSessions(userId: string): void {
+  db.prepare("DELETE FROM sessions WHERE userId = ?").run(userId);
 }
 
 export function listSessions(): Array<{ token: string; userId: string; username: string; device: string; ip: string; lastActive: string }> {
