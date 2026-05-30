@@ -56,6 +56,7 @@ export interface Settings {
   godaddyApiKey: string;
   godaddySecret: string;
   cloudflareApiToken: string;
+  maxmindLicenseKey: string;
   acmeStaging: boolean;
   agentAutoApprove: boolean;
   gitOpsEnabled: boolean;

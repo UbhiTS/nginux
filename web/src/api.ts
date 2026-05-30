@@ -114,6 +114,11 @@ export const api = {
   certDetails: (domain: string) => req<CertDetails>(`/certificates/${encodeURIComponent(domain)}/details`),
   deleteCert: (domain: string) => req<{ ok: boolean }>(`/certificates/${encodeURIComponent(domain)}`, { method: "DELETE" }),
 
+  // ---- geoip (country lock) ----
+  geoipStatus: () => req<GeoipStatus>("/geoip/status"),
+  downloadGeoip: () => req<{ ok: boolean; status: GeoipStatus }>("/geoip/download", { method: "POST" }),
+  deleteGeoip: () => req<{ ok: boolean }>("/geoip", { method: "DELETE" }),
+
   // ---- agents / MCP ----
   agentsOverview: () => req<AgentsOverview>("/agents/overview"),
   tools: () => req<ToolDef[]>("/agents/tools"),
@@ -168,6 +173,14 @@ export const api = {
   deleteChannel: (id: string) => req<{ ok: boolean }>(`/channels/${id}`, { method: "DELETE" }),
   testChannel: (id: string) => req<{ ok: boolean; status: string }>(`/channels/${id}/test`, { method: "POST" }),
 };
+
+export interface GeoipStatus {
+  present: boolean;
+  active: boolean;
+  sizeBytes: number;
+  updatedAt: string | null;
+  countries: string[];
+}
 
 export interface CertDetails {
   subject: string;

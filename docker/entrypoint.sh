@@ -3,8 +3,14 @@
 set -eu
 
 # Persistent dirs on the mounted volume
-mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs
+mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs /data/geoip
 touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/nginx/banned.conf
+
+# nginx.conf includes geoip.conf; it must exist before nginx starts. Seed a safe
+# allow-all default if absent — the control plane regenerates it from settings.
+if [ ! -f /data/nginx/geoip.conf ]; then
+  echo 'geo $nginux_allowed_country { default 1; }' > /data/nginx/geoip.conf
+fi
 
 # Bootstrap a self-signed cert so SSL server blocks are valid before ACME runs.
 if [ ! -f /data/nginx/selfsigned.crt ]; then

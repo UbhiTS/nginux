@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Channel, type ConfigVersion } from "../api.ts";
+import { api, type Channel, type ConfigVersion, type GeoipStatus } from "../api.ts";
 import type { Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
@@ -121,8 +121,68 @@ export function SettingsPage({
             </div>
           </div>
 
+          <CountryLock settings={settings} update={update} onSave={save} />
           <Notifications />
           <BackupsGitOps settings={settings} update={update} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+function CountryLock({ settings, update, onSave }: { settings: Settings; update: (p: Partial<Settings>) => void; onSave: () => Promise<void> }) {
+  const [status, setStatus] = useState<GeoipStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  const load = () => api.geoipStatus().then(setStatus).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const download = async () => {
+    setBusy(true); setErr(""); setMsg("");
+    try {
+      await onSave(); // persist the license key + country before downloading
+      const r = await api.downloadGeoip();
+      setStatus(r.status);
+      setMsg(r.status.active ? `Database installed — country lock active for ${r.status.countries.join(", ")}.` : "Database installed. Set a home country above to start filtering.");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Download failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true); setErr(""); setMsg("");
+    try { await api.deleteGeoip(); await load(); } catch (e) { setErr(e instanceof Error ? e.message : "Remove failed."); } finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <div className="section-title" style={{ marginTop: 20 }}>Country lock (GeoIP)</div>
+      <div className="card card-pad">
+        <p className="muted" style={{ fontSize: 12.5, marginTop: 0, marginBottom: 14 }}>
+          Powers the "Only allow my country" toggle on services. Needs the free MaxMind GeoLite2 database — sign up at maxmind.com and create a license key (Account → Manage License Keys). Your own LAN is always allowed.
+        </p>
+        <div className="field" style={{ marginBottom: 14 }}>
+          <label>MaxMind license key</label>
+          <input className="input" type="password" value={settings.maxmindLicenseKey} onChange={(e) => update({ maxmindLicenseKey: e.target.value })} placeholder="license key" />
+        </div>
+        <div className="kv"><span className="k">Database</span>
+          <span className="v">{status?.present
+            ? <span className="pill g">Installed{status.sizeBytes ? ` · ${Math.round(status.sizeBytes / 1024)} KB` : ""}</span>
+            : <span className="pill n">Not installed</span>}</span>
+        </div>
+        <div className="kv"><span className="k">Lock status</span>
+          <span className="v">{status?.active ? `Active — allowing ${status.countries.join(", ")}` : status?.present ? "Installed (set a home country to enable)" : "Inactive — services stay open"}</span>
+        </div>
+        {status?.updatedAt && <div className="kv" style={{ border: "none" }}><span className="k">Last updated</span><span className="v muted">{new Date(status.updatedAt).toLocaleString()}</span></div>}
+        {err && <div className="test-result bad" style={{ marginTop: 12, marginBottom: 0 }}><Icon.x /><div>{err}</div></div>}
+        {msg && <div className="info-line" style={{ marginTop: 12 }}><Icon.check />{msg}</div>}
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <button className="btn btn-primary btn-sm" disabled={busy} onClick={download}>{busy ? <span className="spinner" /> : null}{status?.present ? "Update database" : "Download database"}</button>
+          {status?.present && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={remove}>Remove</button>}
         </div>
       </div>
     </>

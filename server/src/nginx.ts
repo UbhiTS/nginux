@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { getPreset } from "./presets.ts";
 import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
+import { writeGeoipConf } from "./geoip.ts";
 import type { ProxyHost } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -242,6 +243,8 @@ ${locationBody}    }
 export function writeAllConfigs(): string[] {
   if (!existsSync(CONF_DIR)) mkdirSync(CONF_DIR, { recursive: true });
   if (!existsSync(STREAM_DIR)) mkdirSync(STREAM_DIR, { recursive: true });
+  // Refresh the country-lock include from current settings + DB presence.
+  writeGeoipConf();
 
   // Clear previously generated files (only our managed .conf files).
   for (const dir of [CONF_DIR, STREAM_DIR]) {

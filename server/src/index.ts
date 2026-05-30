@@ -17,6 +17,7 @@ import {
   updateHost,
 } from "./repo.ts";
 import { applyConfig, generateHostConfig, generateStreamConfig } from "./nginx.ts";
+import { deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
 import {
   adminSetPassword,
   beginTwofaSetup,
@@ -116,6 +117,7 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 seedIfEmpty();
 const seeded = await seedAuthIfEmpty();
 seedTokensIfEmpty();
+writeGeoipConf(); // keep the country-lock include in sync with settings on boot
 
 const ALL_SCOPES: Scope[] = ["read", "report", "control", "security"];
 const currentUser = (req: FastifyRequest): User | null =>
@@ -338,6 +340,7 @@ const settingsInput = z.object({
   godaddyApiKey: z.string().max(256),
   godaddySecret: z.string().max(256),
   cloudflareApiToken: z.string().max(256),
+  maxmindLicenseKey: z.string().max(256),
   acmeStaging: z.boolean(),
   agentAutoApprove: z.boolean(),
   gitOpsEnabled: z.boolean(),
@@ -348,7 +351,10 @@ app.put("/api/settings", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const parsed = settingsInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  return saveSettings(parsed.data);
+  const saved = saveSettings(parsed.data);
+  // Changing the allowed country re-derives the geo config; reload to apply it.
+  if (parsed.data.homeCountry !== undefined) { writeGeoipConf(); await applyConfig(); }
+  return saved;
 });
 
 // ---------- hosts ----------
@@ -840,6 +846,40 @@ app.delete("/api/certificates/:domain", async (req, reply) => {
   // Re-apply so any host on this domain drops back to the bootstrap cert cleanly.
   const apply = await applyConfig();
   logEvent({ type: "cert.deleted", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Deleted certificate for ${dp.data}`, ip: clientIp(req), meta: {} });
+  return { ok: true, apply };
+});
+
+// ---------- GeoIP (country lock) ----------
+app.get("/api/geoip/status", async () => geoipStatus());
+
+app.post("/api/geoip/download", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  let result: { sizeBytes: number };
+  try {
+    result = await downloadGeoipDb();
+  } catch (e) {
+    return reply.code(422).send({ error: e instanceof Error ? e.message : "Download failed." });
+  }
+  // Regenerate the geo config and validate it. If nginx rejects it, drop the DB
+  // and restore the allow-all include so we never leave a broken config behind.
+  writeGeoipConf();
+  const apply = await applyConfig();
+  if (!apply.ok && apply.nginxAvailable) {
+    deleteGeoipDb();
+    writeGeoipConf();
+    await applyConfig();
+    return reply.code(422).send({ error: `Database installed but nginx rejected the geo config: ${apply.message}` });
+  }
+  logEvent({ type: "geoip.updated", severity: "info", actor: currentUser(req)?.username ?? "system", summary: `Updated GeoIP database (${Math.round(result.sizeBytes / 1024)} KB)`, ip: clientIp(req), meta: {} });
+  return { ok: true, status: geoipStatus() };
+});
+
+app.delete("/api/geoip", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  deleteGeoipDb();
+  writeGeoipConf();
+  const apply = await applyConfig();
+  logEvent({ type: "geoip.deleted", severity: "notice", actor: currentUser(req)?.username ?? "system", summary: "Removed GeoIP database", ip: clientIp(req), meta: {} });
   return { ok: true, apply };
 });
 

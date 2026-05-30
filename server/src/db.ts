@@ -343,6 +343,7 @@ const DEFAULT_SETTINGS: Settings = {
   godaddyApiKey: "",
   godaddySecret: "",
   cloudflareApiToken: "",
+  maxmindLicenseKey: "",
   acmeStaging: false,
   agentAutoApprove: true,
   gitOpsEnabled: false,

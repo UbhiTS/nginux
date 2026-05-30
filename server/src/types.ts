@@ -93,6 +93,8 @@ export interface Settings {
   godaddyApiKey: string;
   godaddySecret: string;
   cloudflareApiToken: string;
+  /** MaxMind license key for downloading the GeoLite2 country database (geo lock). */
+  maxmindLicenseKey: string;
   /** Use Let's Encrypt staging (avoids rate limits while testing). */
   acmeStaging: boolean;
   /** Allow trusted agents to auto-run low/medium-risk tools without approval. */
