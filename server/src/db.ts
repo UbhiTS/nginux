@@ -376,6 +376,15 @@ function daysFromNow(days: number): string {
 }
 
 export function seedIfEmpty(): void {
+  // Demo hosts/certs are for local dev & screenshots only. NEVER seed a real
+  // deployment (the published image runs with NODE_ENV=production), and never
+  // re-seed once initialized — otherwise deleting every service would bring the
+  // demo data back on the next restart.
+  if (process.env.NODE_ENV === "production") return;
+  const already = db.prepare("SELECT 1 FROM settings WHERE key = 'demoSeeded'").get();
+  if (already) return;
+  db.prepare("INSERT INTO settings (key, value) VALUES ('demoSeeded', 'true') ON CONFLICT(key) DO UPDATE SET value = 'true'").run();
+
   const count = (
     db.prepare("SELECT COUNT(*) AS n FROM hosts").get() as { n: number }
   ).n;
