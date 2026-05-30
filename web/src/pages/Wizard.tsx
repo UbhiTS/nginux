@@ -1,10 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Route } from "../App.tsx";
 import { api, type Certificate } from "../api.ts";
 import type { ApplyResult, Preset, Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
 
 type CertChoice = "existing" | "dns-01" | "http-01" | "selfsigned";
+const MAX_CERT_ATTEMPTS = 3;
+
+/** A delay that resolves after `ms`, ticks a countdown, and rejects (AbortError)
+ *  if the signal fires — lets the user cancel a backoff wait. */
+function cancellableWait(ms: number, signal: AbortSignal, onTick: (secs: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new DOMException("aborted", "AbortError"));
+    let remaining = Math.ceil(ms / 1000);
+    onTick(remaining);
+    const iv = setInterval(() => { remaining -= 1; onTick(Math.max(0, remaining)); }, 1000);
+    const finish = (fn: () => void) => { clearInterval(iv); clearTimeout(to); signal.removeEventListener("abort", onAbort); fn(); };
+    const to = setTimeout(() => finish(resolve), ms);
+    const onAbort = () => finish(() => reject(new DOMException("aborted", "AbortError")));
+    signal.addEventListener("abort", onAbort);
+  });
+}
 
 const STEPS = ["What", "Where", "Address", "Secure", "Done"];
 
@@ -33,6 +49,10 @@ export function Wizard({
   const [creating, setCreating] = useState(false);
   const [apply, setApply] = useState<ApplyResult | null>(null);
   const [certResult, setCertResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [certPhase, setCertPhase] = useState<"setup" | "issuing" | "backoff">("setup");
+  const [certAttempt, setCertAttempt] = useState(0);
+  const [retryIn, setRetryIn] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const base = settings?.baseDomain ?? "example.com";
   const country2 = settings?.homeCountry ?? "your country";
@@ -70,12 +90,50 @@ export function Wizard({
     }
   };
 
+  // Issue a trusted cert with bounded attempts + exponential backoff. Transient
+  // failures (timeout/dns) retry; a rate limit or unreachable host stops early.
+  // The whole sequence is cancellable — the service is already live on self-signed.
+  const issueWithRetry = async (host: string, method: "http-01" | "dns-01", signal: AbortSignal) => {
+    for (let attempt = 1; attempt <= MAX_CERT_ATTEMPTS; attempt++) {
+      setCertAttempt(attempt);
+      setCertPhase("issuing");
+      try {
+        await api.issueCert(host, method, signal);
+        setCertResult({ ok: true, message: "Trusted Let's Encrypt certificate installed." });
+        return;
+      } catch (e) {
+        if (signal.aborted || (e as { name?: string })?.name === "AbortError") {
+          setCertResult({ ok: false, message: "Cancelled — the service is live on a temporary self-signed certificate. Request a trusted one anytime from Certificates." });
+          return;
+        }
+        const kind = (e as { kind?: string })?.kind ?? "other";
+        const message = e instanceof Error ? e.message : "Certificate request failed.";
+        const retryable = kind === "timeout" || kind === "dns" || kind === "other";
+        if (!retryable || attempt === MAX_CERT_ATTEMPTS) {
+          setCertResult({ ok: false, message });
+          return;
+        }
+        setCertPhase("backoff");
+        try {
+          await cancellableWait(2000 * 2 ** (attempt - 1), signal, setRetryIn);
+        } catch {
+          setCertResult({ ok: false, message: "Cancelled — left on the self-signed certificate. Retry anytime from Certificates." });
+          return;
+        }
+      }
+    }
+  };
+
   const create = async () => {
     if (!preset || !parsed) return;
     setApply(null);
     setCertResult(null);
+    setCertAttempt(0);
+    setCertPhase("setup");
     setStep(5);
     setCreating(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       const res = await api.createHost({
         name: preset.label.split(" ")[0] === "Custom" ? sub || "Service" : preset.label.split(" / ")[0],
@@ -101,12 +159,7 @@ export function Wizard({
       // need no issuance. A Let's Encrypt failure doesn't undo the service (it's live
       // on the self-signed bootstrap cert), so we surface it as a soft warning.
       if (ssl && (certMethod === "http-01" || certMethod === "dns-01")) {
-        try {
-          await api.issueCert(domain, certMethod);
-          setCertResult({ ok: true, message: "Trusted Let's Encrypt certificate installed." });
-        } catch (e) {
-          setCertResult({ ok: false, message: e instanceof Error ? e.message : "Certificate request failed." });
-        }
+        await issueWithRetry(domain, certMethod, ctrl.signal);
       }
       await reload();
     } catch (e) {
@@ -117,6 +170,7 @@ export function Wizard({
       setStep(4);
     } finally {
       setCreating(false);
+      abortRef.current = null;
     }
   };
 
@@ -287,7 +341,18 @@ export function Wizard({
                 <div className="done-hero">
                   <span className="spinner" style={{ width: 28, height: 28 }} />
                   <h2 style={{ marginTop: 16 }}>Setting up {sub}.{base}…</h2>
-                  <p className="wsub">Creating DNS, requesting the certificate, and applying config.</p>
+                  <p className="wsub" style={{ marginBottom: certPhase === "setup" ? undefined : 14 }}>
+                    {certPhase === "issuing"
+                      ? `Requesting a trusted certificate from Let's Encrypt… (attempt ${certAttempt} of ${MAX_CERT_ATTEMPTS}). This can take up to a minute.`
+                      : certPhase === "backoff"
+                      ? `Let's Encrypt didn't answer — retrying in ${retryIn}s…`
+                      : "Creating the service and applying the configuration."}
+                  </p>
+                  {(certPhase === "issuing" || certPhase === "backoff") && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => abortRef.current?.abort()}>
+                      Cancel &amp; keep self-signed
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="done-hero">

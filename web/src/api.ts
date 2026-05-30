@@ -99,11 +99,23 @@ export const api = {
 
   // ---- certificates ----
   certificates: () => req<Certificate[]>("/certificates"),
-  issueCert: (domain: string, method: string) =>
-    req<Certificate>(`/certificates/${encodeURIComponent(domain)}/issue`, {
+  // Abortable + surfaces the failure `kind` (rate_limit/timeout/dns/...) so the
+  // caller can decide whether a retry is worth attempting.
+  issueCert: async (domain: string, method: string, signal?: AbortSignal): Promise<Certificate> => {
+    const res = await fetch(`/api/certificates/${encodeURIComponent(domain)}/issue`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ method }),
-    }),
+      signal,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const err = new Error(body.error ? String(body.error) : res.statusText) as Error & { kind?: string };
+      err.kind = body.kind ?? "other";
+      throw err;
+    }
+    return res.json() as Promise<Certificate>;
+  },
   renewCert: (domain: string) =>
     req<Certificate>(`/certificates/${encodeURIComponent(domain)}/renew`, { method: "POST" }),
   setCertAutoRenew: (domain: string, on: boolean) =>

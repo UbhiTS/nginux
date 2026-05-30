@@ -206,22 +206,64 @@ export async function issueSelfSigned(domain: string): Promise<Certificate> {
   return getCert(domain)!;
 }
 
+// How long a single ACME issuance may run before we give up (configurable).
+const ACME_TIMEOUT_MS = Number(process.env.ACME_TIMEOUT_MS ?? 90000);
+const ACCOUNT_KEY_PATH = join(CERT_DIR, "acme-account.key");
+
+/** A categorized ACME failure so the UI can decide whether a retry is worthwhile. */
+export type AcmeErrorKind = "rate_limit" | "timeout" | "dns" | "unreachable" | "config" | "other";
+export class AcmeError extends Error {
+  kind: AcmeErrorKind;
+  constructor(message: string, kind: AcmeErrorKind) { super(message); this.name = "AcmeError"; this.kind = kind; }
+}
+
+function classifyAcme(raw: string): { message: string; kind: AcmeErrorKind } {
+  if (/rate ?limit|too many|tooManyRequests/i.test(raw))
+    return { kind: "rate_limit", message: "Hit a Let's Encrypt rate limit. These reset after an hour (or longer for duplicate certificates) — wait before retrying, or switch on staging mode in Settings to test freely." };
+  if (/timed? ?out|timeout|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(raw))
+    return { kind: "timeout", message: "Let's Encrypt didn't respond in time. It may be slow, rate-limiting, or your domain isn't reachable yet." };
+  if (/dns|TXT|propagat/i.test(raw))
+    return { kind: "dns", message: "Couldn't verify domain ownership via DNS yet — DNS may not have propagated, or the provider isn't connected in Settings." };
+  if (/connection|unreachable|http-01|:80|\b404\b|refused/i.test(raw))
+    return { kind: "unreachable", message: "Let's Encrypt couldn't reach this domain on port 80 — it must be publicly reachable (DNS pointed at your IP, port 80 forwarded) for HTTP validation." };
+  if (/email|account|contact/i.test(raw))
+    return { kind: "config", message: raw.split("\n")[0] };
+  return { kind: "other", message: "Certificate issuance failed: " + raw.split("\n")[0] };
+}
+
+/** Reuse one ACME account key across issuances instead of registering a fresh
+ *  account every time — repeated registrations are themselves rate-limited. */
+async function acmeAccountKey(): Promise<Buffer> {
+  if (existsSync(ACCOUNT_KEY_PATH)) return readFileSync(ACCOUNT_KEY_PATH);
+  const key = await acme.crypto.createPrivateKey();
+  mkdirSync(CERT_DIR, { recursive: true });
+  writeFileSync(ACCOUNT_KEY_PATH, key);
+  return key;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
 // ---------- Let's Encrypt (ACME) — runs with a reachable public domain ----------
 export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-01"): Promise<Certificate> {
   const s = getSettings();
-  if (!s.letsEncryptEmail) throw new Error("Set a Let's Encrypt contact email in Settings first.");
+  if (!s.letsEncryptEmail) throw new AcmeError("Set a Let's Encrypt contact email in Settings first.", "config");
   upsertCert({ domain, status: "pending", method, issuer: "Let's Encrypt" });
 
   const wildcard = domain.startsWith("*.");
   try {
     const client = new acme.Client({
       directoryUrl: s.acmeStaging ? acme.directory.letsencrypt.staging : acme.directory.letsencrypt.production,
-      accountKey: await acme.crypto.createPrivateKey(),
+      accountKey: await acmeAccountKey(),
     });
     const [key, csr] = await acme.crypto.createCsr({ commonName: domain, altNames: [domain] });
     const dns = getDnsProvider();
 
-    const certPem = await client.auto({
+    const certPem = await withTimeout(client.auto({
       csr,
       email: s.letsEncryptEmail,
       termsOfServiceAgreed: true,
@@ -239,7 +281,7 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
           await dns.removeTxt(s.baseDomain, recordName(`_acme-challenge.${domain.replace(/^\*\./, "")}`, s.baseDomain));
         }
       },
-    });
+    }), ACME_TIMEOUT_MS, "Let's Encrypt issuance");
 
     writeFiles(domain, key.toString(), certPem.toString());
     const parsed = forge.pki.certificateFromPem(certPem.toString());
@@ -257,10 +299,11 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
     logEvent({ type: "cert.issued", severity: "info", actor: "system", summary: `Let's Encrypt certificate for ${domain}`, ip: "", meta: { method } });
     return getCert(domain)!;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    upsertCert({ domain, status: "error", lastError: humanizeAcme(msg) });
-    logEvent({ type: "cert.failed", severity: "warn", actor: "system", summary: `Certificate failed for ${domain}`, ip: "", meta: { error: msg } });
-    throw new Error(humanizeAcme(msg));
+    const raw = err instanceof Error ? err.message : String(err);
+    const { message, kind } = classifyAcme(raw);
+    upsertCert({ domain, status: "error", lastError: message });
+    logEvent({ type: "cert.failed", severity: "warn", actor: "system", summary: `Certificate failed for ${domain}`, ip: "", meta: { error: raw, kind } });
+    throw new AcmeError(message, kind);
   }
 }
 
@@ -300,13 +343,6 @@ export function startRenewalScheduler(): void {
     void renewDue();
   };
   setInterval(tick, 24 * 3600_000).unref?.();
-}
-
-function humanizeAcme(raw: string): string {
-  if (/dns|TXT|propagat/i.test(raw)) return "Couldn't verify domain ownership via DNS yet — DNS may not have propagated, or the provider isn't connected.";
-  if (/connection|timeout|unreachable|http-01|404/i.test(raw)) return "Let's Encrypt couldn't reach this domain on port 80 — it must be publicly reachable for HTTP validation.";
-  if (/rate ?limit/i.test(raw)) return "Hit a Let's Encrypt rate limit. Try staging mode, or wait before retrying.";
-  return "Certificate issuance failed: " + raw.split("\n")[0];
 }
 
 export { CERT_DIR };

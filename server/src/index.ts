@@ -50,6 +50,7 @@ import {
 import type { ProxyHost } from "./types.ts";
 import { otpauthURL, verifyTotp } from "./totp.ts";
 import {
+  AcmeError,
   deleteCert,
   ensureCert,
   getCert,
@@ -806,7 +807,8 @@ app.post("/api/certificates/:domain/issue", async (req, reply) => {
     logEvent({ type: "cert.issued", severity: "info", actor: currentUser(req)?.username ?? "system", summary: `Issued ${method} certificate for ${domain}`, ip: clientIp(req), meta: {} });
     return cert;
   } catch (e) {
-    return reply.code(422).send({ error: e instanceof Error ? e.message : "Issuance failed." });
+    const kind = e instanceof AcmeError ? e.kind : "other";
+    return reply.code(kind === "rate_limit" ? 429 : 422).send({ error: e instanceof Error ? e.message : "Issuance failed.", kind });
   }
 });
 
@@ -822,7 +824,8 @@ app.post("/api/certificates/:domain/renew", async (req, reply) => {
     await applyConfig();
     return next;
   } catch (e) {
-    return reply.code(422).send({ error: e instanceof Error ? e.message : "Renewal failed." });
+    const kind = e instanceof AcmeError ? e.kind : "other";
+    return reply.code(kind === "rate_limit" ? 429 : 422).send({ error: e instanceof Error ? e.message : "Renewal failed.", kind });
   }
 });
 
