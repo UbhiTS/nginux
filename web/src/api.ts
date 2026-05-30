@@ -156,6 +156,7 @@ export const api = {
   metricsSummary: () => req<MetricsSummary>("/metrics/summary"),
   hostTraffic: (range: string, metric: string = "requests") => req<{ key: string; count: number }[]>(`/metrics/hosts?range=${range}&metric=${metric}`),
   hostStats: (range: string) => req<HostStat[]>(`/metrics/host-stats?range=${range}`),
+  reachability: () => req<Reachability>("/network/reachability"),
   recentLogs: (filter?: string, limit = 200) =>
     req<LogEntry[]>(`/logs/recent?${filter ? `filter=${encodeURIComponent(filter)}&` : ""}limit=${limit}`),
 
@@ -192,6 +193,17 @@ export interface HostStat {
   requests: number;
   bytesIn: number;
   bytesOut: number;
+}
+
+export interface Reachability {
+  nginxUp: boolean;
+  local80: boolean;
+  local443: boolean;
+  detectedPublicIp: string | null;
+  configuredPublicIp: string;
+  ipMismatch: boolean;
+  ext80: boolean | null;
+  ext443: boolean | null;
 }
 
 export interface GeoipStatus {

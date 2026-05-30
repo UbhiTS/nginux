@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "../App.tsx";
 import type { Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
-import { api } from "../api.ts";
+import { api, type Reachability } from "../api.ts";
 
 interface PulsePhase { t0: number; t1: number; width: number; }
 interface Pulse { dur: number; begin: string; phases: PulsePhase[]; }
@@ -74,8 +74,18 @@ export function Topology({
   const [stats, setStats] = useState<Record<string, { requests: number; bytesIn: number; bytesOut: number }>>({});
   const statsRef = useRef(stats);
   const timersRef = useRef<Map<string, number>>(new Map());
+  const [reach, setReach] = useState<Reachability | null>(null);
 
   useEffect(() => { statsRef.current = stats; }, [stats]);
+
+  // Live gateway reachability — is nginx serving 80/443, and has the public IP drifted?
+  useEffect(() => {
+    let alive = true;
+    const pull = () => api.reachability().then((x) => { if (alive) setReach(x); }).catch(() => {});
+    pull();
+    const id = setInterval(pull, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   // The parent refetches topology on a poll, handing us a new `data` object each
   // time. Read it through a ref so commits don't restart just because the object
@@ -320,10 +330,29 @@ export function Topology({
             <div className="node-ip">
               <span className="ip-label">LAN</span> {data.gateway.gatewayIp}
             </div>
-            <div className="node-foot">
-              <span className="dot g" />
-              NginUX · ports 80 / 443
-            </div>
+            {(() => {
+              const r = reach;
+              let cls = "g", text = "NginUX · ports 80 / 443", title = "Checking reachability…";
+              if (r) {
+                if (!r.nginxUp) {
+                  cls = "r"; text = "nginx down on 80 / 443";
+                  title = "nginx isn't responding on ports 80/443 — the proxy data plane may be down.";
+                } else if (r.ipMismatch) {
+                  cls = "y"; text = "Public IP changed";
+                  title = `Your public IP looks like ${r.detectedPublicIp}, but ${r.configuredPublicIp} is configured. DNS A records may now point to the wrong address — update them (and Settings).`;
+                } else {
+                  cls = "g"; text = "Serving 80 / 443";
+                  const extOk = r.ext443 === true || r.ext80 === true;
+                  title = `nginx is serving on 80/443. Externally reachable: ${extOk ? "yes ✓" : "couldn't confirm from inside your network (test from outside / check the port-forward)"}.`;
+                }
+              }
+              return (
+                <div className="node-foot" title={title}>
+                  <span className={`dot ${cls}`} />
+                  {text}
+                </div>
+              );
+            })()}
           </div>
         </div>
 

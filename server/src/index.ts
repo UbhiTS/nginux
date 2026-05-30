@@ -563,6 +563,38 @@ app.get("/api/metrics/host-stats", async (req) => {
   const { range = "live" } = req.query as { range?: string };
   return hostStats(range);
 });
+
+// Live reachability for the gateway badge: is nginx actually serving 80/443, and
+// (best-effort) can the public IP be reached back through the router?
+app.get("/api/network/reachability", async (req, reply) => {
+  if (!currentUser(req)) return reply.code(401).send({ error: "Unauthorized" });
+  const s = getSettings();
+  const [local80, local443] = await Promise.all([tcpProbe("127.0.0.1", 80, 1500), tcpProbe("127.0.0.1", 443, 1500)]);
+  const nginxUp = local80 && local443;
+
+  // Detect the real public IP (outbound, best-effort) so we can flag drift.
+  let detectedPublicIp: string | null = null;
+  try {
+    const r = await fetch("https://api.ipify.org", { signal: AbortSignal.timeout(3000) });
+    if (r.ok) { const ip = (await r.text()).trim(); if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) detectedPublicIp = ip; }
+  } catch { /* offline or blocked — fine */ }
+
+  // Probe the public IP back through the router (works only if NAT loopback /
+  // hairpin is on, so a failure is inconclusive, not necessarily a broken forward).
+  const probeIp = detectedPublicIp ?? s.publicIp;
+  const routable = /^\d{1,3}(\.\d{1,3}){3}$/.test(probeIp) && !/^(203\.0\.113\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.)/.test(probeIp);
+  const [ext80, ext443] = routable
+    ? await Promise.all([tcpProbe(probeIp, 80, 3000), tcpProbe(probeIp, 443, 3000)])
+    : [null, null];
+
+  return {
+    nginxUp, local80, local443,
+    detectedPublicIp,
+    configuredPublicIp: s.publicIp,
+    ipMismatch: !!detectedPublicIp && !!s.publicIp && detectedPublicIp !== s.publicIp,
+    ext80, ext443,
+  };
+});
 app.get("/api/metrics/traffic", async (req) => {
   const { range = "1d" } = req.query as { range?: string };
   return trafficSeries(range);
