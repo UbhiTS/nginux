@@ -3,6 +3,7 @@ import type { Route } from "../App.tsx";
 import { api, type Uptime } from "../api.ts";
 import type { ProxyHost } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
 const banner = {
   online: { cls: "", icon: <Icon.check />, title: "Working. Everything looks healthy." },
@@ -27,6 +28,8 @@ export function HostDetail({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ProxyHost | null>(null);
   const [saving, setSaving] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const refetch = () => {
     api.getHost(hostId).then(setHost).catch(() => setHost(null));
@@ -70,10 +73,14 @@ export function HostDetail({
     : null;
 
   const remove = async () => {
-    if (!confirm(`Remove ${host.name}? This takes it offline.`)) return;
-    await api.deleteHost(host.id);
-    await reload();
-    navigate({ name: "services" });
+    setDeleting(true);
+    try {
+      await api.deleteHost(host.id);
+      await reload();
+      navigate({ name: "services" });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -95,10 +102,22 @@ export function HostDetail({
           Visit
         </a>
         {!editing && <button className="btn" onClick={startEdit}>Edit</button>}
-        <button className="btn btn-danger" onClick={remove}>
+        <button className="btn btn-danger" onClick={() => setConfirmDel(true)}>
           Delete
         </button>
       </div>
+
+      {confirmDel && (
+        <ConfirmDialog
+          danger
+          title={`Remove ${host.emoji} ${host.name}?`}
+          message={<>This takes <b>{host.domain}</b> offline and deletes its proxy configuration. You can expose it again later.</>}
+          confirmLabel="Remove service"
+          busy={deleting}
+          onConfirm={remove}
+          onCancel={() => setConfirmDel(false)}
+        />
+      )}
 
       <div className="content">
         <div className={`summary-banner ${b.cls}`}>

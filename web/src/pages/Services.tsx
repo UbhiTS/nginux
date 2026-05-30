@@ -1,8 +1,10 @@
+import { useState } from "react";
 import type { Route } from "../App.tsx";
 import { api } from "../api.ts";
 import type { ProxyHost } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
 const statusText = (h: ProxyHost) => {
   if (h.health === "down") return "Can't reach service";
@@ -23,14 +25,22 @@ export function Services({
   navigate: (r: Route) => void;
   reload: () => Promise<void>;
 }) {
+  const [pending, setPending] = useState<ProxyHost | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const days = (iso: string | null) =>
     iso ? Math.round((Date.parse(iso) - Date.now()) / 86400_000) : null;
 
-  const remove = async (e: React.MouseEvent, h: ProxyHost) => {
-    e.stopPropagation();
-    if (!confirm(`Remove ${h.name} (${h.domain})? This takes it offline.`)) return;
-    await api.deleteHost(h.id);
-    await reload();
+  const remove = async () => {
+    if (!pending) return;
+    setDeleting(true);
+    try {
+      await api.deleteHost(pending.id);
+      await reload();
+      setPending(null);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -76,7 +86,7 @@ export function Services({
                 <div className="host-meta mono">
                   {h.forwardHost}:{h.forwardPort}
                 </div>
-                <button className="btn btn-ghost btn-sm" onClick={(e) => remove(e, h)}>
+                <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); setPending(h); }}>
                   Delete
                 </button>
               </div>
@@ -90,6 +100,18 @@ export function Services({
           )}
         </div>
       </div>
+
+      {pending && (
+        <ConfirmDialog
+          danger
+          title={`Remove ${pending.emoji} ${pending.name}?`}
+          message={<>This takes <b>{pending.domain}</b> offline and deletes its proxy configuration. You can expose it again later.</>}
+          confirmLabel="Remove service"
+          busy={deleting}
+          onConfirm={remove}
+          onCancel={() => setPending(null)}
+        />
+      )}
     </>
   );
 }
