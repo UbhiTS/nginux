@@ -31,6 +31,7 @@ const MIN_W = 1.4; // thinnest line (idle / tiny bandwidth)
 const MAX_W = 8; // thickest line (busiest direction across all services)
 const STAGGER_SEC = 0.22; // small per-service phase offset within the shared cycle
 const QUIET_SEC = 0.5; // quiet tail at the end of the cycle (no dots in flight) for safe commits
+const LINE_OFF = 4; // vertical gap between the request (upper) and response (lower) lines
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
@@ -149,22 +150,32 @@ export function Topology({
     const respStart = reqStart + reqBatch + HANDOFF_SEC;
 
     const inW = widthFor(st?.bytesIn ?? 0), outW = widthFor(st?.bytesOut ?? 0);
-    const base = live ? MIN_W : outW;
-    const phases: PulsePhase[] = [];
-    if (live) {
-      if (reqN > 0) phases.push({ t0: reqStart / cycle, t1: (reqStart + reqBatch) / cycle, width: inW });
-      if (hasResp) phases.push({ t0: respStart / cycle, t1: (respStart + respBatch) / cycle, width: outW });
-    }
-    const pulse: Pulse | undefined = phases.length ? { dur: cycle, begin: "0s", phases } : undefined;
     const color = PALETTE[i % PALETTE.length];
+    const up = (p: Pt): Pt => ({ x: p.x, y: p.y - LINE_OFF });
+    const dn = (p: Pt): Pt => ({ x: p.x, y: p.y + LINE_OFF });
 
-    const strokes: Stroke[] = [{ d: segPath(a1, b1), color, dashed: false, host: svc.domain, width: base, pulse }];
-    if (el) strokes.push({ d: segPath(a2, b2), color, dashed: down, host: svc.domain, width: base, pulse });
+    // Request (ingress) line — upper: width ∝ request bandwidth, pulses on the request batch.
+    const fwdBase = live ? MIN_W : inW;
+    const fwdPulse: Pulse | undefined = live && reqN > 0
+      ? { dur: cycle, begin: "0s", phases: [{ t0: reqStart / cycle, t1: (reqStart + reqBatch) / cycle, width: inW }] }
+      : undefined;
+    // Response (egress) line — lower: width ∝ response bandwidth, pulses on the response batch.
+    const retBase = live ? MIN_W : outW;
+    const retPulse: Pulse | undefined = live && hasResp
+      ? { dur: cycle, begin: "0s", phases: [{ t0: respStart / cycle, t1: (respStart + respBatch) / cycle, width: outW }] }
+      : undefined;
 
-    const reqPath = down || !el ? segPath(a1, b1) : throughPath(a1, b1, a2, b2);
+    const strokes: Stroke[] = [{ d: segPath(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: fwdBase, pulse: fwdPulse }];
+    if (el) strokes.push({ d: segPath(up(a2), up(b2)), color, dashed: down, host: svc.domain, width: fwdBase, pulse: fwdPulse });
+    if (hasResp) {
+      strokes.push({ d: segPath(dn(a1), dn(b1)), color, dashed: false, host: svc.domain, width: retBase, pulse: retPulse });
+      strokes.push({ d: segPath(dn(a2), dn(b2)), color, dashed: false, host: svc.domain, width: retBase, pulse: retPulse });
+    }
+
+    const reqPath = down || !el ? segPath(up(a1), up(b1)) : throughPath(up(a1), up(b1), up(a2), up(b2));
     const flows: Flow[] = [{ path: reqPath, host: svc.domain, color, count: reqN, dur: cycle, begin: "0s", t0: reqStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle }];
     if (hasResp) {
-      flows.push({ path: throughPath(b2, a2, b1, a1), host: svc.domain, color, count: respN, dur: cycle, begin: "0s", t0: respStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle });
+      flows.push({ path: throughPath(dn(b2), dn(a2), dn(b1), dn(a1)), host: svc.domain, color, count: respN, dur: cycle, begin: "0s", t0: respStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle });
     }
     return { strokes, flows, gen: 0, cycle };
   }, [measure]);
@@ -288,7 +299,7 @@ export function Topology({
         <div className="topo-legend">
           <span><span className="lg-dot" /> dots = requests</span>
           <span><span className="lg-bar" /> line width = bandwidth</span>
-          <span className="lg-dim">per-service in/out shown on each row</span>
+          <span className="lg-dim">upper line in · lower line out</span>
         </div>
 
         <div className="topo-tier">
