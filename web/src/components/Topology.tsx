@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "../App.tsx";
 import type { Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
@@ -29,6 +29,8 @@ const STEP_SEC = 0.09; // seconds between consecutive dots in a batch (controls 
 const HANDOFF_SEC = 0.12; // brief pause between a batch finishing and the next starting
 const MIN_W = 1.4; // thinnest line (idle / tiny bandwidth)
 const MAX_W = 8; // thickest line (busiest direction across all services)
+const STAGGER_SEC = 0.22; // small per-service phase offset within the shared cycle
+const QUIET_SEC = 0.5; // quiet tail at the end of the cycle (no dots in flight) for safe commits
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
@@ -55,7 +57,24 @@ export function Topology({
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [flows, setFlows] = useState<Flow[]>([]);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  // `stats` drives the per-row numbers and updates on every poll. The animation,
+  // though, only reads the latest via `statsRef` and is recommitted at cycle
+  // boundaries (see the commit loop) so in-flight dots are never cut mid-journey.
   const [stats, setStats] = useState<Record<string, { requests: number; bytesIn: number; bytesOut: number }>>({});
+  const statsRef = useRef(stats);
+  const [gen, setGen] = useState(0); // bumped each commit; remounts animations cleanly at a boundary
+  const cycleRef = useRef(3); // current global cycle length (s)
+  const timerRef = useRef<number | null>(null);
+  const tickRef = useRef<() => void>(() => {});
+
+  useEffect(() => { statsRef.current = stats; }, [stats]);
+
+  // The parent refetches topology on a poll, handing us a new `data` object each
+  // time. Read it through a ref so commits don't restart just because the object
+  // identity changed — only when the actual service set/health changes (svcKey).
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const svcKey = data.servers.flatMap((s) => s.services).map((x) => `${x.id}:${x.health}`).join("|");
 
   useEffect(() => {
     let alive = true;
@@ -68,7 +87,10 @@ export function Topology({
     return () => { alive = false; clearInterval(id); };
   }, [range]);
 
-  const draw = useCallback(() => {
+  // Build the whole animation generation at once. All services share ONE global
+  // cycle with a quiet tail at the end (no dots in flight); the commit loop swaps
+  // to a fresh generation only at that boundary, so dots always finish their trip.
+  const commit = useCallback(() => {
     const wrap = wrapRef.current;
     const net = internetRef.current;
     const gw = gatewayRef.current;
@@ -84,12 +106,11 @@ export function Topology({
     const curve = (a: P, b: P) => { const mx = (a.x + b.x) / 2; return `C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`; };
     const seg = (a: P, b: P) => `M ${a.x} ${a.y} ${curve(a, b)}`;
     const dist = (a: P, b: P) => Math.hypot(b.x - a.x, b.y - a.y);
-    // A full journey curves to the gateway, crosses behind it, then curves to the far point.
     const through = (p1: P, p2: P, p3: P, p4: P) => `M ${p1.x} ${p1.y} ${curve(p1, p2)} L ${p3.x} ${p3.y} ${curve(p3, p4)}`;
 
-    const services = data.servers.flatMap((s) => s.services);
+    const services = dataRef.current.servers.flatMap((s) => s.services);
     const n = services.length;
-    if (n === 0) { setStrokes([]); setFlows([]); return; }
+    if (n === 0) { setStrokes([]); setFlows([]); cycleRef.current = 3; return; }
 
     const netR = net.getBoundingClientRect();
     const gwR = gw.getBoundingClientRect();
@@ -100,96 +121,106 @@ export function Topology({
     const gap = n > 1 ? Math.min(18, usable / (n - 1)) : 0;
     const yAt = (cy: number, i: number) => cy + (i - (n - 1) / 2) * gap;
 
-    // Dots scale with requests; line width scales with bandwidth. Width is
-    // normalized against the busiest direction across all services, so a small
-    // request line stays thin and a heavy response line goes fat.
     const live = range === "live";
-    const reqMax = Math.max(1, ...services.map((s) => stats[s.domain]?.requests ?? 0));
+    const sx = statsRef.current;
+    const reqMax = Math.max(1, ...services.map((s) => sx[s.domain]?.requests ?? 0));
     const byteMax = Math.max(1, ...services.flatMap((s) => {
-      const st = stats[s.domain];
+      const st = sx[s.domain];
       return st ? [st.bytesIn, st.bytesOut] : [0];
     }));
     const widthFor = (bytes: number) => (bytes <= 0 ? MIN_W : Math.min(MAX_W, MIN_W + (bytes / byteMax) * (MAX_W - MIN_W)));
+    const batch = (tf: number, m: number) => (Math.max(1, m) - 1) * STEP_SEC + tf;
+
+    // Pass 1: per-service geometry, counts, batch lengths, and stagger.
+    const items = services.map((svc, i) => {
+      const down = svc.health === "down";
+      const st = sx[svc.domain];
+      const req = st?.requests ?? 0;
+      const reqN = req > 0 ? Math.max(1, Math.round((req / reqMax) * MAX_DOTS)) : (down ? 0 : 1);
+      const a1 = { x: netA.x, y: yAt(netA.y, i) };
+      const b1 = { x: gwLeft.x, y: yAt(gwLeft.y, i) };
+      const a2 = { x: gwRight.x, y: yAt(gwRight.y, i) };
+      const el = svcRefs.current.get(svc.id);
+      const b2 = el ? anchor(el, "l") : a2;
+      const len = down || !el ? dist(a1, b1) : dist(a1, b1) + dist(b1, a2) + dist(a2, b2);
+      const tf = len / SPEED;
+      const hasResp = !down && !!el;
+      const respN = hasResp ? reqN : 0;
+      const reqBatch = batch(tf, reqN);
+      const respBatch = hasResp ? batch(tf, respN) : 0;
+      const offset = (i % 5) * STAGGER_SEC; // small phase stagger, bounded so it stays before the tail
+      const reqPath = down || !el ? seg(a1, b1) : through(a1, b1, a2, b2);
+      const respPath = hasResp ? through(b2, a2, b1, a1) : "";
+      return {
+        svc, i, color: PALETTE[i % PALETTE.length], down, el, hasResp,
+        reqN, respN, reqBatch, respBatch, tf, offset, reqPath, respPath,
+        inW: widthFor(st?.bytesIn ?? 0), outW: widthFor(st?.bytesOut ?? 0),
+        a1, b1, a2, b2,
+      };
+    });
+
+    // One global cycle that fits every service's batches, plus a quiet tail so a
+    // boundary commit never lands while a dot is mid-flight.
+    const cycle = Math.max(...items.map((it) =>
+      it.offset + HANDOFF_SEC / 2 + it.reqBatch + (it.hasResp ? HANDOFF_SEC + it.respBatch : 0) + HANDOFF_SEC / 2,
+    )) + QUIET_SEC;
+    cycleRef.current = cycle;
 
     const nextStrokes: Stroke[] = [];
     const nextFlows: Flow[] = [];
-
-    services.forEach((svc, i) => {
-      const color = PALETTE[i % PALETTE.length];
-      const down = svc.health === "down";
-      const st = stats[svc.domain];
-      const req = st?.requests ?? 0;
-      const reqN = req > 0 ? Math.max(1, Math.round((req / reqMax) * MAX_DOTS)) : (down ? 0 : 1);
-      const respN = down ? 0 : reqN;
-      const inW = widthFor(st?.bytesIn ?? 0);
-      const outW = widthFor(st?.bytesOut ?? 0);
-
-      const a1 = { x: netA.x, y: yAt(netA.y, i) };   // internet edge
-      const b1 = { x: gwLeft.x, y: yAt(gwLeft.y, i) }; // gateway left
-      const a2 = { x: gwRight.x, y: yAt(gwRight.y, i) }; // gateway right
-      const el = svcRefs.current.get(svc.id);
-      const b2 = el ? anchor(el, "l") : a2; // service row
-
-      // Phase offset so services don't move in unison (speed is unaffected).
-      const begin = `-${(i * 1.37).toFixed(2)}s`;
-
-      // One line per service; the request dots travel out and the response dots
-      // travel back along the same path.
-      const reqPath = down || !el ? seg(a1, b1) : through(a1, b1, a2, b2);
-      const len = down || !el ? dist(a1, b1) : dist(a1, b1) + dist(b1, a2) + dist(a2, b2);
-      const tf = len / SPEED; // flight time (s) — constant speed
-      const batch = (m: number) => (Math.max(1, m) - 1) * STEP_SEC + tf; // batch duration (s)
-      const hasResp = respN > 0 && !!el;
-      const reqBatch = batch(reqN);
-      const cycle = hasResp
-        ? HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC + batch(respN) + HANDOFF_SEC / 2
-        : HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC / 2;
-      const respStart = HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC;
-
-      // Static width = egress bandwidth (the dominant direction). In live mode the
-      // line instead sits at min and swells to the current bandwidth only while
-      // dots travel — thin (ingress) on the way out, thick (egress) on the way back.
-      const base = live ? MIN_W : outW;
+    for (const it of items) {
+      const reqStart = it.offset + HANDOFF_SEC / 2;
+      const respStart = reqStart + it.reqBatch + HANDOFF_SEC;
+      const base = live ? MIN_W : it.outW;
       const phases: PulsePhase[] = [];
       if (live) {
-        if (reqN > 0) phases.push({ t0: (HANDOFF_SEC / 2) / cycle, t1: (HANDOFF_SEC / 2 + reqBatch) / cycle, width: inW });
-        if (hasResp) phases.push({ t0: respStart / cycle, t1: (respStart + batch(respN)) / cycle, width: outW });
+        if (it.reqN > 0) phases.push({ t0: reqStart / cycle, t1: (reqStart + it.reqBatch) / cycle, width: it.inW });
+        if (it.hasResp) phases.push({ t0: respStart / cycle, t1: (respStart + it.respBatch) / cycle, width: it.outW });
       }
-      const pulse: Pulse | undefined = phases.length ? { dur: cycle, begin, phases } : undefined;
+      const pulse: Pulse | undefined = phases.length ? { dur: cycle, begin: "0s", phases } : undefined;
 
-      nextStrokes.push({ d: seg(a1, b1), color, dashed: false, host: svc.domain, width: base, pulse });
-      if (el) nextStrokes.push({ d: seg(a2, b2), color, dashed: down, host: svc.domain, width: base, pulse });
+      nextStrokes.push({ d: seg(it.a1, it.b1), color: it.color, dashed: false, host: it.svc.domain, width: base, pulse });
+      if (it.el) nextStrokes.push({ d: seg(it.a2, it.b2), color: it.color, dashed: it.down, host: it.svc.domain, width: base, pulse });
 
       nextFlows.push({
-        path: reqPath, host: svc.domain, color, count: reqN, dur: cycle, begin,
-        t0: (HANDOFF_SEC / 2) / cycle, step: STEP_SEC / cycle, travel: tf / cycle,
+        path: it.reqPath, host: it.svc.domain, color: it.color, count: it.reqN, dur: cycle, begin: "0s",
+        t0: reqStart / cycle, step: STEP_SEC / cycle, travel: it.tf / cycle,
       });
-      if (hasResp) {
-        const respPath = through(b2, a2, b1, a1); // service → gateway → internet (same line, reverse)
+      if (it.hasResp) {
         nextFlows.push({
-          path: respPath, host: svc.domain, color, count: respN, dur: cycle, begin,
-          t0: respStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle,
+          path: it.respPath, host: it.svc.domain, color: it.color, count: it.respN, dur: cycle, begin: "0s",
+          t0: respStart / cycle, step: STEP_SEC / cycle, travel: it.tf / cycle,
         });
       }
-    });
+    }
 
     setStrokes(nextStrokes);
     setFlows(nextFlows);
-  }, [data, stats, range]);
+    setGen((g) => g + 1);
+  }, [svcKey, range]);
 
-  useLayoutEffect(() => {
-    const id = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(id);
-  }, [draw]);
+  // Commit loop: render a generation, then schedule the next swap for one full
+  // cycle later (i.e. in the quiet tail), so the previous generation's dots have
+  // all landed first. Polled stats are picked up by the next commit, not mid-flight.
+  useEffect(() => {
+    const tick = () => {
+      commit();
+      timerRef.current = window.setTimeout(tick, Math.max(800, cycleRef.current * 1000));
+    };
+    tickRef.current = tick;
+    const raf = requestAnimationFrame(tick); // wait for layout before the first measure
+    return () => { cancelAnimationFrame(raf); if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [commit]);
 
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const ro = new ResizeObserver(() => draw());
+    const onResize = () => { if (timerRef.current) clearTimeout(timerRef.current); tickRef.current(); };
+    const ro = new ResizeObserver(onResize);
     ro.observe(wrap);
-    window.addEventListener("resize", draw);
-    return () => { ro.disconnect(); window.removeEventListener("resize", draw); };
-  }, [draw]);
+    window.addEventListener("resize", onResize);
+    return () => { ro.disconnect(); window.removeEventListener("resize", onResize); };
+  }, []);
 
   return (
       <div className="topo" ref={wrapRef}>
@@ -213,7 +244,7 @@ export function Topology({
             }
             return (
               <path
-                key={`s${i}`}
+                key={`g${gen}-s${i}`}
                 d={s.d}
                 fill="none"
                 stroke={s.color}
@@ -243,7 +274,7 @@ export function Topology({
               const f0 = +(f.t0 + k * f.step).toFixed(4);
               const f1 = +(f0 + f.travel).toFixed(4);
               return (
-                <circle key={`f${fi}-${k}`} r={3.1} fill={f.color} opacity={0}>
+                <circle key={`g${gen}-f${fi}-${k}`} r={3.1} fill={f.color} opacity={0}>
                   <animateMotion
                     dur={`${f.dur}s`}
                     begin={f.begin}
