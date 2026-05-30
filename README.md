@@ -61,7 +61,7 @@ npm run build        # builds the web bundle (+ server check)
 npm start            # serves API + built UI on http://localhost:4600
 ```
 
-**Default admin login:** `tarun` / `changeme` — change it on first use.
+**Default admin login:** `admin` / `admin` — you'll be required to set a new password on first sign-in. (Set `NGINUX_ADMIN_PASSWORD` to skip the default.)
 
 The CLI talks to the control plane over MCP/REST:
 
@@ -225,7 +225,7 @@ Set via environment variables (the Docker image ships sensible defaults):
 | `NGINX_DEFAULT_CERT` / `NGINX_DEFAULT_KEY` | Bootstrap self-signed cert | `/data/nginx/selfsigned.*` |
 | `CERT_DIR` | Per-host certs & client CAs | `/data/certs` |
 | `NGINX_BIN` | Nginx binary for test/reload | `nginx` |
-| `NGINUX_ADMIN_PASSWORD` | First-run admin password. In production, a strong one is generated and logged once if unset (never defaults to `changeme`). | — |
+| `NGINUX_ADMIN_PASSWORD` | First-run admin password. If unset, the account is seeded as `admin`/`admin` and must be changed on first login. | — |
 | `NGINUX_TRUST_PROXY` | Trust `X-Forwarded-For` from the proxy in front (set `true` in the container). Off by default to prevent IP spoofing. | `true` (compose) |
 | `NGINUX_SECURE_COOKIES` | Force the `Secure` cookie flag. Defaults on in production. | (prod on) |
 | `NGINUX_FORWARD_SECRET` | Shared secret nginx sends to the forward-auth endpoint so it can't be called directly. | — |

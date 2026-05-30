@@ -213,6 +213,7 @@ button { font-family: inherit; cursor: pointer; }
 
 .nudge { display: flex; gap: 12px; padding: 14px 16px; border-radius: 10px; background: var(--yellow-soft); border: 1px solid color-mix(in srgb, var(--yellow) 30%, transparent); }
 .nudge > svg { width: 19px; height: 19px; color: var(--yellow); flex-shrink: 0; margin-top: 1px; }
+.acct-ic { width: 19px; height: 19px; color: var(--accent); flex-shrink: 0; margin-top: 1px; }
 .nudge .nt { font-weight: 600; font-size: 13px; color: var(--text); }
 .nudge .nd { font-size: 12.5px; color: var(--text-dim); margin-top: 3px; }
 .nudge.danger { background: var(--red-soft); border-color: color-mix(in srgb, var(--red) 30%, transparent); }

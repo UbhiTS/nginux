@@ -19,6 +19,7 @@ import {
 import { applyConfig, generateHostConfig, generateStreamConfig } from "./nginx.ts";
 import {
   beginTwofaSetup,
+  changePassword,
   checkCredentials,
   clearCookie,
   createSession,
@@ -633,6 +634,24 @@ app.get("/api/auth/forward", async (req, reply) => {
   return reply.code(200).send({ ok: true });
 });
 
+app.post("/api/auth/change-password", async (req, reply) => {
+  const u = currentUser(req);
+  if (!u) return reply.code(401).send({ error: "Not signed in" });
+  const parsed = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(8, "Use at least 8 characters.").max(200),
+  }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  if (parsed.data.newPassword === parsed.data.currentPassword) {
+    return reply.code(400).send({ error: "Pick a password different from the current one." });
+  }
+  if (!changePassword(u.id, parsed.data.currentPassword, parsed.data.newPassword)) {
+    return reply.code(400).send({ error: "Your current password is incorrect." });
+  }
+  logEvent({ type: "security.password_changed", severity: "notice", actor: u.username, summary: "Changed account password", ip: clientIp(req), meta: {} });
+  return { ok: true, user: getUserById(u.id) };
+});
+
 app.post("/api/auth/2fa/setup", async (req, reply) => {
   const u = currentUser(req)!;
   const { secret } = beginTwofaSetup(u.id);
@@ -930,8 +949,8 @@ if (existsSync(webDist)) {
 
 app.listen({ port: PORT, host: HOST }).then(async () => {
   app.log.info(`NginUX control plane on http://${HOST}:${PORT}`);
-  if (seeded.adminPassword) {
-    app.log.warn(`First run — admin account created. Username: "tarun"  Password: "${seeded.adminPassword}"  (change it after signing in)`);
+  if (seeded.usingDefault) {
+    app.log.warn(`First run — default login is "admin" / "admin". You'll be required to set a new password on first sign-in.`);
   }
   // Render the data plane on boot so nginx serves the managed hosts.
   const result = await applyConfig();

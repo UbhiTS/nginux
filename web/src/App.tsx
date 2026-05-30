@@ -14,6 +14,7 @@ import { Certificates } from "./pages/Certificates.tsx";
 import { AgentsApi } from "./pages/AgentsApi.tsx";
 import { Logs } from "./pages/Logs.tsx";
 import { Login } from "./pages/Login.tsx";
+import { ChangePassword } from "./pages/ChangePassword.tsx";
 
 export type RouteName =
   | "dashboard" | "services" | "host" | "wizard" | "certs"
@@ -65,6 +66,7 @@ export function App() {
 
   if (!authChecked) return null;
   if (!user) return <Login onSignedIn={setUser} />;
+  if (user.mustChangePassword) return <ChangePassword user={user} onChanged={setUser} />;
 
   return (
     <div className="app">

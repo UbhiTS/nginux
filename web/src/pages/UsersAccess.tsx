@@ -20,6 +20,33 @@ export function UsersAccess({
   const [backup, setBackup] = useState<string[] | null>(null);
   const [err, setErr] = useState("");
 
+  // change-password (self-service)
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwCur, setPwCur] = useState("");
+  const [pwNext, setPwNext] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwErr, setPwErr] = useState("");
+  const [pwOk, setPwOk] = useState(false);
+  const [pwBusy, setPwBusy] = useState(false);
+
+  const resetPw = () => { setPwCur(""); setPwNext(""); setPwConfirm(""); setPwErr(""); };
+  const submitPw = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwErr(""); setPwOk(false);
+    if (pwNext.length < 8) return setPwErr("Use at least 8 characters.");
+    if (pwNext !== pwConfirm) return setPwErr("The two new passwords don't match.");
+    setPwBusy(true);
+    try {
+      await api.changePassword(pwCur, pwNext);
+      setPwOk(true); setPwOpen(false); resetPw();
+      await refreshMe();
+    } catch (e2) {
+      setPwErr(e2 instanceof Error ? e2.message : "Couldn't change the password.");
+    } finally {
+      setPwBusy(false);
+    }
+  };
+
   const load = () => {
     api.users().then(setUsers).catch(() => {});
     api.sessions().then(setSessions).catch(() => {});
@@ -58,6 +85,39 @@ export function UsersAccess({
 
         {tab === "users" && (
           <>
+            <div className="card card-pad" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <Icon.lock className="acct-ic" />
+                <div style={{ flex: 1 }}>
+                  <div className="nt">Password</div>
+                  <div className="nd">Change the password for your account ({currentUser.username}).</div>
+                </div>
+                {!pwOpen && (
+                  <button className="btn btn-sm" style={{ alignSelf: "center" }} onClick={() => { setPwOpen(true); setPwOk(false); }}>
+                    Change password
+                  </button>
+                )}
+              </div>
+              {pwOk && !pwOpen && (
+                <div className="test-result ok" style={{ marginTop: 12 }}><Icon.check /><div>Password changed.</div></div>
+              )}
+              {pwOpen && (
+                <form onSubmit={submitPw} style={{ marginTop: 14, maxWidth: 360 }}>
+                  <div className="field"><label>Current password</label>
+                    <input className="input" type="password" value={pwCur} onChange={(e) => setPwCur(e.target.value)} autoFocus /></div>
+                  <div className="field"><label>New password</label>
+                    <input className="input" type="password" value={pwNext} onChange={(e) => setPwNext(e.target.value)} /></div>
+                  <div className="field"><label>Confirm new password</label>
+                    <input className="input" type="password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} /></div>
+                  {pwErr && <div className="test-result bad" style={{ marginTop: 0, marginBottom: 12 }}><Icon.x /><div>{pwErr}</div></div>}
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button className="btn btn-primary" disabled={pwBusy}>{pwBusy ? <span className="spinner" /> : null}Save</button>
+                    <button type="button" className="btn btn-ghost" onClick={() => { setPwOpen(false); resetPw(); }}>Cancel</button>
+                  </div>
+                </form>
+              )}
+            </div>
+
             {!currentUser.twofaEnabled && (
               <div className="nudge" style={{ marginBottom: 18 }}>
                 <Icon.lock />

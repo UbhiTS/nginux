@@ -13,6 +13,7 @@ export interface User {
   role: Role;
   scope: string;
   twofaEnabled: boolean;
+  mustChangePassword: boolean;
   createdAt: string;
   lastLoginAt: string | null;
 }
@@ -39,6 +40,16 @@ export function verifyPassword(password: string, stored: string): boolean {
   return hash.length === expected.length && timingSafeEqual(hash, expected);
 }
 
+/** Change a user's password after verifying the current one; clears the
+ *  "must change" flag. Returns false if the current password is wrong. */
+export function changePassword(userId: string, currentPassword: string, newPassword: string): boolean {
+  const r = db.prepare("SELECT passwordHash FROM users WHERE id = ?").get(userId) as Record<string, unknown> | undefined;
+  if (!r) return false;
+  if (!verifyPassword(currentPassword, String(r.passwordHash))) return false;
+  db.prepare("UPDATE users SET passwordHash = ?, mustChangePassword = 0 WHERE id = ?").run(hashPassword(newPassword), userId);
+  return true;
+}
+
 // ---------- user mapping ----------
 type Row = Record<string, unknown>;
 function toUser(r: Row): User {
@@ -49,6 +60,7 @@ function toUser(r: Row): User {
     role: r.role as Role,
     scope: String(r.scope),
     twofaEnabled: !!r.twofaEnabled,
+    mustChangePassword: !!r.mustChangePassword,
     createdAt: String(r.createdAt),
     lastLoginAt: r.lastLoginAt ? String(r.lastLoginAt) : null,
   };
@@ -313,23 +325,26 @@ export function securityOverview() {
 }
 
 // ---------- seed ----------
-export function seedAuthIfEmpty(): { adminPassword?: string } {
+export function seedAuthIfEmpty(): { usingDefault: boolean } {
   const count = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as Row).n as number;
-  if (count > 0) return {};
+  if (count > 0) return { usingDefault: false };
 
-  // In production never ship a static default — require an explicit password or
-  // generate a strong random one (logged once on first boot so it can be reset).
-  const adminPassword = process.env.NGINUX_ADMIN_PASSWORD
-    ?? (IS_PROD ? randomBytes(12).toString("base64url") : "changeme");
-  const generated = !process.env.NGINUX_ADMIN_PASSWORD && IS_PROD;
+  // Ships with a well-known default (admin/admin) and forces a change on first
+  // login. An operator can instead set NGINUX_ADMIN_PASSWORD to skip the default.
+  const envPw = process.env.NGINUX_ADMIN_PASSWORD;
+  const adminPassword = envPw || "admin";
+  const usingDefault = !envPw;
   const settings = getSettings();
 
-  createUser({
-    username: "tarun",
+  const admin = createUser({
+    username: "admin",
     email: settings.letsEncryptEmail || "admin@example.com",
     password: adminPassword,
     role: "admin",
   });
+  if (usingDefault) {
+    db.prepare("UPDATE users SET mustChangePassword = 1 WHERE id = ?").run(admin.id);
+  }
 
   // Demo accounts + sample history are for dev/screenshots only — never seed
   // functional extra accounts (with stored TOTP secrets) into a real deployment.
@@ -342,11 +357,11 @@ export function seedAuthIfEmpty(): { adminPassword?: string } {
       enableTwofa(u.id);
     }
     const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
-    logEvent({ type: "login.success", severity: "info", actor: "tarun", summary: "Signed in with password", ip: "203.0.113.10", meta: { location: "Home, CA" }, ts: ago(6) });
+    logEvent({ type: "login.success", severity: "info", actor: "admin", summary: "Signed in with password", ip: "203.0.113.10", meta: { location: "Home, CA" }, ts: ago(6) });
     logEvent({ type: "login.success", severity: "notice", actor: "priya", summary: "Signed in from a new device", ip: "203.0.113.45", meta: { location: "Pune, IN", newDevice: true }, ts: ago(3) });
-    logEvent({ type: "login.failed", severity: "danger", actor: "admin", summary: "47 failed logins — IP auto-banned", ip: "198.51.100.211", meta: { location: "Russia", count: 47 }, ts: ago(2) });
-    logEvent({ type: "host.updated", severity: "notice", actor: "tarun", summary: "Disabled login on cloud.ubhi.io", ip: "203.0.113.10", meta: {}, ts: ago(12) });
+    logEvent({ type: "login.failed", severity: "danger", actor: "unknown", summary: "47 failed logins — IP auto-banned", ip: "198.51.100.211", meta: { location: "Russia", count: 47 }, ts: ago(2) });
+    logEvent({ type: "host.updated", severity: "notice", actor: "admin", summary: "Disabled login on cloud.ubhi.io", ip: "203.0.113.10", meta: {}, ts: ago(12) });
   }
   logEvent({ type: "system.seed", severity: "info", actor: "system", summary: "Initial admin account created", ip: "", meta: {} });
-  return { adminPassword: generated ? adminPassword : process.env.NGINUX_ADMIN_PASSWORD ? undefined : adminPassword };
+  return { usingDefault };
 }

@@ -76,6 +76,7 @@ db.exec(`
     twofaSecret   TEXT,
     twofaEnabled  INTEGER NOT NULL DEFAULT 0,
     backupCodes   TEXT NOT NULL DEFAULT '[]',
+    mustChangePassword INTEGER NOT NULL DEFAULT 0,
     createdAt     TEXT NOT NULL,
     lastLoginAt   TEXT
   );
@@ -225,6 +226,13 @@ function migrateHosts() {
   }
 }
 migrateHosts();
+
+// Idempotent migration for older users tables.
+function migrateUsers() {
+  const cols = new Set((db.prepare("PRAGMA table_info(users)").all() as Record<string, unknown>[]).map((c) => String(c.name)));
+  if (!cols.has("mustChangePassword")) db.exec("ALTER TABLE users ADD COLUMN mustChangePassword INTEGER NOT NULL DEFAULT 0");
+}
+migrateUsers();
 
 // Indexes on hot query paths (filtered/ordered scans that grow over time).
 db.exec(`

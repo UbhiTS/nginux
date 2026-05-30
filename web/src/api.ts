@@ -64,6 +64,11 @@ export const api = {
       body: JSON.stringify({ username, password, token }),
     }),
   logout: () => req<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    req<{ ok: boolean; user: AuthUser }>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
   twofaSetup: () => req<{ secret: string; otpauth: string }>("/auth/2fa/setup", { method: "POST" }),
   twofaVerify: (token: string) =>
     req<{ ok: boolean; backupCodes: string[] }>("/auth/2fa/verify", {
@@ -286,6 +291,7 @@ export interface AuthUser {
   role: "admin" | "editor" | "readonly" | "scoped";
   scope: string;
   twofaEnabled: boolean;
+  mustChangePassword: boolean;
   createdAt: string;
   lastLoginAt: string | null;
 }
