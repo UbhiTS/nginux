@@ -30,6 +30,7 @@ export function HostDetail({
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
 
   const refetch = () => {
     api.getHost(hostId).then(setHost).catch(() => setHost(null));
@@ -38,15 +39,20 @@ export function HostDetail({
   };
   useEffect(refetch, [hostId]);
 
-  const startEdit = () => { setDraft(host); setEditing(true); };
+  const startEdit = () => { setDraft(host); setSaveErr(""); setEditing(true); };
   const saveEdit = async () => {
     if (!draft) return;
     setSaving(true);
+    setSaveErr("");
     try {
       await api.updateHost(hostId, draft);
       await reload();
       refetch();
       setEditing(false);
+    } catch (e) {
+      // The change was rejected and reverted server-side; keep the form open and
+      // show why so they can fix it.
+      setSaveErr(e instanceof Error ? e.message : "Couldn't save — the change was reverted.");
     } finally {
       setSaving(false);
     }
@@ -136,7 +142,7 @@ export function HostDetail({
         </div>
 
         {editing && draft ? (
-          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} />
+          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} error={saveErr} />
         ) : (
         <div className="detail-grid">
           <div>
@@ -308,12 +314,13 @@ function ClientCerts({ hostId }: { hostId: string }) {
   );
 }
 
-function EditForm({ draft, setDraft, onSave, onCancel, saving }: {
+function EditForm({ draft, setDraft, onSave, onCancel, saving, error }: {
   draft: ProxyHost;
   setDraft: (d: ProxyHost) => void;
   onSave: () => void;
   onCancel: () => void;
   saving: boolean;
+  error?: string;
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
   const Toggle = ({ k, label, desc }: { k: keyof ProxyHost; label: string; desc: string }) => (
@@ -393,6 +400,12 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving }: {
         </select>
       </div>
 
+      {error && (
+        <div className="test-result bad" style={{ marginTop: 12 }}>
+          <Icon.x />
+          <div>{error}</div>
+        </div>
+      )}
       <div className="wnav">
         <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
         <button className="btn btn-primary" onClick={onSave} disabled={saving}>{saving ? <span className="spinner" /> : null}Save changes</button>

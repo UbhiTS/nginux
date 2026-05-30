@@ -376,6 +376,16 @@ app.post("/api/hosts", async (req, reply) => {
     try { await ensureCert(host.domain); } catch { /* non-fatal */ }
   }
   const apply = await applyConfig();
+  // If nginx rejected the new config, roll the host back out — keeping it would
+  // leave a service that breaks nginx on the next restart. Re-apply to restore
+  // the last-good state. (nginxAvailable=false means we couldn't validate, so we
+  // don't punish the host for a missing nginx binary.)
+  if (!apply.ok && apply.nginxAvailable) {
+    deleteHost(host.id);
+    await applyConfig();
+    logEvent({ type: "host.create_failed", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Couldn't expose ${host.name} (${host.domain}) — config rejected`, ip: clientIp(req), meta: { error: apply.message } });
+    return reply.code(422).send({ error: apply.message, apply });
+  }
   void syncGitOps(`Expose ${host.name} (${host.domain})`);
   logEvent({ type: "host.created", severity: "notice", actor: currentUser(req)?.username ?? "system", summary: `Exposed ${host.name} at ${host.domain}`, ip: clientIp(req), meta: { id: host.id } });
   return reply.code(201).send({ host, apply });
@@ -394,6 +404,14 @@ app.put("/api/hosts/:id", async (req, reply) => {
   if (!host) return reply.code(404).send({ error: "Service not found" });
   if (host.mtls) { try { await ensureClientCA(host.domain); } catch { /* non-fatal */ } }
   const apply = await applyConfig();
+  // If nginx rejected the change, revert to the previous good config rather than
+  // leaving a broken service that would stop nginx from starting next restart.
+  if (!apply.ok && apply.nginxAvailable) {
+    updateHost(id, existing);
+    await applyConfig();
+    logEvent({ type: "host.update_failed", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Reverted ${existing.name} (${existing.domain}) — config rejected`, ip: clientIp(req), meta: { id, error: apply.message } });
+    return reply.code(422).send({ error: apply.message, apply });
+  }
   void syncGitOps(`Update ${host.name} (${host.domain})`);
   logEvent({ type: "host.updated", severity: "notice", actor: currentUser(req)?.username ?? "system", summary: `Updated ${host.name} (${host.domain})`, ip: clientIp(req), meta: { id: host.id } });
   return { host, apply };

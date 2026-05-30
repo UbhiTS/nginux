@@ -57,6 +57,7 @@ export function Wizard({
 
   const create = async () => {
     if (!preset || !parsed) return;
+    setApply(null);
     setStep(5);
     setCreating(true);
     try {
@@ -81,7 +82,11 @@ export function Wizard({
       setApply(res.apply);
       await reload();
     } catch (e) {
-      setApply({ ok: false, nginxAvailable: false, message: e instanceof Error ? e.message : "Failed to create service." });
+      // The create failed (e.g. nginx rejected the config and the host was rolled
+      // back). Drop back to the form so we don't show a green "Done", and surface
+      // the reason there so they can adjust and retry.
+      setApply({ ok: false, nginxAvailable: true, message: e instanceof Error ? e.message : "Failed to create service." });
+      setStep(4);
     } finally {
       setCreating(false);
     }
@@ -207,6 +212,12 @@ export function Wizard({
               <Toggle on={login} set={setLogin} title="Require login to access this app" desc="Visitors sign in through NginUX before reaching the app." icon={<Icon.users />} />
               <Toggle on={twofa} set={setTwofa} title="Require 2FA (two-factor)" desc="A one-time code on top of the password." icon={<Icon.lock />} />
               <Toggle on={country} set={setCountry} title={`Only allow my country (${country2})`} desc="Block visitors from elsewhere. Your own devices are always allowed." icon={<Icon.globe />} />
+              {apply && !apply.ok && (
+                <div className="test-result bad" style={{ marginTop: 14 }}>
+                  <Icon.x />
+                  <div>{apply.message}</div>
+                </div>
+              )}
               <div className="wnav">
                 <button className="btn btn-ghost" onClick={() => setStep(3)}>
                   <Icon.arrowLeft /> Back
