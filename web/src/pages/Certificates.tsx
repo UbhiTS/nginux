@@ -218,7 +218,7 @@ export function Certificates() {
                 <div className="kv"><span className="k">Valid until</span><span className="v">{fmtDate(info.notAfter)}{detail.daysRemaining !== null ? ` · ${detail.daysRemaining < 0 ? "expired" : `${detail.daysRemaining} days left`}` : ""}</span></div>
                 <div className="kv"><span className="k">Covers</span><span className="v" style={{ wordBreak: "break-all" }}>{info.sans.length ? info.sans.join(", ") : detail.domain}</span></div>
                 <div className="kv"><span className="k">Public key</span><span className="v">{info.publicKey}</span></div>
-                <div className="kv"><span className="k">Signature</span><span className="v">{info.signatureAlgorithm}</span></div>
+                {info.signatureAlgorithm && <div className="kv"><span className="k">Signature</span><span className="v">{info.signatureAlgorithm}</span></div>}
                 <div className="kv"><span className="k">Serial</span><span className="v mono" style={{ wordBreak: "break-all", fontSize: 12 }}>{info.serialNumber}</span></div>
                 <div className="kv" style={{ border: "none" }}><span className="k">SHA-256</span><span className="v mono" style={{ wordBreak: "break-all", fontSize: 11 }}>{info.fingerprintSha256}</span></div>
               </>

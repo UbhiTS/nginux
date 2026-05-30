@@ -57,6 +57,7 @@ import {
   getCertDetails,
   issue,
   listCerts,
+  reconcileImportedCerts,
   setAutoRenew,
   startRenewalScheduler,
   type CertMethod,
@@ -120,6 +121,7 @@ seedIfEmpty();
 const seeded = await seedAuthIfEmpty();
 seedTokensIfEmpty();
 writeGeoipConf(); // keep the country-lock include in sync with settings on boot
+reconcileImportedCerts(); // pick up any cert files dropped into /data/certs (migrations)
 
 const ALL_SCOPES: Scope[] = ["read", "report", "control", "security"];
 const currentUser = (req: FastifyRequest): User | null =>

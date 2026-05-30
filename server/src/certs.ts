@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { X509Certificate } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import forge from "node-forge";
@@ -117,46 +118,78 @@ export interface CertDetails {
   selfSigned: boolean;
 }
 
+/** Parse the leaf of a fullchain PEM with node:crypto so we handle EC *and* RSA
+ *  (node-forge can't read EC keys). Returns the human-facing fields, or null. */
+interface LeafInfo extends CertDetails { subjectCN: string; }
+function parseLeaf(pem: string | Buffer): LeafInfo | null {
+  let c: X509Certificate;
+  try { c = new X509Certificate(pem); } catch { return null; }
+  const dn = (s: string, k: string) => (s.match(new RegExp(`(?:^|[,\\n])${k}=([^,\\n]+)`)) || [])[1]?.trim() ?? "";
+  const subjectCN = dn(c.subject, "CN");
+  const issuerCN = dn(c.issuer, "CN") || dn(c.issuer, "O");
+  const sans = (c.subjectAltName ?? "")
+    .split(",")
+    .map((s) => s.trim().replace(/^DNS:/, ""))
+    .filter((s) => s && !s.includes(":"));
+  const kt = c.publicKey.asymmetricKeyType;
+  const det = (c.publicKey.asymmetricKeyDetails ?? {}) as { modulusLength?: number; namedCurve?: string };
+  const publicKey = kt === "ec" ? `EC · ${det.namedCurve ?? "?"}` : kt === "rsa" ? `RSA · ${det.modulusLength ?? "?"}-bit` : (kt ?? "unknown");
+  return {
+    subjectCN,
+    subject: subjectCN,
+    issuer: issuerCN || "Unknown",
+    serialNumber: (c.serialNumber || "").replace(/^0+/, "") || "0",
+    fingerprintSha256: c.fingerprint256 ?? "",
+    sans,
+    notBefore: new Date(c.validFrom).toISOString(),
+    notAfter: new Date(c.validTo).toISOString(),
+    signatureAlgorithm: "", // node:crypto doesn't expose it; omitted in the UI
+    publicKey,
+    selfSigned: c.subject === c.issuer,
+  };
+}
+
 /** Parse the live cert file for a domain and surface the fields a human cares
  *  about. Returns null when no cert file exists (e.g. host on the bootstrap cert). */
 export function getCertDetails(domain: string): CertDetails | null {
   const file = join(assertWithin(CERT_DIR, join(CERT_DIR, domain)), "fullchain.pem");
   if (!existsSync(file)) return null;
-  let cert: forge.pki.Certificate;
-  try {
-    cert = forge.pki.certificateFromPem(readFileSync(file, "utf8"));
-  } catch {
-    return null;
+  const info = parseLeaf(readFileSync(file));
+  if (!info) return null;
+  const { subjectCN: _ignore, ...details } = info;
+  return { ...details, subject: info.subjectCN || domain };
+}
+
+/** Register any cert files dropped into CERT_DIR (e.g. migrated from another
+ *  proxy) into the DB so they show in the UI and can be managed/renewed. Runs at
+ *  startup; skips domains whose DB record already matches the file's expiry. */
+export function reconcileImportedCerts(): void {
+  if (!existsSync(CERT_DIR)) return;
+  for (const domain of readdirSync(CERT_DIR)) {
+    const dir = join(CERT_DIR, domain);
+    try { if (!statSync(dir).isDirectory()) continue; } catch { continue; }
+    const fc = join(dir, "fullchain.pem"), pk = join(dir, "privkey.pem");
+    if (!existsSync(fc) || !existsSync(pk)) continue;
+    let info: LeafInfo | null;
+    try { info = parseLeaf(readFileSync(fc)); } catch { continue; }
+    if (!info) continue;
+    const existing = getCert(domain);
+    // Already tracked with the same expiry? Nothing to do.
+    if (existing?.notAfter && Math.abs(Date.parse(existing.notAfter) - Date.parse(info.notAfter)) < 60_000) continue;
+    const isLE = info.selfSigned ? false : /let'?s encrypt|^[ER]\d+$/i.test(info.issuer);
+    upsertCert({
+      domain,
+      status: statusFromExpiry(new Date(info.notAfter)),
+      issuer: info.selfSigned ? "Self-signed" : isLE ? "Let's Encrypt" : info.issuer,
+      method: info.selfSigned ? "selfsigned" : "http-01",
+      notBefore: info.notBefore,
+      notAfter: info.notAfter,
+      sans: info.sans.length ? info.sans : [domain],
+      wildcard: domain.startsWith("*.") || info.sans.some((s) => s.startsWith("*.")),
+      lastError: null,
+    });
+    logEvent({ type: "cert.imported", severity: "info", actor: "system", summary: `Imported certificate for ${domain}`, ip: "", meta: { issuer: info.issuer } });
   }
-  const field = (dn: forge.pki.Certificate["subject"], name: string) =>
-    String(dn.getField(name)?.value ?? "");
-  const subjectCN = field(cert.subject, "CN");
-  const issuerCN = field(cert.issuer, "CN");
-  const issuerO = field(cert.issuer, "O");
-
-  const altExt = cert.getExtension("subjectAltName") as
-    | { altNames?: { value: string }[] }
-    | undefined;
-  const sans = (altExt?.altNames ?? []).map((a) => a.value).filter(Boolean);
-
-  const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
-  const fingerprint = forge.md.sha256.create().update(der).digest().toHex().match(/.{2}/g)!.join(":");
-
-  const pk = cert.publicKey as forge.pki.rsa.PublicKey;
-  const bits = pk?.n ? pk.n.bitLength() : 0;
-
-  return {
-    subject: subjectCN || domain,
-    issuer: issuerCN || issuerO || "Unknown",
-    serialNumber: (cert.serialNumber || "").replace(/^0+/, "") || "0",
-    fingerprintSha256: fingerprint,
-    sans,
-    notBefore: cert.validity.notBefore.toISOString(),
-    notAfter: cert.validity.notAfter.toISOString(),
-    signatureAlgorithm: String(forge.pki.oids[cert.signatureOid] ?? cert.signatureOid),
-    publicKey: bits ? `RSA ${bits}-bit` : "RSA",
-    selfSigned: subjectCN === issuerCN && field(cert.subject, "O") === issuerO,
-  };
 }
 
 function writeFiles(domain: string, keyPem: string, certPem: string) {
