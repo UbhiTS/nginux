@@ -13,6 +13,18 @@ const CERT_DIR = process.env.CERT_DIR ?? join(__dirname, "..", "data", "certs");
 const ACME_WEBROOT = process.env.ACME_WEBROOT ?? join(__dirname, "..", "data", "acme-webroot");
 const RENEW_LEAD_DAYS = 30;
 
+/** Generate an RSA key pair without blocking the event loop. node-forge runs the
+ *  (expensive) generation in setImmediate-chunked steps when given a callback, so
+ *  the server keeps serving requests while a cert is being minted. */
+export function generateRsaKeyPair(bits = 2048): Promise<forge.pki.rsa.KeyPair> {
+  return new Promise((resolve, reject) => {
+    forge.pki.rsa.generateKeyPair({ bits }, (err, keypair) => {
+      if (err) reject(err);
+      else resolve(keypair);
+    });
+  });
+}
+
 export type CertMethod = "selfsigned" | "http-01" | "dns-01";
 export type CertStatus = "valid" | "expiring" | "expired" | "pending" | "error" | "none";
 
@@ -100,8 +112,8 @@ function statusFromExpiry(notAfter: Date): CertStatus {
 }
 
 // ---------- self-signed / internal CA (works offline) ----------
-export function issueSelfSigned(domain: string): Certificate {
-  const keys = forge.pki.rsa.generateKeyPair(2048);
+export async function issueSelfSigned(domain: string): Promise<Certificate> {
+  const keys = await generateRsaKeyPair(2048);
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
   cert.serialNumber = Date.now().toString(16);
@@ -191,13 +203,13 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
 }
 
 export async function issue(domain: string, method: CertMethod): Promise<Certificate> {
-  return method === "selfsigned" ? issueSelfSigned(domain) : issueLetsEncrypt(domain, method);
+  return method === "selfsigned" ? await issueSelfSigned(domain) : issueLetsEncrypt(domain, method);
 }
 
 /** Ensure an SSL host has at least a self-signed cert so nginx can boot. */
-export function ensureCert(domain: string): void {
+export async function ensureCert(domain: string): Promise<void> {
   if (!getCert(domain) && !existsSync(join(CERT_DIR, domain, "fullchain.pem"))) {
-    issueSelfSigned(domain);
+    await issueSelfSigned(domain);
   }
 }
 

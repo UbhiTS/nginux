@@ -120,7 +120,7 @@ export const TOOLS: Record<string, Tool> = {
         requireLogin: a.requireLogin !== false, require2fa: false, countryLock: false,
         serverGroup: forwardHost, serverIp: forwardHost, enabled: true,
       } as NewProxyHost);
-      ensureCert(host.domain);
+      await ensureCert(host.domain);
       await applyConfig();
       return host;
     },

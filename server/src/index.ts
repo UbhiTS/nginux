@@ -373,7 +373,7 @@ app.post("/api/hosts", async (req, reply) => {
   // Ensure the host has a cert (self-signed now; upgrade to Let's Encrypt later)
   // so nginx serves it immediately over HTTPS.
   if (host.ssl) {
-    try { ensureCert(host.domain); } catch { /* non-fatal */ }
+    try { await ensureCert(host.domain); } catch { /* non-fatal */ }
   }
   const apply = await applyConfig();
   void syncGitOps(`Expose ${host.name} (${host.domain})`);
@@ -392,7 +392,7 @@ app.put("/api/hosts/:id", async (req, reply) => {
   snapshot(`Before updating a service`, currentUser(req)?.username ?? "system");
   const host = updateHost(id, parsed.data);
   if (!host) return reply.code(404).send({ error: "Service not found" });
-  if (host.mtls) { try { ensureClientCA(host.domain); } catch { /* non-fatal */ } }
+  if (host.mtls) { try { await ensureClientCA(host.domain); } catch { /* non-fatal */ } }
   const apply = await applyConfig();
   void syncGitOps(`Update ${host.name} (${host.domain})`);
   logEvent({ type: "host.updated", severity: "notice", actor: currentUser(req)?.username ?? "system", summary: `Updated ${host.name} (${host.domain})`, ip: clientIp(req), meta: { id: host.id } });
@@ -423,7 +423,7 @@ app.post("/api/hosts/:id/client-certs", async (req, reply) => {
   if (!requireHostAccess(req, reply, host, { allowScoped: true })) return;
   const parsed = z.object({ name: z.string().min(1).max(64) }).safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  const issued = issueClientCert(id, host.domain, parsed.data.name);
+  const issued = await issueClientCert(id, host.domain, parsed.data.name);
   logEvent({ type: "cert.client_issued", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Issued client cert "${parsed.data.name}" for ${host.domain}`, ip: clientIp(req), meta: {} });
   return reply.code(201).send(issued); // cert + key shown once
 });

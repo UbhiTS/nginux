@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import forge from "node-forge";
 import { db } from "./db.ts";
+import { generateRsaKeyPair } from "./certs.ts";
 import { assertWithin } from "./validate.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -24,13 +25,13 @@ export function clientCaPath(domain: string): string {
 }
 
 /** Create the per-host client CA if it doesn't exist yet. */
-export function ensureClientCA(domain: string): void {
+export async function ensureClientCA(domain: string): Promise<void> {
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   const caCrt = join(dir, "client-ca.crt");
   if (existsSync(caCrt)) return;
   mkdirSync(dir, { recursive: true });
 
-  const keys = forge.pki.rsa.generateKeyPair(2048);
+  const keys = await generateRsaKeyPair(2048);
   const ca = forge.pki.createCertificate();
   ca.publicKey = keys.publicKey;
   ca.serialNumber = "01" + Date.now().toString(16);
@@ -63,13 +64,13 @@ export function revokeClientCert(id: string): boolean {
 }
 
 /** Issue a client cert signed by the host's client CA. Returns PEM (shown once). */
-export function issueClientCert(hostId: string, domain: string, name: string): { cert: string; key: string; record: ClientCert } {
-  ensureClientCA(domain);
+export async function issueClientCert(hostId: string, domain: string, name: string): Promise<{ cert: string; key: string; record: ClientCert }> {
+  await ensureClientCA(domain);
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   const caCert = forge.pki.certificateFromPem(readFileSync(join(dir, "client-ca.crt"), "utf8"));
   const caKey = forge.pki.privateKeyFromPem(readFileSync(join(dir, "client-ca.key"), "utf8"));
 
-  const keys = forge.pki.rsa.generateKeyPair(2048);
+  const keys = await generateRsaKeyPair(2048);
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
   const serial = Date.now().toString(16);
