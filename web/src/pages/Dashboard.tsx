@@ -3,8 +3,7 @@ import type { Route } from "../App.tsx";
 import { api } from "../api.ts";
 import type { ProxyHost, Topology as TopologyData } from "../types.ts";
 import { Icon } from "../icons.tsx";
-import { Topology } from "../components/Topology.tsx";
-import { TrafficChart } from "../components/TrafficChart.tsx";
+import { NetworkTraffic } from "../components/NetworkTraffic.tsx";
 
 export function Dashboard({
   hosts,
@@ -99,17 +98,7 @@ export function Dashboard({
           </div>
         </div>
 
-        {topology ? (
-          <Topology data={topology} navigate={navigate} />
-        ) : (
-          <div className="card" style={{ marginBottom: 18 }}>
-            <div className="placeholder">
-              <span className="spinner" /> Loading network map…
-            </div>
-          </div>
-        )}
-
-        <TrafficChart />
+        <NetworkTraffic data={topology} navigate={navigate} />
       </div>
     </>
   );

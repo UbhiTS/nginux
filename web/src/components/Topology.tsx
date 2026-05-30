@@ -29,9 +29,13 @@ const PALETTE = [
 export function Topology({
   data,
   navigate,
+  range,
+  metric,
 }: {
   data: TopologyData;
   navigate: (r: Route) => void;
+  range: string;
+  metric: "requests" | "bandwidth";
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const internetRef = useRef<HTMLDivElement>(null);
@@ -41,8 +45,6 @@ export function Topology({
   const [flows, setFlows] = useState<Flow[]>([]);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traffic, setTraffic] = useState<Record<string, number>>({});
-  const [range, setRange] = useState("live");
-  const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
 
   useEffect(() => {
     let alive = true;
@@ -151,26 +153,6 @@ export function Topology({
   }, [draw]);
 
   return (
-    <div className="card" style={{ marginBottom: 18 }}>
-      <div className="card-head">
-        Network map
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div className="range-tabs">
-            {(["requests", "bandwidth"] as const).map((m) => (
-              <button key={m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>
-                {m === "requests" ? "Requests" : "Bandwidth"}
-              </button>
-            ))}
-          </div>
-          <div className="range-tabs">
-            {["1h", "4h", "1d", "7d", "30d", "live"].map((r) => (
-              <button key={r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
-                {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
       <div className="topo" ref={wrapRef}>
         <svg className="topo-lines" viewBox={`0 0 ${box.w} ${box.h}`} preserveAspectRatio="none">
           {strokes.map((s, i) => (
@@ -284,6 +266,5 @@ export function Topology({
           ))}
         </div>
       </div>
-    </div>
   );
 }

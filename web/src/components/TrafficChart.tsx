@@ -2,11 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api.ts";
 import type { Traffic } from "../types.ts";
 
-const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
-
-export function TrafficChart() {
-  const [range, setRange] = useState("live");
-  const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
+export function TrafficChart({ range, metric }: { range: string; metric: "requests" | "bandwidth" }) {
   const [traffic, setTraffic] = useState<Traffic | null>(null);
 
   useEffect(() => {
@@ -19,30 +15,6 @@ export function TrafficChart() {
   }, [range, metric]);
 
   return (
-    <div className="card">
-      <div className="card-head">
-        Traffic
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div className="range-tabs">
-            {(["requests", "bandwidth"] as const).map((m) => (
-              <button key={m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>
-                {m === "requests" ? "Requests" : "Bandwidth"}
-              </button>
-            ))}
-          </div>
-          <div className="range-tabs">
-            {RANGES.map((r) => (
-              <button
-                key={r}
-                className={`range${range === r ? " active" : ""}`}
-                onClick={() => setRange(r)}
-              >
-                {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
       <div className="card-pad">
         {traffic && (
           <>
@@ -70,7 +42,6 @@ export function TrafficChart() {
           </>
         )}
       </div>
-    </div>
   );
 }
 
