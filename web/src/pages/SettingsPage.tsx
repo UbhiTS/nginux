@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Channel, type ConfigVersion } from "../api.ts";
 import type { Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
 export function SettingsPage({
   reload,
@@ -134,6 +135,8 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
   const [msg, setMsg] = useState("");
   const [importConf, setImportConf] = useState("");
   const [importMsg, setImportMsg] = useState("");
+  const [restoreId, setRestoreId] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
   const doImport = async () => {
     if (!importConf.trim()) return;
@@ -148,12 +151,18 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
   };
   useEffect(load, []);
 
-  const restore = async (id: string) => {
-    if (!confirm("Restore this configuration version? Current state is snapshotted first.")) return;
-    const r = await api.restoreVersion(id);
-    setMsg(`Restored ${r.restored} services.`);
-    setTimeout(() => setMsg(""), 4000);
-    load();
+  const restore = async () => {
+    if (!restoreId) return;
+    setRestoring(true);
+    try {
+      const r = await api.restoreVersion(restoreId);
+      setRestoreId(null);
+      setMsg(`Restored ${r.restored} services.`);
+      setTimeout(() => setMsg(""), 4000);
+      load();
+    } finally {
+      setRestoring(false);
+    }
   };
 
   const exportConfig = async () => {
@@ -193,7 +202,7 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
             <div>{v.label} <span className="muted" style={{ fontSize: 11 }}>· {v.actor}</span></div>
             <div className="muted">{new Date(v.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
             <div className="muted" style={{ textAlign: "center" }}>{v.hostCount}</div>
-            <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={() => restore(v.id)}>Restore</button>
+            <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={() => setRestoreId(v.id)}>Restore</button>
           </div>
         ))}
         {versions.length === 0 && <div className="placeholder"><p>No restore points yet — they're captured automatically before each change.</p></div>}
@@ -218,6 +227,17 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
           {importMsg && <span className="info-line"><Icon.check />{importMsg}</span>}
         </div>
       </div>
+
+      {restoreId && (
+        <ConfirmDialog
+          title="Restore this configuration?"
+          message="Your services will be rolled back to this restore point. The current state is snapshotted first, so you can undo it."
+          confirmLabel="Restore"
+          busy={restoring}
+          onConfirm={restore}
+          onCancel={() => setRestoreId(null)}
+        />
+      )}
     </>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type AuthUser, type Session } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
 type Tab = "users" | "sessions";
 const avatarColor = ["var(--purple)", "var(--accent)", "var(--green)", "var(--text-faint)"];
@@ -28,6 +29,10 @@ export function UsersAccess({
   const [pwErr, setPwErr] = useState("");
   const [pwOk, setPwOk] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
+
+  // admin: delete a user
+  const [delUser, setDelUser] = useState<AuthUser | null>(null);
+  const [delBusy, setDelBusy] = useState(false);
 
   // admin: add a new user
   const [addOpen, setAddOpen] = useState(false);
@@ -238,15 +243,7 @@ export function UsersAccess({
                     </span>
                     <span style={{ justifySelf: "center" }}>
                       {currentUser.role === "admin" && u.id !== currentUser.id && (
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={async () => {
-                            if (confirm(`Delete ${u.username}?`)) {
-                              await api.deleteUser(u.id);
-                              load();
-                            }
-                          }}
-                        >
+                        <button className="btn btn-ghost btn-sm" onClick={() => setDelUser(u)}>
                           Delete
                         </button>
                       )}
@@ -277,6 +274,27 @@ export function UsersAccess({
           </div>
         )}
       </div>
+
+      {delUser && (
+        <ConfirmDialog
+          danger
+          title={`Delete ${delUser.username}?`}
+          message={<>This permanently removes the <b>{delUser.username}</b> account and signs out any active sessions. This can't be undone.</>}
+          confirmLabel="Delete user"
+          busy={delBusy}
+          onConfirm={async () => {
+            setDelBusy(true);
+            try {
+              await api.deleteUser(delUser.id);
+              setDelUser(null);
+              load();
+            } finally {
+              setDelBusy(false);
+            }
+          }}
+          onCancel={() => setDelUser(null)}
+        />
+      )}
 
       {pwOpen && (
         <div className="modal-backdrop" onClick={() => setPwOpen(false)}>
