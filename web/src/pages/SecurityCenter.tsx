@@ -103,10 +103,10 @@ export function SecurityCenter() {
 
         {tab === "exposure" && (
           <div className="card">
-            <div className="ahead" style={{ gridTemplateColumns: "1.4fr 1fr auto" }}>
+            <div className="ahead" style={{ gridTemplateColumns: "1.4fr 1fr 130px", gap: 16 }}>
               <div>Service</div>
               <div>Protection</div>
-              <div />
+              <div style={{ textAlign: "center" }}>Status</div>
             </div>
             {exposure.map((e) => (
               <div key={e.id} className="audit-row">
@@ -124,7 +124,9 @@ export function SecurityCenter() {
                     {e.login ? (e.twofa ? "Login + 2FA" : "Login required") : "No login required"}
                   </div>
                 </div>
-                {e.wellProtected ? <span className="pill g">Well protected</span> : <span className="pill r">Needs login</span>}
+                <span style={{ justifySelf: "center" }}>
+                  {e.wellProtected ? <span className="pill g">Well protected</span> : <span className="pill r">Needs login</span>}
+                </span>
               </div>
             ))}
           </div>

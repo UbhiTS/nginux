@@ -230,8 +230,8 @@ export function UsersAccess({
             <div className="card atable">
               <div className="ahead" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 210px" }}>
                 <div>User</div>
-                <div>Role</div>
-                <div>2FA</div>
+                <div style={{ textAlign: "center" }}>Role</div>
+                <div style={{ textAlign: "center" }}>2FA</div>
                 <div>Last login</div>
                 <div />
               </div>
@@ -246,12 +246,12 @@ export function UsersAccess({
                       <div className="muted" style={{ fontSize: 11 }}>{u.email || "—"}</div>
                     </div>
                   </div>
-                  <div>
+                  <div style={{ textAlign: "center" }}>
                     <span className={`pill ${u.role === "admin" ? "b" : "n"}`}>
                       {u.role === "scoped" ? u.scope || "scoped" : u.role}
                     </span>
                   </div>
-                  <div>
+                  <div style={{ textAlign: "center" }}>
                     <span className={`pill ${u.twofaEnabled ? "g" : "r"}`}>{u.twofaEnabled ? "On" : "Not set up"}</span>
                   </div>
                   <div className="muted">{u.lastLoginAt ? fmt(u.lastLoginAt) : "never"}</div>

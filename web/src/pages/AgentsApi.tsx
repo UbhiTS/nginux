@@ -209,16 +209,16 @@ function McpTab({ tools, tokens, reload, origin }: { tools: ToolDef[]; tokens: A
         )}
       </div>
       <div className="card atable" style={{ marginBottom: 18 }}>
-        <div className="ahead" style={{ gridTemplateColumns: "1.3fr 1.4fr 0.8fr 0.9fr auto" }}>
-          <div>Token</div><div>Scopes</div><div>2FA</div><div>Trust</div><div />
+        <div className="ahead" style={{ gridTemplateColumns: "1.3fr 1.4fr 0.8fr 0.9fr 90px" }}>
+          <div>Token</div><div>Scopes</div><div style={{ textAlign: "center" }}>2FA</div><div style={{ textAlign: "center" }}>Trust</div><div />
         </div>
         {tokens.map((t) => (
-          <div key={t.id} className="arow" style={{ gridTemplateColumns: "1.3fr 1.4fr 0.8fr 0.9fr auto" }}>
+          <div key={t.id} className="arow" style={{ gridTemplateColumns: "1.3fr 1.4fr 0.8fr 0.9fr 90px" }}>
             <div><b>{t.name}</b><div className="muted mono" style={{ fontSize: 11 }}>ngx_••••{t.prefix}</div></div>
             <div>{t.scopes.map((s) => <span key={s} className="pill n" style={{ marginRight: 4 }}>{s}</span>)}</div>
-            <div><span className="pill n">not required</span></div>
-            <div><span className={`pill ${t.trust === "trusted" ? "g" : "n"}`}>{t.trust}</span></div>
-            <button className="btn btn-ghost btn-sm" onClick={async () => { await api.revokeToken(t.id); reload(); }}>Revoke</button>
+            <div style={{ textAlign: "center" }}><span className="pill n">not required</span></div>
+            <div style={{ textAlign: "center" }}><span className={`pill ${t.trust === "trusted" ? "g" : "n"}`}>{t.trust}</span></div>
+            <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={async () => { await api.revokeToken(t.id); reload(); }}>Revoke</button>
           </div>
         ))}
       </div>
@@ -236,7 +236,7 @@ function McpTab({ tools, tokens, reload, origin }: { tools: ToolDef[]; tokens: A
           <div key={t.name} className="arow" style={{ gridTemplateColumns: "1.4fr 2fr 90px" }}>
             <div className="mono">{t.name}</div>
             <div className="muted">{t.description}</div>
-            <span className={`pill ${tier(t.tier).cls}`} style={{ justifySelf: "end" }}>{tier(t.tier).label}</span>
+            <span className={`pill ${tier(t.tier).cls}`} style={{ justifySelf: "center" }}>{tier(t.tier).label}</span>
           </div>
         ))}
       </div>

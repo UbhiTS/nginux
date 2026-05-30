@@ -264,7 +264,7 @@ button { font-family: inherit; cursor: pointer; }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 .tab:hover { color: var(--text); }
 
-.audit-row { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 16px; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border-soft); }
+.audit-row { display: grid; grid-template-columns: 1.4fr 1fr 130px; gap: 16px; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border-soft); }
 .audit-row:last-child { border: none; }
 .check-line { display: flex; align-items: center; gap: 9px; font-size: 13px; padding: 5px 0; }
 .check-line svg { width: 16px; height: 16px; flex-shrink: 0; }
