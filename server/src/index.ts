@@ -681,14 +681,15 @@ app.post("/api/users", async (req, reply) => {
   if (!admin) return;
   const body = z
     .object({
-      username: z.string().min(1),
-      password: z.string().min(6),
-      email: z.string().optional(),
+      username: z.string().min(1).max(64),
+      password: z.string().min(8).max(200),
+      email: z.string().max(254).optional(),
       role: z.enum(["admin", "editor", "readonly", "scoped"]).default("readonly"),
       scope: z.string().optional(),
     })
     .parse(req.body);
-  const user = createUser(body);
+  // Admin-created users get a temporary password they must change on first login.
+  const user = createUser({ ...body, mustChangePassword: true });
   logEvent({ type: "user.created", severity: "notice", actor: admin.username, summary: `Created user ${body.username} (${body.role})`, ip: clientIp(req), meta: {} });
   return reply.code(201).send(user);
 });

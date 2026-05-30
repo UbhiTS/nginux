@@ -29,6 +29,34 @@ export function UsersAccess({
   const [pwOk, setPwOk] = useState(false);
   const [pwBusy, setPwBusy] = useState(false);
 
+  // admin: add a new user
+  const [addOpen, setAddOpen] = useState(false);
+  const [auName, setAuName] = useState("");
+  const [auEmail, setAuEmail] = useState("");
+  const [auPass, setAuPass] = useState("");
+  const [auRole, setAuRole] = useState<AuthUser["role"]>("readonly");
+  const [auScope, setAuScope] = useState("");
+  const [auErr, setAuErr] = useState("");
+  const [auBusy, setAuBusy] = useState(false);
+
+  const openAdd = () => { setAddOpen(true); setAuName(""); setAuEmail(""); setAuPass(""); setAuRole("readonly"); setAuScope(""); setAuErr(""); };
+  const submitAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuErr("");
+    if (!auName.trim()) return setAuErr("Username is required.");
+    if (auPass.length < 8) return setAuErr("Password must be at least 8 characters.");
+    setAuBusy(true);
+    try {
+      await api.createUser({ username: auName.trim(), password: auPass, email: auEmail.trim() || undefined, role: auRole, scope: auRole === "scoped" ? auScope.trim() : undefined });
+      setAddOpen(false);
+      load();
+    } catch (e2) {
+      setAuErr(e2 instanceof Error ? e2.message : "Couldn't create the user.");
+    } finally {
+      setAuBusy(false);
+    }
+  };
+
   // admin reset of another user's password
   const [resetUser, setResetUser] = useState<AuthUser | null>(null);
   const [rpNew, setRpNew] = useState("");
@@ -104,6 +132,10 @@ export function UsersAccess({
     <>
       <div className="topbar">
         <h1>Users &amp; Access</h1>
+        <div style={{ flex: 1 }} />
+        {currentUser.role === "admin" && tab === "users" && (
+          <button className="btn btn-primary btn-sm" onClick={openAdd}><Icon.plus />Add user</button>
+        )}
       </div>
       <div className="content">
         <div className="sectabs">
@@ -196,7 +228,7 @@ export function UsersAccess({
             )}
 
             <div className="card atable">
-              <div className="ahead" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr auto" }}>
+              <div className="ahead" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 210px" }}>
                 <div>User</div>
                 <div>Role</div>
                 <div>2FA</div>
@@ -204,7 +236,7 @@ export function UsersAccess({
                 <div />
               </div>
               {users.map((u, i) => (
-                <div key={u.id} className="arow" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr auto" }}>
+                <div key={u.id} className="arow" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 210px" }}>
                   <div className="who">
                     <span className="av" style={{ background: avatarColor[i % avatarColor.length] }}>
                       {u.username[0].toUpperCase()}
@@ -268,6 +300,41 @@ export function UsersAccess({
           </div>
         )}
       </div>
+
+      {addOpen && (
+        <div className="modal-backdrop" onClick={() => setAddOpen(false)}>
+          <div className="card card-pad modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 650, marginBottom: 4 }}>Add a user</div>
+            <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+              They'll be asked to change this password on first sign-in.
+            </p>
+            <form onSubmit={submitAdd}>
+              <div className="field"><label>Username</label>
+                <input className="input" value={auName} onChange={(e) => setAuName(e.target.value)} autoFocus /></div>
+              <div className="field"><label>Email (optional)</label>
+                <input className="input" value={auEmail} onChange={(e) => setAuEmail(e.target.value)} /></div>
+              <div className="field"><label>Temporary password</label>
+                <input className="input" type="password" value={auPass} onChange={(e) => setAuPass(e.target.value)} /></div>
+              <div className="field"><label>Role</label>
+                <select className="input" value={auRole} onChange={(e) => setAuRole(e.target.value as AuthUser["role"])}>
+                  <option value="readonly">Read-only — can view everything</option>
+                  <option value="editor">Editor — manage services &amp; certs</option>
+                  <option value="scoped">Scoped — only specific services</option>
+                  <option value="admin">Admin — full control</option>
+                </select></div>
+              {auRole === "scoped" && (
+                <div className="field"><label>Allowed services (comma-separated ids, names, or domains)</label>
+                  <input className="input" value={auScope} onChange={(e) => setAuScope(e.target.value)} placeholder="plex, ha" /></div>
+              )}
+              {auErr && <div className="test-result bad" style={{ marginTop: 0, marginBottom: 12 }}><Icon.x /><div>{auErr}</div></div>}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn btn-primary" disabled={auBusy}>{auBusy ? <span className="spinner" /> : null}Create user</button>
+                <button type="button" className="btn btn-ghost" onClick={() => setAddOpen(false)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {resetUser && (
         <div className="modal-backdrop" onClick={() => setResetUser(null)}>

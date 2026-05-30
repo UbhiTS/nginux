@@ -95,11 +95,12 @@ export function createUser(input: {
   password: string;
   role?: Role;
   scope?: string;
+  mustChangePassword?: boolean;
 }): User {
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO users (id, username, email, passwordHash, role, scope, twofaEnabled, backupCodes, createdAt)
-     VALUES (?,?,?,?,?,?,0,'[]',?)`,
+    `INSERT INTO users (id, username, email, passwordHash, role, scope, twofaEnabled, backupCodes, mustChangePassword, createdAt)
+     VALUES (?,?,?,?,?,?,0,'[]',?,?)`,
   ).run(
     id,
     input.username,
@@ -107,6 +108,7 @@ export function createUser(input: {
     hashPassword(input.password),
     input.role ?? "readonly",
     input.scope ?? "",
+    input.mustChangePassword ? 1 : 0,
     new Date().toISOString(),
   );
   return getUserById(id)!;
