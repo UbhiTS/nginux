@@ -5,14 +5,16 @@ import { healthClass } from "../types.ts";
 import { api } from "../api.ts";
 
 interface Line {
-  d: string;
+  fwd: string; // path in the request direction (internet → service)
+  rev: string; // same curve, reversed (service → internet) for responses
   color: string;
   dashed: boolean;
-  dots: number; // dots travelling the line ∝ traffic
+  inDots: number; // requests flowing toward the service ∝ traffic
+  outDots: number; // responses flowing back toward the internet
   dur: number; // seconds per loop (busier = faster, so streams overtake)
 }
 
-const MAX_DOTS = 8;
+const MAX_DOTS = 6;
 // Categorical palette — distinguishable for 12 services, readable on light & dark.
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
@@ -87,18 +89,29 @@ export function Topology({
       const down = svc.health === "down";
       const c = traffic[svc.domain] ?? 0;
       const ratio = c / max;
-      const dots = down ? 0 : Math.max(1, Math.round(ratio * MAX_DOTS));
-      const dur = down ? 3 : 3.2 - ratio * 1.7; // busier lines flow faster → overtaking
+      // Requests flowing in (toward the service). A down service still receives
+      // traffic at the gateway, so this stays > 0 when there's traffic.
+      const reqDots = c > 0 ? Math.max(1, Math.round(ratio * MAX_DOTS)) : (down ? 0 : 1);
+      // Responses flow back only if the service is actually reachable.
+      const respDots = down ? 0 : reqDots;
+      const dur = 3.2 - ratio * 1.7; // busier lines flow faster → overtaking
 
-      // Segment 1: internet → gateway (spaced on both edges, parallel streams).
-      lines.push({
-        d: link({ x: netA.x, y: yAt(netA.y, i) }, { x: gwLeft.x, y: yAt(gwLeft.y, i) }),
-        color, dashed: down, dots, dur,
-      });
-      // Segment 2: gateway → service (spaced start, fans out to each service row).
+      // Segment 1: internet ↔ gateway. Always carries the incoming requests
+      // (even for a down service — the traffic does reach the gateway).
+      const a1 = { x: netA.x, y: yAt(netA.y, i) };
+      const b1 = { x: gwLeft.x, y: yAt(gwLeft.y, i) };
+      lines.push({ fwd: link(a1, b1), rev: link(b1, a1), color, dashed: false, inDots: reqDots, outDots: respDots, dur });
+
+      // Segment 2: gateway ↔ service. For a down service this hop is dead —
+      // dashed with no dots — so you can see traffic die before the service.
       const el = svcRefs.current.get(svc.id);
       if (el) {
-        lines.push({ d: link({ x: gwRight.x, y: yAt(gwRight.y, i) }, anchor(el, "l")), color, dashed: down, dots, dur });
+        const a2 = { x: gwRight.x, y: yAt(gwRight.y, i) };
+        const b2 = anchor(el, "l");
+        lines.push({
+          fwd: link(a2, b2), rev: link(b2, a2), color,
+          dashed: down, inDots: down ? 0 : reqDots, outDots: down ? 0 : respDots, dur,
+        });
       }
     });
     setPaths(lines);
@@ -135,20 +148,32 @@ export function Topology({
           {paths.map((p, i) => (
             <g key={i}>
               <path
-                d={p.d}
+                d={p.fwd}
                 fill="none"
                 stroke={p.color}
                 strokeWidth={1.6}
-                strokeOpacity={p.dashed ? 0.3 : 0.45}
+                strokeOpacity={p.dashed ? 0.3 : 0.4}
                 strokeDasharray={p.dashed ? "5 5" : undefined}
               />
-              {!p.dashed && Array.from({ length: p.dots }).map((_, k) => (
-                <circle key={k} r={3.1} fill={p.color}>
+              {/* requests → service (solid dots) */}
+              {Array.from({ length: p.inDots }).map((_, k) => (
+                <circle key={`in${k}`} r={3.1} fill={p.color}>
                   <animateMotion
                     dur={`${p.dur}s`}
-                    begin={`-${((k * p.dur) / Math.max(1, p.dots)).toFixed(2)}s`}
+                    begin={`-${((k * p.dur) / Math.max(1, p.inDots)).toFixed(2)}s`}
                     repeatCount="indefinite"
-                    path={p.d}
+                    path={p.fwd}
+                  />
+                </circle>
+              ))}
+              {/* responses → internet (smaller, lighter dots, opposite way) */}
+              {Array.from({ length: p.outDots }).map((_, k) => (
+                <circle key={`out${k}`} r={2} fill={p.color} fillOpacity={0.6}>
+                  <animateMotion
+                    dur={`${(p.dur * 1.15).toFixed(2)}s`}
+                    begin={`-${((k * p.dur) / Math.max(1, p.outDots)).toFixed(2)}s`}
+                    repeatCount="indefinite"
+                    path={p.rev}
                   />
                 </circle>
               ))}
