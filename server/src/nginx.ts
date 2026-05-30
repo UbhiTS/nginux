@@ -135,7 +135,8 @@ export function generateHostConfig(h: ProxyHost): string {
     ? `
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";`
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;`
     : "";
 
   // Forward-auth gate: ask the control plane whether the session may pass.

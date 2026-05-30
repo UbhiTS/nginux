@@ -19,7 +19,7 @@ export const PRESETS: Record<string, Preset> = {
     emoji: "🎬",
     websockets: true,
     http2: true,
-    extraDirectives: ["proxy_buffering off;", "proxy_read_timeout 86400s;"],
+    extraDirectives: ["proxy_buffering off;"],
     notes: "WebSocket on, large buffers, streaming-friendly timeouts.",
   },
   homeassistant: {
@@ -76,7 +76,7 @@ export const PRESETS: Record<string, Preset> = {
     emoji: "🖥️",
     websockets: true,
     http2: true,
-    extraDirectives: ["proxy_read_timeout 3600s;"],
+    extraDirectives: [],
     notes: "WebSocket on for noVNC console, long timeouts.",
   },
   vaultwarden: {
