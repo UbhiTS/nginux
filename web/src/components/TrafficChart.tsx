@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import type { Traffic } from "../types.ts";
 
@@ -104,7 +104,14 @@ function Chart({ data, dataIn, metric }: { data: number[]; dataIn?: number[]; me
   const maxData = Math.max(1, ...data, ...(dataIn ?? []));
   const fmtY = metric === "bandwidth" ? fmtBytes : fmtReq;
   // Requests: next multiple of 10 (min 10). Bandwidth: next 1/2/5×10ⁿ.
-  const max = metric === "bandwidth" ? niceCeil(maxData) : Math.max(10, Math.ceil(maxData / 10) * 10);
+  const target = metric === "bandwidth" ? niceCeil(maxData) : Math.max(10, Math.ceil(maxData / 10) * 10);
+  // Hysteresis: grow the axis the moment data needs more room, but only shrink
+  // after a big sustained drop — so values hovering near a boundary (e.g. 9–12)
+  // don't make the whole chart rescale between 10 and 20 on every refresh.
+  const ceilRef = useRef(0);
+  const prev = ceilRef.current;
+  const max = prev === 0 || target > prev ? target : maxData < prev * 0.4 ? target : prev;
+  ceilRef.current = max;
   const px = (i: number) => padL + (i * (W - padL - padR)) / (data.length - 1);
   const py = (v: number) => H - padB - (v / max) * (H - padT - padB);
   const linePath = (vals: number[]) => vals.map((v, i) => `${i ? "L" : "M"}${px(i).toFixed(1)} ${py(v).toFixed(1)}`).join(" ");
