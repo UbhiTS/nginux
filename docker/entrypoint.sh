@@ -6,10 +6,17 @@ set -eu
 mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs /data/geoip
 touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/nginx/banned.conf
 
-# nginx.conf includes geoip.conf; it must exist before nginx starts. Seed a safe
-# allow-all default if absent — the control plane regenerates it from settings.
-if [ ! -f /data/nginx/geoip.conf ]; then
-  echo 'geo $nginux_allowed_country { default 1; }' > /data/nginx/geoip.conf
+# nginx.conf includes geoip.conf and its log_format references
+# $geoip2_country_iso_code, so geoip.conf must define BOTH variables before nginx
+# starts. Seed a safe default when the file is missing OR predates the country
+# variable (older installs) — the control plane regenerates it from settings
+# moments later. Without this guard, an upgraded install's stale geoip.conf would
+# crash nginx on an unknown variable.
+if [ ! -f /data/nginx/geoip.conf ] || ! grep -q geoip2_country_iso_code /data/nginx/geoip.conf; then
+  {
+    echo 'map $remote_addr $geoip2_country_iso_code { default ""; }'
+    echo 'geo $nginux_allowed_country { default 1; }'
+  } > /data/nginx/geoip.conf
 fi
 
 # Bootstrap a self-signed cert so SSL server blocks are valid before ACME runs.
