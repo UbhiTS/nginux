@@ -28,8 +28,11 @@ export const PRESETS: Record<string, Preset> = {
     emoji: "🏠",
     websockets: true,
     http2: true,
-    extraDirectives: ["proxy_set_header X-Forwarded-Proto $scheme;"],
-    notes: "WebSocket on, real-IP forwarding for trusted proxies.",
+    // The base location already sets Host / X-Real-IP / X-Forwarded-For /
+    // X-Forwarded-Proto. Re-adding X-Forwarded-Proto here sent it twice, which
+    // Home Assistant rejects ("Incorrect number of elements in X-Forwarded-Proto").
+    extraDirectives: [],
+    notes: "WebSocket on. In Home Assistant set http.use_x_forwarded_for + trusted_proxies (the NginUX container IP).",
   },
   nextcloud: {
     id: "nextcloud",
