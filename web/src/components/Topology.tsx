@@ -8,15 +8,18 @@ interface Stroke { d: string; color: string; dashed: boolean; }
 interface Flow {
   path: string; // path a dot travels (full journey, through the gateway)
   color: string;
-  count: number; // dots in this batch ∝ traffic
-  dur: number; // full cycle length (request phase + response phase), per-service
-  begin: string; // negative offset so services don't sync
+  count: number; // dots in this batch ∝ traffic (the only traffic-driven variable)
+  dur: number; // full cycle length (request phase + response phase)
+  begin: string; // negative offset so services don't sync (phase only, not speed)
   winStart: number; // when this batch's first dot launches (fraction of dur)
   winEnd: number; // when the last dot arrives (fraction of dur)
-  travel: number; // fraction of dur a single dot spends in flight
+  travel: number; // fraction of dur a single dot is in flight (∝ path length → constant speed)
+  len: number; // approx path length in px (used to make every dot move at the same speed)
 }
 
 const MAX_DOTS = 6;
+const DUR = 5.5; // same cycle length for every service → identical dot speed
+const BASE_TRAVEL = 0.34; // flight fraction used by the longest path (must fit a window span)
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
@@ -64,6 +67,7 @@ export function Topology({
     type P = { x: number; y: number };
     const curve = (a: P, b: P) => { const mx = (a.x + b.x) / 2; return `C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`; };
     const seg = (a: P, b: P) => `M ${a.x} ${a.y} ${curve(a, b)}`;
+    const dist = (a: P, b: P) => Math.hypot(b.x - a.x, b.y - a.y);
     // A full journey curves to the gateway, crosses behind it, then curves to the far point.
     const through = (p1: P, p2: P, p3: P, p4: P) => `M ${p1.x} ${p1.y} ${curve(p1, p2)} L ${p3.x} ${p3.y} ${curve(p3, p4)}`;
 
@@ -102,21 +106,28 @@ export function Topology({
       nextStrokes.push({ d: seg(a1, b1), color, dashed: false });
       if (el) nextStrokes.push({ d: seg(a2, b2), color, dashed: down });
 
-      // Per-service clock: busier flows a little faster; offset so none are in sync.
-      const dur = 4.4 + (i % 4) * 0.8 - ratio * 1.3;
+      // Same cycle length for every service; only the phase offset differs, so
+      // dots never change speed — they just start at different times.
       const begin = `-${(i * 1.37).toFixed(2)}s`;
 
       // Request batch: full path to the service (or just to the gateway if it's
       // unreachable — the dots arrive at the router and are dropped).
       const reqPath = down || !el ? seg(a1, b1) : through(a1, b1, a2, b2);
-      nextFlows.push({ path: reqPath, color, count: reqN, dur, begin, winStart: 0.03, winEnd: 0.46, travel: 0.3 });
+      const reqLen = down || !el ? dist(a1, b1) : dist(a1, b1) + dist(b1, a2) + dist(a2, b2);
+      nextFlows.push({ path: reqPath, color, count: reqN, dur: DUR, begin, winStart: 0.03, winEnd: 0.46, travel: 0, len: reqLen });
 
       // Response batch: full path back, starting only after the requests land.
       if (respN > 0 && el) {
         const respPath = through(b2, a2, b1, a1); // service → gateway → internet
-        nextFlows.push({ path: respPath, color, count: respN, dur, begin, winStart: 0.54, winEnd: 0.97, travel: 0.3 });
+        nextFlows.push({ path: respPath, color, count: respN, dur: DUR, begin, winStart: 0.54, winEnd: 0.97, travel: 0, len: reqLen });
       }
     });
+
+    // Constant speed: flight time ∝ path length. The longest path uses
+    // BASE_TRAVEL of the cycle; every shorter path uses proportionally less, so
+    // px/second is identical on every line.
+    const maxLen = Math.max(1, ...nextFlows.map((f) => f.len));
+    for (const f of nextFlows) f.travel = (f.len / maxLen) * BASE_TRAVEL;
 
     setStrokes(nextStrokes);
     setFlows(nextFlows);
