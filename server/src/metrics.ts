@@ -25,6 +25,9 @@ const ring: LogEntry[] = [];
 const minuteBuckets = new Map<number, { count: number; bytes: number }>();
 const statusClass = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
 const byHost = new Map<string, number>();
+// Per-minute, per-host counts so the Network Map can show traffic over a window
+// (and a short "live" window). Bounded to ~25h of minutes like minuteBuckets.
+const hostMinute = new Map<number, Map<string, number>>();
 const byIp = new Map<string, number>();
 const byPath = new Map<string, number>();
 const byCountry = new Map<string, number>();
@@ -55,6 +58,11 @@ export function ingest(e: LogEntry): void {
     const oldest = Math.min(...minuteBuckets.keys());
     minuteBuckets.delete(oldest);
   }
+
+  let hm = hostMinute.get(minute);
+  if (!hm) { hm = new Map(); hostMinute.set(minute, hm); }
+  hm.set(e.host, (hm.get(e.host) ?? 0) + 1);
+  if (hostMinute.size > 1500) hostMinute.delete(Math.min(...hostMinute.keys()));
 
   const cls = `${Math.floor(e.status / 100)}xx` as keyof typeof statusClass;
   if (cls in statusClass) statusClass[cls]++;
@@ -112,6 +120,23 @@ export function summary() {
     topPaths: topN(byPath, 6),
     topCountries: topN(byCountry, 8),
   };
+}
+
+/** Per-host request counts over a time window (drives the Network Map dots).
+ *  "live" is a short rolling window so the map reacts to current load; longer
+ *  ranges aggregate more. Falls back to all-time counts if the window is empty. */
+export function hostTraffic(range: string): { key: string; count: number }[] {
+  const spans: Record<string, number> = { live: 3, "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
+  const minutes = spans[range] ?? 3;
+  const nowMin = Math.floor(Date.now() / 60000);
+  const acc = new Map<string, number>();
+  for (let m = 0; m < minutes; m++) {
+    const hm = hostMinute.get(nowMin - m);
+    if (!hm) continue;
+    for (const [h, c] of hm) acc.set(h, (acc.get(h) ?? 0) + c);
+  }
+  if (acc.size === 0) return [...byHost.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
+  return [...acc.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
 }
 
 /** Time series for a range, sampled into ~30 buckets from real minute data. */

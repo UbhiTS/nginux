@@ -130,6 +130,7 @@ export const api = {
 
   // ---- logs / metrics ----
   metricsSummary: () => req<MetricsSummary>("/metrics/summary"),
+  hostTraffic: (range: string) => req<{ key: string; count: number }[]>(`/metrics/hosts?range=${range}`),
   recentLogs: (filter?: string, limit = 200) =>
     req<LogEntry[]>(`/logs/recent?${filter ? `filter=${encodeURIComponent(filter)}&` : ""}limit=${limit}`),
 

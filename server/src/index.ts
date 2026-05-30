@@ -72,6 +72,7 @@ import { handleMcp } from "./mcp.ts";
 import {
   prometheus,
   recentLogs,
+  hostTraffic,
   startDemoTraffic,
   startLogTailer,
   subscribeLog,
@@ -526,6 +527,10 @@ app.get("/api/traffic", async (req) => {
 
 // ---------- logs + metrics ----------
 app.get("/api/metrics/summary", async () => metricsSummary());
+app.get("/api/metrics/hosts", async (req) => {
+  const { range = "live" } = req.query as { range?: string };
+  return hostTraffic(range);
+});
 app.get("/api/metrics/traffic", async (req) => {
   const { range = "1d" } = req.query as { range?: string };
   return trafficSeries(range);

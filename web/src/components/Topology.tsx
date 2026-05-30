@@ -20,6 +20,7 @@ interface Flow {
 const MAX_DOTS = 6;
 const DUR = 5.5; // same cycle length for every service → identical dot speed
 const BASE_TRAVEL = 0.34; // flight fraction used by the longest path (must fit a window span)
+const DOT_GAP = 0.007; // launch gap between consecutive dots (fraction of cycle) → tight stream
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
@@ -40,17 +41,18 @@ export function Topology({
   const [flows, setFlows] = useState<Flow[]>([]);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [traffic, setTraffic] = useState<Record<string, number>>({});
+  const [range, setRange] = useState("live");
 
   useEffect(() => {
     let alive = true;
     const pull = () =>
-      api.metricsSummary()
-        .then((s) => { if (alive) setTraffic(Object.fromEntries(s.topHosts.map((h) => [h.key, h.count]))); })
+      api.hostTraffic(range)
+        .then((hosts) => { if (alive) setTraffic(Object.fromEntries(hosts.map((h) => [h.key, h.count]))); })
         .catch(() => {});
     pull();
-    const id = setInterval(pull, 5000);
+    const id = setInterval(pull, range === "live" ? 3000 : 8000);
     return () => { alive = false; clearInterval(id); };
-  }, []);
+  }, [range]);
 
   const draw = useCallback(() => {
     const wrap = wrapRef.current;
@@ -151,10 +153,13 @@ export function Topology({
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-head">
         Network map
-        <span className="pill g">
-          <span className="dot g" />
-          live
-        </span>
+        <div className="range-tabs" style={{ marginLeft: "auto" }}>
+          {["1h", "4h", "1d", "7d", "30d", "live"].map((r) => (
+            <button key={r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
+              {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="topo" ref={wrapRef}>
         <svg className="topo-lines" viewBox={`0 0 ${box.w} ${box.h}`} preserveAspectRatio="none">
@@ -172,7 +177,8 @@ export function Topology({
           {flows.flatMap((f, fi) => {
             const span = f.winEnd - f.winStart;
             const travel = Math.min(f.travel, span * 0.9);
-            const step = f.count > 1 ? (span - travel) / (f.count - 1) : 0;
+            // Tight, fixed spacing between dots (capped so the batch still fits the window).
+            const step = f.count > 1 ? Math.min(DOT_GAP, (span - travel) / (f.count - 1)) : 0;
             return Array.from({ length: f.count }).map((_, k) => {
               const f0 = +(f.winStart + k * step).toFixed(3);
               const f1 = +(f0 + travel).toFixed(3);
