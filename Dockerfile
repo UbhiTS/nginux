@@ -26,7 +26,7 @@ WORKDIR /app
 
 # nginx is the data plane; openssl bootstraps the self-signed cert; tini is a
 # proper init (PID 1) that reaps zombies and forwards signals to both processes.
-RUN apk add --no-cache nginx openssl tini
+RUN apk add --no-cache nginx nginx-mod-stream openssl tini
 
 # prod-only deps + app code (server runs straight from TS via type-stripping)
 COPY --from=deps /app/node_modules ./node_modules
