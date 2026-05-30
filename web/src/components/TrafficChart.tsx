@@ -94,7 +94,8 @@ function fmtReq(n: number): string {
 function Chart({ data }: { data: number[] }) {
   const W = 600, H = 170, padL = 36, padR = 10, padT = 10, padB = 10;
   const maxData = Math.max(1, ...data);
-  const max = maxData * 1.1;
+  // Y-axis ceiling rounded up to the next multiple of 10 (min 10) so gridline labels are clean.
+  const max = Math.max(10, Math.ceil(maxData / 10) * 10);
   const px = (i: number) => padL + (i * (W - padL - padR)) / (data.length - 1);
   const py = (v: number) => H - padB - (v / max) * (H - padT - padB);
   const line = data.map((v, i) => `${i ? "L" : "M"}${px(i).toFixed(1)} ${py(v).toFixed(1)}`).join(" ");
@@ -133,7 +134,7 @@ function Chart({ data }: { data: number[] }) {
         const y = H - padB - L * (H - padT - padB);
         return (
           <span key={`yl${L}`} style={{ position: "absolute", left: 0, top: `${y - 6}px`, width: 30, textAlign: "right", fontSize: 10, color: "var(--text-faint)" }}>
-            {fmtReq(maxData * L)}
+            {fmtReq(max * L)}
           </span>
         );
       })}
