@@ -8,10 +8,14 @@ import type {
 } from "./types.ts";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
+  const headers = new Headers(init?.headers);
+  // Only declare a JSON body when we're actually sending one. Otherwise Fastify
+  // rejects bodyless requests (every DELETE, and action POSTs like logout/renew)
+  // with 400 "Body cannot be empty when content-type is set to 'application/json'".
+  if (init?.body != null && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const res = await fetch(`/api${path}`, { ...init, headers });
   if (!res.ok) {
     let detail = res.statusText;
     try {
