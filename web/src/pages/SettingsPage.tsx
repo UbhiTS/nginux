@@ -69,6 +69,13 @@ export function SettingsPage({
               <label>Let's Encrypt email (renewal notices)</label>
               <input className="input" value={settings.letsEncryptEmail} onChange={(e) => update({ letsEncryptEmail: e.target.value })} placeholder="you@example.com" />
             </div>
+            <div className="switch-row" style={{ marginTop: 0, marginBottom: 14 }}>
+              <div className="sw-text">
+                <div className="t">Use Let's Encrypt staging</div>
+                <div className="d">Avoid rate limits while testing — certificates won't be browser-trusted.</div>
+              </div>
+              <button className={`switch${settings.acmeStaging ? " on" : ""}`} onClick={() => update({ acmeStaging: !settings.acmeStaging })} />
+            </div>
             <div className="kv"><span className="k">Public IP (gateway)</span>
               <input className="input" style={{ maxWidth: 200 }} value={settings.publicIp} onChange={(e) => update({ publicIp: e.target.value })} />
             </div>
@@ -112,13 +119,9 @@ export function SettingsPage({
                 <input className="input" type="password" value={settings.cloudflareApiToken} onChange={(e) => update({ cloudflareApiToken: e.target.value })} placeholder="token (Zone:DNS:Edit)" />
               </div>
             )}
-            <div className="switch-row" style={{ marginTop: 14, marginBottom: 0 }}>
-              <div className="sw-text">
-                <div className="t">Use Let's Encrypt staging</div>
-                <div className="d">Avoid rate limits while testing — certificates won't be browser-trusted.</div>
-              </div>
-              <button className={`switch${settings.acmeStaging ? " on" : ""}`} onClick={() => update({ acmeStaging: !settings.acmeStaging })} />
-            </div>
+            {settings.dnsProvider === "none" && (
+              <div className="muted" style={{ fontSize: 12.5 }}>Connect a provider to validate certificates over DNS (no open ports needed).</div>
+            )}
           </div>
 
           <CountryLock settings={settings} update={update} onSave={save} />

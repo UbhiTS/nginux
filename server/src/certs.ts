@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { X509Certificate } from "node:crypto";
+import { X509Certificate, createPrivateKey } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import forge from "node-forge";
@@ -201,6 +201,49 @@ function writeFiles(domain: string, keyPem: string, certPem: string) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "privkey.pem"), keyPem);
   writeFileSync(join(dir, "fullchain.pem"), certPem);
+}
+
+export interface ImportResult {
+  imported: { domain: string; notAfter: string; staging: boolean }[];
+  skipped: { name: string; reason: string }[];
+}
+
+/** Import uploaded PEM files. Files are grouped by their source folder (so a
+ *  multi-domain upload pairs correctly); within each group we find the cert and
+ *  its matching private key, read the domain from the cert, verify the key fits,
+ *  and write them to /data/certs/<domain>/. */
+export function importCertFiles(files: { path: string; content: string }[]): ImportResult {
+  const imported: ImportResult["imported"] = [];
+  const skipped: ImportResult["skipped"] = [];
+  const groups = new Map<string, { path: string; content: string }[]>();
+  for (const f of files) {
+    const norm = f.path.replace(/\\/g, "/");
+    const dir = norm.includes("/") ? norm.slice(0, norm.lastIndexOf("/")) : "";
+    const arr = groups.get(dir) ?? [];
+    arr.push(f);
+    groups.set(dir, arr);
+  }
+  for (const [dir, gfiles] of groups) {
+    const label = dir || gfiles[0]?.path || "upload";
+    const certFile = gfiles.find((f) => /-----BEGIN CERTIFICATE-----/.test(f.content) && /fullchain|cert/i.test(f.path))
+      ?? gfiles.find((f) => /-----BEGIN CERTIFICATE-----/.test(f.content));
+    const keyFile = gfiles.find((f) => /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/.test(f.content));
+    if (!certFile || !keyFile) { skipped.push({ name: label, reason: "need both a certificate and a private key" }); continue; }
+    let domain = "", info: LeafInfo | null = null, keyOk = false;
+    try {
+      const c = new X509Certificate(certFile.content);
+      domain = (c.subject.match(/(?:^|[,\n])CN=([^,\n]+)/) || [])[1]?.trim() ?? "";
+      keyOk = c.checkPrivateKey(createPrivateKey(keyFile.content));
+      info = parseLeaf(certFile.content);
+    } catch { skipped.push({ name: label, reason: "couldn't parse the certificate" }); continue; }
+    if (!domain || !/^[a-z0-9.*-]+$/i.test(domain)) { skipped.push({ name: label, reason: "no valid domain (CN) in the certificate" }); continue; }
+    if (!keyOk) { skipped.push({ name: domain, reason: "the private key doesn't match the certificate" }); continue; }
+    try {
+      writeFiles(domain, keyFile.content, certFile.content);
+      imported.push({ domain, notAfter: info?.notAfter ?? "", staging: info?.staging ?? false });
+    } catch { skipped.push({ name: domain, reason: "couldn't save the certificate" }); }
+  }
+  return { imported, skipped };
 }
 
 function statusFromExpiry(notAfter: Date): CertStatus {

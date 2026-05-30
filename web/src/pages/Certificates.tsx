@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api, type CertDetails, type Certificate } from "../api.ts";
+import { useEffect, useRef, useState } from "react";
+import { api, type CertDetails, type Certificate, type CertImportResult } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
@@ -35,11 +35,38 @@ export function Certificates() {
   const [infoLoading, setInfoLoading] = useState(false);
   const [delFor, setDelFor] = useState<Certificate | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<CertImportResult | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement | null>(null);
 
   const load = () => {
     api.certificates().then(setCerts).catch(() => {});
   };
   useEffect(load, []);
+
+  const onImportFiles = async (list: FileList | null) => {
+    if (!list) return;
+    const pems = [...list].filter((f) => f.name.toLowerCase().endsWith(".pem"));
+    if (!pems.length) { setError("No .pem files selected. Pick a certificate (fullchain.pem) and its key (privkey.pem)."); return; }
+    if (pems.length > 200) { setError("Too many files — point at a single domain folder or a certs/ root."); return; }
+    setImporting(true);
+    setError("");
+    setImportResult(null);
+    try {
+      const files = await Promise.all(pems.map(async (f) => ({ path: (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name, content: await f.text() })));
+      const res = await api.importCerts(files);
+      setImportResult(res);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Import failed.");
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+      if (folderRef.current) folderRef.current.value = "";
+    }
+  };
 
   const openDetails = (c: Certificate) => {
     setDetail(c);
@@ -120,6 +147,7 @@ export function Certificates() {
             <div className="page-title" style={{ fontSize: 18 }}>Certificates</div>
             <div className="sub">HTTPS certificates, renewed automatically before they expire.</div>
           </div>
+          <button className="btn" onClick={() => { setImportResult(null); setImportOpen(true); }}>Import…</button>
         </div>
 
         {error && (
@@ -153,13 +181,11 @@ export function Certificates() {
               <div style={{ textAlign: "center" }}><span className={`pill ${statusPill[c.status]}`}>{c.status}</span></div>
               <div className="muted">
                 {methodLabel[c.method]}
-                {c.method === "selfsigned"
-                  ? <span className="pill n" style={{ marginLeft: 6 }}>self-signed</span>
-                  : /staging/i.test(c.issuer)
-                    ? <span className="pill y" style={{ marginLeft: 6 }}>staging</span>
-                    : /let'?s encrypt/i.test(c.issuer)
-                      ? <span className="pill g" style={{ marginLeft: 6 }}>production</span>
-                      : null}
+                {c.method !== "selfsigned" && (/staging/i.test(c.issuer)
+                  ? <span className="pill y" style={{ marginLeft: 6 }}>staging</span>
+                  : /let'?s encrypt/i.test(c.issuer)
+                    ? <span className="pill g" style={{ marginLeft: 6 }}>production</span>
+                    : null)}
                 {c.wildcard && <span className="pill b" style={{ marginLeft: 6 }}>wildcard</span>}
               </div>
               <div>
@@ -290,6 +316,53 @@ export function Certificates() {
           onConfirm={doDelete}
           onCancel={() => setDelFor(null)}
         />
+      )}
+
+      {importOpen && (
+        <div className="modal-backdrop" onClick={() => !importing && setImportOpen(false)}>
+          <div className="card card-pad modal-card" style={{ width: 500, maxWidth: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 650, marginBottom: 4 }}>Import certificates</div>
+            <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+              Bring in existing certs (e.g. from Nginx Proxy Manager or certbot). NginUX reads the domain from each
+              certificate and matches its key automatically — pick a single domain's folder, or a folder of many.
+            </p>
+
+            <input ref={fileRef} type="file" hidden multiple accept=".pem" onChange={(e) => onImportFiles(e.target.files)} />
+            <input ref={(el) => { folderRef.current = el; if (el) el.setAttribute("webkitdirectory", ""); }} type="file" hidden multiple onChange={(e) => onImportFiles(e.target.files)} />
+
+            {importing ? (
+              <div className="placeholder"><span className="spinner" /> Importing…</div>
+            ) : importResult ? (
+              <div>
+                {importResult.imported.length > 0 && (
+                  <div className="test-result ok" style={{ display: "block", marginBottom: importResult.skipped.length ? 12 : 0 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Imported {importResult.imported.length} certificate{importResult.imported.length > 1 ? "s" : ""}:</div>
+                    {importResult.imported.map((i) => <div key={i.domain} style={{ fontSize: 12.5 }}>✓ {i.domain}{i.staging ? " (staging)" : ""}</div>)}
+                  </div>
+                )}
+                {importResult.skipped.length > 0 && (
+                  <div className="test-result bad" style={{ display: "block" }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Skipped {importResult.skipped.length}:</div>
+                    {importResult.skipped.map((s, i) => <div key={i} style={{ fontSize: 12.5 }}>✕ {s.name} — {s.reason}</div>)}
+                  </div>
+                )}
+                {importResult.imported.length === 0 && importResult.skipped.length === 0 && (
+                  <div className="muted" style={{ fontSize: 13 }}>Nothing to import.</div>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn" onClick={() => fileRef.current?.click()}>Choose files…</button>
+                <button className="btn" onClick={() => folderRef.current?.click()}>Choose folder…</button>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
+              {importResult && <button className="btn btn-ghost" onClick={() => setImportResult(null)} disabled={importing}>Import more</button>}
+              <button className="btn btn-primary" onClick={() => setImportOpen(false)} disabled={importing}>Done</button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

@@ -55,6 +55,7 @@ import {
   ensureCert,
   getCert,
   getCertDetails,
+  importCertFiles,
   issue,
   listCerts,
   reconcileImportedCerts,
@@ -870,6 +871,21 @@ app.put("/api/certificates/:domain/autorenew", async (req, reply) => {
   const { on } = z.object({ on: z.boolean() }).parse(req.body);
   setAutoRenew(dp.data, on);
   return getCert(dp.data);
+});
+
+app.post("/api/certificates/import", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  const parsed = z.object({
+    files: z.array(z.object({ path: z.string().max(1024), content: z.string().max(200_000) })).min(1).max(300),
+  }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "Invalid upload." });
+  const result = importCertFiles(parsed.data.files);
+  if (result.imported.length) {
+    reconcileImportedCerts(); // register the new files in the DB
+    await applyConfig();       // and have nginx start serving them
+    logEvent({ type: "cert.imported", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Imported ${result.imported.length} certificate(s)`, ip: clientIp(req), meta: { domains: result.imported.map((i) => i.domain) } });
+  }
+  return result;
 });
 
 app.get("/api/certificates/:domain/details", async (req, reply) => {

@@ -125,6 +125,8 @@ export const api = {
     }),
   certDetails: (domain: string) => req<CertDetails>(`/certificates/${encodeURIComponent(domain)}/details`),
   deleteCert: (domain: string) => req<{ ok: boolean }>(`/certificates/${encodeURIComponent(domain)}`, { method: "DELETE" }),
+  importCerts: (files: { path: string; content: string }[]) =>
+    req<CertImportResult>("/certificates/import", { method: "POST", body: JSON.stringify({ files }) }),
 
   // ---- geoip (country lock) ----
   geoipStatus: () => req<GeoipStatus>("/geoip/status"),
@@ -204,6 +206,11 @@ export interface Reachability {
   ipMismatch: boolean;
   ext80: boolean | null;
   ext443: boolean | null;
+}
+
+export interface CertImportResult {
+  imported: { domain: string; notAfter: string; staging: boolean }[];
+  skipped: { name: string; reason: string }[];
 }
 
 export interface GeoipStatus {
