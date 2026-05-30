@@ -335,8 +335,22 @@ function humanizeNginxError(raw: string): string {
   if (/duplicate|conflicting server name/i.test(raw)) {
     return "Two services are trying to use the same domain. Give one of them a different address.";
   }
+  if (/unknown directive/i.test(raw)) {
+    return "The configuration used a directive this nginx build doesn't support. " +
+      "Technical detail: " + nginxErrorDetail(raw);
+  }
   return "The new configuration didn't pass validation, so it was not applied (nothing went down). " +
-    "Technical detail: " + raw.split("\n").slice(-2).join(" ").trim();
+    "Technical detail: " + nginxErrorDetail(raw);
+}
+
+/** Pull the meaningful line out of `nginx -t` output. nginx prints the real
+ *  reason on an `[emerg]`/`[error]` line and a useless "test failed" summary
+ *  last — and the stderr has a trailing newline, so a naive tail drops the
+ *  reason. Prefer the emerg/error line; strip the noisy "nginx:" prefix. */
+function nginxErrorDetail(raw: string): string {
+  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+  const reason = lines.find((l) => /\[(emerg|error)\]/i.test(l)) ?? lines[lines.length - 1] ?? "";
+  return reason.replace(/^nginx:\s*/i, "").replace(/^\[(emerg|error)\]\s*/i, "");
 }
 
 export { CONF_DIR };
