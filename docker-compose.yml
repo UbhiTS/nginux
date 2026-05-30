@@ -2,8 +2,10 @@
 #   docker compose up -d   →   UI at http://localhost:4600
 services:
   nginux:
-    build: .
-    image: nginux:0.1.0
+    # Pull the published image from GitHub Container Registry (public, no login).
+    image: ghcr.io/ubhits/nginux:latest
+    # To build from source instead, comment the line above and uncomment:
+    # build: .
     container_name: nginux
     restart: unless-stopped
     ports:

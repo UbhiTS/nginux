@@ -40,8 +40,18 @@ Docker image that runs anywhere Docker runs (Windows, Linux, NAS, macOS).
 ### Docker (recommended)
 
 ```bash
-docker compose up -d
+docker compose up -d          # pulls ghcr.io/ubhits/nginux:latest
 # UI: http://localhost:4600
+```
+
+The image is published publicly to GitHub Container Registry, so no login is
+needed. To pull it directly (e.g. to add NginUX as a service in an existing
+compose stack), reference the **fully-qualified** name — a bare `nginux` resolves
+to Docker Hub and will fail with "pull access denied":
+
+```bash
+docker pull ghcr.io/ubhits/nginux:latest
+# in compose:   image: ghcr.io/ubhits/nginux:latest
 ```
 
 Ports: `4600` = control-plane UI/API · `80`/`443` = proxied traffic (data plane).
