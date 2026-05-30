@@ -227,14 +227,17 @@ export function UsersAccess({
                     <span className={`pill ${u.twofaEnabled ? "g" : "r"}`}>{u.twofaEnabled ? "On" : "Not set up"}</span>
                   </div>
                   <div className="muted">{u.lastLoginAt ? fmt(u.lastLoginAt) : "never"}</div>
-                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                    {u.id === currentUser.id ? (
-                      <button className="btn btn-ghost btn-sm" onClick={openPw}>Change password</button>
-                    ) : currentUser.role === "admin" ? (
-                      <>
-                        <button className="btn btn-ghost btn-sm" onClick={() => openReset(u)}>
-                          Reset password
-                        </button>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 64px", gap: 10, alignItems: "center" }}>
+                    {/* password action — shares one centred slot so Change/Reset line up across rows */}
+                    <span style={{ justifySelf: "center" }}>
+                      {u.id === currentUser.id ? (
+                        <button className="btn btn-ghost btn-sm" onClick={openPw}>Change password</button>
+                      ) : currentUser.role === "admin" ? (
+                        <button className="btn btn-ghost btn-sm" onClick={() => openReset(u)}>Reset password</button>
+                      ) : null}
+                    </span>
+                    <span style={{ justifySelf: "center" }}>
+                      {currentUser.role === "admin" && u.id !== currentUser.id && (
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={async () => {
@@ -246,8 +249,8 @@ export function UsersAccess({
                         >
                           Delete
                         </button>
-                      </>
-                    ) : null}
+                      )}
+                    </span>
                   </div>
                 </div>
               ))}
