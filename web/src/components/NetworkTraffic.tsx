@@ -17,6 +17,9 @@ export function NetworkTraffic({
 }) {
   const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
   const [range, setRange] = useState("live");
+  // When a service is hovered, both views scope to it (graph filters, map shows
+  // only that service's dots).
+  const [hovered, setHovered] = useState<string | null>(null);
 
   return (
     <div className="card" style={{ marginBottom: 18 }}>
@@ -41,13 +44,13 @@ export function NetworkTraffic({
       </div>
 
       {data ? (
-        <Topology data={data} navigate={navigate} range={range} metric={metric} />
+        <Topology data={data} navigate={navigate} range={range} metric={metric} hovered={hovered} onHover={setHovered} />
       ) : (
         <div className="placeholder"><span className="spinner" /> Loading network map…</div>
       )}
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
-        <TrafficChart range={range} metric={metric} />
+        <TrafficChart range={range} metric={metric} host={hovered} />
       </div>
     </div>
   );

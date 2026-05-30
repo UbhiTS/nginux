@@ -521,8 +521,8 @@ app.get("/api/topology", async () => {
 });
 
 app.get("/api/traffic", async (req) => {
-  const { range = "live", metric = "requests" } = req.query as { range?: string; metric?: string };
-  return trafficSeries(range, metric === "bandwidth" ? "bandwidth" : "requests");
+  const { range = "live", metric = "requests", host } = req.query as { range?: string; metric?: string; host?: string };
+  return trafficSeries(range, metric === "bandwidth" ? "bandwidth" : "requests", host || undefined);
 });
 
 // ---------- logs + metrics ----------

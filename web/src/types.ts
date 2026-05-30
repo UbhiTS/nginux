@@ -95,6 +95,7 @@ export interface Topology {
 export interface Traffic {
   range: string;
   data: number[];
+  dataIn?: number[]; // bandwidth mode: request (ingress) bytes; `data` is response (egress)
   total: string;
   peak: string;
   unit: string;

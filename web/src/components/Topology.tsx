@@ -4,9 +4,10 @@ import type { Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { api } from "../api.ts";
 
-interface Stroke { d: string; color: string; dashed: boolean; }
+interface Stroke { d: string; color: string; dashed: boolean; host: string; }
 interface Flow {
   path: string; // path a dot travels (full journey, through the gateway)
+  host: string; // the service domain this flow belongs to
   color: string;
   count: number; // dots in this batch ∝ traffic (the only traffic-driven variable)
   dur: number; // full cycle length (request phase + response phase)
@@ -31,11 +32,15 @@ export function Topology({
   navigate,
   range,
   metric,
+  hovered,
+  onHover,
 }: {
   data: TopologyData;
   navigate: (r: Route) => void;
   range: string;
   metric: "requests" | "bandwidth";
+  hovered: string | null;
+  onHover: (domain: string | null) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const internetRef = useRef<HTMLDivElement>(null);
@@ -108,8 +113,8 @@ export function Topology({
       const b2 = el ? anchor(el, "l") : a2; // service row
 
       // Visible lines: internet→gateway (always) and gateway→service (dead/dashed if down).
-      nextStrokes.push({ d: seg(a1, b1), color, dashed: false });
-      if (el) nextStrokes.push({ d: seg(a2, b2), color, dashed: down });
+      nextStrokes.push({ d: seg(a1, b1), color, dashed: false, host: svc.domain });
+      if (el) nextStrokes.push({ d: seg(a2, b2), color, dashed: down, host: svc.domain });
 
       // Same cycle length for every service; only the phase offset differs, so
       // dots never change speed — they just start at different times.
@@ -119,12 +124,12 @@ export function Topology({
       // unreachable — the dots arrive at the router and are dropped).
       const reqPath = down || !el ? seg(a1, b1) : through(a1, b1, a2, b2);
       const reqLen = down || !el ? dist(a1, b1) : dist(a1, b1) + dist(b1, a2) + dist(a2, b2);
-      nextFlows.push({ path: reqPath, color, count: reqN, dur: DUR, begin, winStart: 0.03, winEnd: 0.46, travel: 0, len: reqLen });
+      nextFlows.push({ path: reqPath, host: svc.domain, color, count: reqN, dur: DUR, begin, winStart: 0.03, winEnd: 0.46, travel: 0, len: reqLen });
 
       // Response batch: full path back, starting only after the requests land.
       if (respN > 0 && el) {
         const respPath = through(b2, a2, b1, a1); // service → gateway → internet
-        nextFlows.push({ path: respPath, color, count: respN, dur: DUR, begin, winStart: 0.54, winEnd: 0.97, travel: 0, len: reqLen });
+        nextFlows.push({ path: respPath, host: svc.domain, color, count: respN, dur: DUR, begin, winStart: 0.54, winEnd: 0.97, travel: 0, len: reqLen });
       }
     });
 
@@ -155,18 +160,23 @@ export function Topology({
   return (
       <div className="topo" ref={wrapRef}>
         <svg className="topo-lines" viewBox={`0 0 ${box.w} ${box.h}`} preserveAspectRatio="none">
-          {strokes.map((s, i) => (
-            <path
-              key={`s${i}`}
-              d={s.d}
-              fill="none"
-              stroke={s.color}
-              strokeWidth={1.6}
-              strokeOpacity={s.dashed ? 0.3 : 0.4}
-              strokeDasharray={s.dashed ? "5 5" : undefined}
-            />
-          ))}
+          {strokes.map((s, i) => {
+            const dim = hovered ? s.host !== hovered : false;
+            return (
+              <path
+                key={`s${i}`}
+                d={s.d}
+                fill="none"
+                stroke={s.color}
+                strokeWidth={1.6}
+                strokeOpacity={dim ? 0.08 : s.dashed ? 0.3 : 0.4}
+                strokeDasharray={s.dashed ? "5 5" : undefined}
+              />
+            );
+          })}
           {flows.flatMap((f, fi) => {
+            // When a service is hovered, only its dots animate.
+            if (hovered && f.host !== hovered) return [];
             const span = f.winEnd - f.winStart;
             const travel = Math.min(f.travel, span * 0.9);
             // Tight, fixed spacing between dots (capped so the batch still fits the window).
@@ -243,6 +253,8 @@ export function Topology({
                       if (el) svcRefs.current.set(s.id, el);
                       else svcRefs.current.delete(s.id);
                     }}
+                    onMouseEnter={() => onHover(s.domain)}
+                    onMouseLeave={() => onHover(null)}
                     onClick={() => navigate({ name: "host", hostId: s.id })}
                   >
                     <span className="svc-tag" style={{ background: PALETTE[idx % PALETTE.length] }} />

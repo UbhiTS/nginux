@@ -54,7 +54,8 @@ export const api = {
   saveSettings: (patch: Partial<Settings>) =>
     req<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
   topology: () => req<Topology>("/topology"),
-  traffic: (range: string, metric: string = "requests") => req<Traffic>(`/traffic?range=${range}&metric=${metric}`),
+  traffic: (range: string, metric: string = "requests", host?: string) =>
+    req<Traffic>(`/traffic?range=${range}&metric=${metric}${host ? `&host=${encodeURIComponent(host)}` : ""}`),
 
   // ---- auth ----
   me: () => req<AuthUser>("/auth/me"),
