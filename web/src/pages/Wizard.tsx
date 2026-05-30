@@ -226,7 +226,7 @@ export function Wizard({
               <Toggle on={ssl} set={setSsl} title="HTTPS encryption" desc="Free certificate, renewed automatically." icon={<Icon.lock />} />
               <Toggle on={login} set={setLogin} title="Require login to access this app" desc="Visitors sign in through NginUX before reaching the app." icon={<Icon.users />} />
               <Toggle on={twofa} set={setTwofa} title="Require 2FA (two-factor)" desc="A one-time code on top of the password." icon={<Icon.lock />} />
-              <Toggle on={country} set={setCountry} title={`Only allow my country (${country2})`} desc="Block visitors from elsewhere. Your own devices are always allowed." icon={<Icon.globe />} />
+              <Toggle on={country} set={setCountry} title={`Only allow my country (${country2})`} desc="Restrict access by visitor country. Takes effect once a GeoIP database is connected — until then it stays open." icon={<Icon.globe />} />
               {ssl && (
                 <div style={{ marginTop: 18 }}>
                   <div className="section-title" style={{ marginBottom: 8 }}>Certificate</div>

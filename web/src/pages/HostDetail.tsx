@@ -370,7 +370,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error }: {
       <div className="section-title" style={{ marginTop: 8 }}>Access</div>
       <Toggle k="requireLogin" label="Require login" desc="Gate behind NginUX auth." />
       <Toggle k="require2fa" label="Require 2FA" desc="Demand a second factor." />
-      <Toggle k="countryLock" label="Country lock (GeoIP)" desc="Only allow your home country." />
+      <Toggle k="countryLock" label="Country lock (GeoIP)" desc="Restrict access by country once a GeoIP database is connected (open until then)." />
       <Toggle k="mtls" label="Require client certificate (mTLS)" desc="Only clients with a cert from this host's managed CA may connect." />
 
       <div className="section-title" style={{ marginTop: 8 }}>Protections</div>
