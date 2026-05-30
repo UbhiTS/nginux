@@ -1,4 +1,5 @@
-import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import { db, getSettings } from "./db.ts";
 import { listHosts } from "./repo.ts";
 import { generateSecret } from "./totp.ts";
@@ -21,41 +22,46 @@ export interface User {
 const SESSION_COOKIE = "nginux_session";
 const SESSION_TTL_MS = 7 * 86400_000;
 const IS_PROD = process.env.NODE_ENV === "production";
-// A fixed bogus hash so an unknown username still costs one scrypt — closes the
-// timing oracle that would otherwise reveal which usernames exist.
-const DUMMY_HASH = hashPassword("nginux-dummy-password-for-constant-time");
-
 // ---------- password hashing (scrypt) ----------
-export function hashPassword(password: string): string {
+// Async scrypt so the (deliberately expensive) KDF runs on libuv's threadpool
+// instead of blocking the event loop — keeps the server responsive under a burst
+// of logins or password changes.
+const scrypt = promisify(scryptCb) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
+
+export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
-  const hash = scryptSync(password, salt, 64);
+  const hash = await scrypt(password, salt, 64);
   return `${salt.toString("hex")}:${hash.toString("hex")}`;
 }
 
-export function verifyPassword(password: string, stored: string): boolean {
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [saltHex, hashHex] = stored.split(":");
   if (!saltHex || !hashHex) return false;
-  const hash = scryptSync(password, Buffer.from(saltHex, "hex"), 64);
+  const hash = await scrypt(password, Buffer.from(saltHex, "hex"), 64);
   const expected = Buffer.from(hashHex, "hex");
   return hash.length === expected.length && timingSafeEqual(hash, expected);
 }
 
+// A fixed bogus hash so an unknown username still costs one scrypt — closes the
+// timing oracle that would otherwise reveal which usernames exist. Computed once.
+const DUMMY_HASH = hashPassword("nginux-dummy-password-for-constant-time");
+
 /** Change a user's password after verifying the current one; clears the
  *  "must change" flag. Returns false if the current password is wrong. */
-export function changePassword(userId: string, currentPassword: string, newPassword: string): boolean {
+export async function changePassword(userId: string, currentPassword: string, newPassword: string): Promise<boolean> {
   const r = db.prepare("SELECT passwordHash FROM users WHERE id = ?").get(userId) as Record<string, unknown> | undefined;
   if (!r) return false;
-  if (!verifyPassword(currentPassword, String(r.passwordHash))) return false;
-  db.prepare("UPDATE users SET passwordHash = ?, mustChangePassword = 0 WHERE id = ?").run(hashPassword(newPassword), userId);
+  if (!(await verifyPassword(currentPassword, String(r.passwordHash)))) return false;
+  db.prepare("UPDATE users SET passwordHash = ?, mustChangePassword = 0 WHERE id = ?").run(await hashPassword(newPassword), userId);
   return true;
 }
 
 /** Admin reset: set a user's password without their current one, force a change
  *  on their next login, and kill their existing sessions. */
-export function adminSetPassword(userId: string, newPassword: string): boolean {
+export async function adminSetPassword(userId: string, newPassword: string): Promise<boolean> {
   const exists = db.prepare("SELECT id FROM users WHERE id = ?").get(userId);
   if (!exists) return false;
-  db.prepare("UPDATE users SET passwordHash = ?, mustChangePassword = 1 WHERE id = ?").run(hashPassword(newPassword), userId);
+  db.prepare("UPDATE users SET passwordHash = ?, mustChangePassword = 1 WHERE id = ?").run(await hashPassword(newPassword), userId);
   destroyUserSessions(userId);
   return true;
 }
@@ -89,15 +95,16 @@ function getRawByUsername(username: string): Row | undefined {
   return db.prepare("SELECT * FROM users WHERE username = ?").get(username) as Row | undefined;
 }
 
-export function createUser(input: {
+export async function createUser(input: {
   username: string;
   email?: string;
   password: string;
   role?: Role;
   scope?: string;
   mustChangePassword?: boolean;
-}): User {
+}): Promise<User> {
   const id = randomUUID();
+  const passwordHash = await hashPassword(input.password);
   db.prepare(
     `INSERT INTO users (id, username, email, passwordHash, role, scope, twofaEnabled, backupCodes, mustChangePassword, createdAt)
      VALUES (?,?,?,?,?,?,0,'[]',?,?)`,
@@ -105,7 +112,7 @@ export function createUser(input: {
     id,
     input.username,
     input.email ?? "",
-    hashPassword(input.password),
+    passwordHash,
     input.role ?? "readonly",
     input.scope ?? "",
     input.mustChangePassword ? 1 : 0,
@@ -165,10 +172,10 @@ export function userNeeds2fa(username: string): boolean {
 }
 
 // ---------- credential check ----------
-export function checkCredentials(username: string, password: string): Row | null {
+export async function checkCredentials(username: string, password: string): Promise<Row | null> {
   const r = getRawByUsername(username);
   // Always run one scrypt so unknown vs. known usernames take the same time.
-  const ok = verifyPassword(password, r ? String(r.passwordHash) : DUMMY_HASH);
+  const ok = await verifyPassword(password, r ? String(r.passwordHash) : await DUMMY_HASH);
   return r && ok ? r : null;
 }
 
@@ -345,7 +352,7 @@ export function securityOverview() {
 }
 
 // ---------- seed ----------
-export function seedAuthIfEmpty(): { usingDefault: boolean } {
+export async function seedAuthIfEmpty(): Promise<{ usingDefault: boolean }> {
   const count = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as Row).n as number;
   if (count > 0) return { usingDefault: false };
 
@@ -356,7 +363,7 @@ export function seedAuthIfEmpty(): { usingDefault: boolean } {
   const usingDefault = !envPw;
   const settings = getSettings();
 
-  const admin = createUser({
+  const admin = await createUser({
     username: "admin",
     email: settings.letsEncryptEmail || "admin@example.com",
     password: adminPassword,
@@ -369,9 +376,9 @@ export function seedAuthIfEmpty(): { usingDefault: boolean } {
   // Demo accounts + sample history are for dev/screenshots only — never seed
   // functional extra accounts (with stored TOTP secrets) into a real deployment.
   if (!IS_PROD) {
-    const priya = createUser({ username: "priya", email: "priya@home", password: randomBytes(9).toString("hex"), role: "editor" });
-    const media = createUser({ username: "media", email: "shared device", password: randomBytes(9).toString("hex"), role: "scoped", scope: "plex, ha" });
-    createUser({ username: "guest", email: "temporary access", password: randomBytes(9).toString("hex"), role: "readonly" });
+    const priya = await createUser({ username: "priya", email: "priya@home", password: randomBytes(9).toString("hex"), role: "editor" });
+    const media = await createUser({ username: "media", email: "shared device", password: randomBytes(9).toString("hex"), role: "scoped", scope: "plex, ha" });
+    await createUser({ username: "guest", email: "temporary access", password: randomBytes(9).toString("hex"), role: "readonly" });
     for (const u of [priya, media]) {
       beginTwofaSetup(u.id);
       enableTwofa(u.id);

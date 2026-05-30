@@ -113,7 +113,7 @@ const PORT = Number(process.env.PORT ?? 4600);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
 seedIfEmpty();
-const seeded = seedAuthIfEmpty();
+const seeded = await seedAuthIfEmpty();
 seedTokensIfEmpty();
 
 const ALL_SCOPES: Scope[] = ["read", "report", "control", "security"];
@@ -586,7 +586,7 @@ app.post("/api/auth/login", async (req, reply) => {
     return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
   }
 
-  const row = checkCredentials(username, password);
+  const row = await checkCredentials(username, password);
   if (!row) {
     logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Wrong username or password", ip, meta: {} });
     return reply.code(401).send({ error: "Wrong username or password." });
@@ -652,7 +652,7 @@ app.post("/api/auth/change-password", async (req, reply) => {
   if (parsed.data.newPassword === parsed.data.currentPassword) {
     return reply.code(400).send({ error: "Pick a password different from the current one." });
   }
-  if (!changePassword(u.id, parsed.data.currentPassword, parsed.data.newPassword)) {
+  if (!(await changePassword(u.id, parsed.data.currentPassword, parsed.data.newPassword))) {
     return reply.code(400).send({ error: "Your current password is incorrect." });
   }
   logEvent({ type: "security.password_changed", severity: "notice", actor: u.username, summary: "Changed account password", ip: clientIp(req), meta: {} });
@@ -695,7 +695,7 @@ app.post("/api/users", async (req, reply) => {
     })
     .parse(req.body);
   // Admin-created users get a temporary password they must change on first login.
-  const user = createUser({ ...body, mustChangePassword: true });
+  const user = await createUser({ ...body, mustChangePassword: true });
   logEvent({ type: "user.created", severity: "notice", actor: admin.username, summary: `Created user ${body.username} (${body.role})`, ip: clientIp(req), meta: {} });
   return reply.code(201).send(user);
 });
@@ -717,7 +717,7 @@ app.post("/api/users/:id/password", async (req, reply) => {
   const { id } = req.params as { id: string };
   const parsed = z.object({ newPassword: z.string().min(8, "Use at least 8 characters.").max(200) }).safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  if (!adminSetPassword(id, parsed.data.newPassword)) return reply.code(404).send({ error: "User not found" });
+  if (!(await adminSetPassword(id, parsed.data.newPassword))) return reply.code(404).send({ error: "User not found" });
   const target = getUserById(id);
   logEvent({ type: "user.password_reset", severity: "warn", actor: admin.username, summary: `Reset password for ${target?.username ?? id}`, ip: clientIp(req), meta: { id } });
   return { ok: true };
