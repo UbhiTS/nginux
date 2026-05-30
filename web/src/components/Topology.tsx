@@ -10,18 +10,17 @@ interface Flow {
   host: string; // the service domain this flow belongs to
   color: string;
   count: number; // dots in this batch ∝ traffic (the only traffic-driven variable)
-  dur: number; // full cycle length (request phase + response phase)
+  dur: number; // full cycle length in seconds (sized to fit its own content)
   begin: string; // negative offset so services don't sync (phase only, not speed)
-  winStart: number; // when this batch's first dot launches (fraction of dur)
-  winEnd: number; // when the last dot arrives (fraction of dur)
-  travel: number; // fraction of dur a single dot is in flight (∝ path length → constant speed)
-  len: number; // approx path length in px (used to make every dot move at the same speed)
+  t0: number; // fraction of dur when the first dot launches
+  step: number; // fraction of dur between consecutive dots
+  travel: number; // fraction of dur a single dot is in flight
 }
 
 const MAX_DOTS = 6;
-const DUR = 5.5; // same cycle length for every service → identical dot speed
-const BASE_TRAVEL = 0.34; // flight fraction used by the longest path (must fit a window span)
-const DOT_GAP = 0.014; // launch gap between consecutive dots (fraction of cycle) → spaced stream
+const SPEED = 190; // px/second — identical for every dot
+const STEP_SEC = 0.09; // seconds between consecutive dots in a batch (controls spacing)
+const HANDOFF_SEC = 0.12; // brief pause between a batch finishing and the next starting
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
   "#06b6d4", "#f97316", "#84cc16", "#eab308", "#8b5cf6", "#14b8a6",
@@ -116,28 +115,37 @@ export function Topology({
       nextStrokes.push({ d: seg(a1, b1), color, dashed: false, host: svc.domain });
       if (el) nextStrokes.push({ d: seg(a2, b2), color, dashed: down, host: svc.domain });
 
-      // Same cycle length for every service; only the phase offset differs, so
-      // dots never change speed — they just start at different times.
+      // Phase offset so services don't move in unison (speed is unaffected).
       const begin = `-${(i * 1.37).toFixed(2)}s`;
 
       // Request batch: full path to the service (or just to the gateway if it's
       // unreachable — the dots arrive at the router and are dropped).
       const reqPath = down || !el ? seg(a1, b1) : through(a1, b1, a2, b2);
-      const reqLen = down || !el ? dist(a1, b1) : dist(a1, b1) + dist(b1, a2) + dist(a2, b2);
-      nextFlows.push({ path: reqPath, host: svc.domain, color, count: reqN, dur: DUR, begin, winStart: 0.03, winEnd: 0.46, travel: 0, len: reqLen });
+      const len = down || !el ? dist(a1, b1) : dist(a1, b1) + dist(b1, a2) + dist(a2, b2);
+      const tf = len / SPEED; // flight time (s) — constant speed
+      const batch = (n: number) => (Math.max(1, n) - 1) * STEP_SEC + tf; // batch duration (s)
+      const hasResp = respN > 0 && !!el;
+      const reqBatch = batch(reqN);
+      // Cycle is sized to its content: a half-handoff lead, the request batch, a
+      // handoff, the response batch, a half-handoff trail. Both transitions
+      // (req→resp and resp→req at the wrap) are therefore the same short gap.
+      const cycle = hasResp
+        ? HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC + batch(respN) + HANDOFF_SEC / 2
+        : HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC / 2;
 
-      // Response batch: full path back, starting only after the requests land.
-      if (respN > 0 && el) {
+      nextFlows.push({
+        path: reqPath, host: svc.domain, color, count: reqN, dur: cycle, begin,
+        t0: (HANDOFF_SEC / 2) / cycle, step: STEP_SEC / cycle, travel: tf / cycle,
+      });
+      if (hasResp) {
         const respPath = through(b2, a2, b1, a1); // service → gateway → internet
-        nextFlows.push({ path: respPath, host: svc.domain, color, count: respN, dur: DUR, begin, winStart: 0.54, winEnd: 0.97, travel: 0, len: reqLen });
+        const respStart = HANDOFF_SEC / 2 + reqBatch + HANDOFF_SEC;
+        nextFlows.push({
+          path: respPath, host: svc.domain, color, count: respN, dur: cycle, begin,
+          t0: respStart / cycle, step: STEP_SEC / cycle, travel: tf / cycle,
+        });
       }
     });
-
-    // Constant speed: flight time ∝ path length. The longest path uses
-    // BASE_TRAVEL of the cycle; every shorter path uses proportionally less, so
-    // px/second is identical on every line.
-    const maxLen = Math.max(1, ...nextFlows.map((f) => f.len));
-    for (const f of nextFlows) f.travel = (f.len / maxLen) * BASE_TRAVEL;
 
     setStrokes(nextStrokes);
     setFlows(nextFlows);
@@ -177,13 +185,9 @@ export function Topology({
           {flows.flatMap((f, fi) => {
             // When a service is hovered, only its dots animate.
             if (hovered && f.host !== hovered) return [];
-            const span = f.winEnd - f.winStart;
-            const travel = Math.min(f.travel, span * 0.9);
-            // Tight, fixed spacing between dots (capped so the batch still fits the window).
-            const step = f.count > 1 ? Math.min(DOT_GAP, (span - travel) / (f.count - 1)) : 0;
             return Array.from({ length: f.count }).map((_, k) => {
-              const f0 = +(f.winStart + k * step).toFixed(3);
-              const f1 = +(f0 + travel).toFixed(3);
+              const f0 = +(f.t0 + k * f.step).toFixed(4);
+              const f1 = +(f0 + f.travel).toFixed(4);
               return (
                 <circle key={`f${fi}-${k}`} r={3.1} fill={f.color} opacity={0}>
                   <animateMotion
