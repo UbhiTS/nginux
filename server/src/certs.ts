@@ -120,10 +120,13 @@ export interface CertDetails {
 
 /** Parse the leaf of a fullchain PEM with node:crypto so we handle EC *and* RSA
  *  (node-forge can't read EC keys). Returns the human-facing fields, or null. */
-interface LeafInfo extends CertDetails { subjectCN: string; }
+interface LeafInfo extends CertDetails { subjectCN: string; staging: boolean; }
 function parseLeaf(pem: string | Buffer): LeafInfo | null {
   let c: X509Certificate;
   try { c = new X509Certificate(pem); } catch { return null; }
+  // Let's Encrypt staging signs with deliberately silly intermediate names
+  // (e.g. "(STAGING) Ersatz Edamame E1" / org "(STAGING) Let's Encrypt").
+  const staging = /staging|pretend|ersatz|counterfeit|doctored|bogus|wannabe|fake/i.test(c.issuer);
   const dn = (s: string, k: string) => (s.match(new RegExp(`(?:^|[,\\n])${k}=([^,\\n]+)`)) || [])[1]?.trim() ?? "";
   const subjectCN = dn(c.subject, "CN");
   const issuerCN = dn(c.issuer, "CN") || dn(c.issuer, "O");
@@ -146,6 +149,7 @@ function parseLeaf(pem: string | Buffer): LeafInfo | null {
     signatureAlgorithm: "", // node:crypto doesn't expose it; omitted in the UI
     publicKey,
     selfSigned: c.subject === c.issuer,
+    staging,
   };
 }
 
@@ -176,11 +180,11 @@ export function reconcileImportedCerts(): void {
     const existing = getCert(domain);
     // Already tracked with the same expiry? Nothing to do.
     if (existing?.notAfter && Math.abs(Date.parse(existing.notAfter) - Date.parse(info.notAfter)) < 60_000) continue;
-    const isLE = info.selfSigned ? false : /let'?s encrypt|^[ER]\d+$/i.test(info.issuer);
+    const isLE = info.staging || (info.selfSigned ? false : /let'?s encrypt|^[ER]\d+$/i.test(info.issuer));
     upsertCert({
       domain,
       status: statusFromExpiry(new Date(info.notAfter)),
-      issuer: info.selfSigned ? "Self-signed" : isLE ? "Let's Encrypt" : info.issuer,
+      issuer: info.selfSigned ? "Self-signed" : info.staging ? "Let's Encrypt (staging)" : isLE ? "Let's Encrypt" : info.issuer,
       method: info.selfSigned ? "selfsigned" : "http-01",
       notBefore: info.notBefore,
       notAfter: info.notAfter,
@@ -323,7 +327,7 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
     upsertCert({
       domain,
       status: statusFromExpiry(parsed.validity.notAfter),
-      issuer: "Let's Encrypt",
+      issuer: s.acmeStaging ? "Let's Encrypt (staging)" : "Let's Encrypt",
       method,
       notBefore: parsed.validity.notBefore.toISOString(),
       notAfter: parsed.validity.notAfter.toISOString(),

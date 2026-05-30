@@ -153,7 +153,13 @@ export function Certificates() {
               <div style={{ textAlign: "center" }}><span className={`pill ${statusPill[c.status]}`}>{c.status}</span></div>
               <div className="muted">
                 {methodLabel[c.method]}
-                {c.method === "selfsigned" && <span className="pill n" style={{ marginLeft: 6 }}>self-signed</span>}
+                {c.method === "selfsigned"
+                  ? <span className="pill n" style={{ marginLeft: 6 }}>self-signed</span>
+                  : /staging/i.test(c.issuer)
+                    ? <span className="pill y" style={{ marginLeft: 6 }}>staging</span>
+                    : /let'?s encrypt/i.test(c.issuer)
+                      ? <span className="pill g" style={{ marginLeft: 6 }}>production</span>
+                      : null}
                 {c.wildcard && <span className="pill b" style={{ marginLeft: 6 }}>wildcard</span>}
               </div>
               <div>
@@ -206,6 +212,7 @@ export function Certificates() {
             </div>
             <p className="muted" style={{ fontSize: 12.5, marginBottom: 14 }}>
               {methodLabel[detail.method]}{detail.method !== "selfsigned" ? ` · ${detail.method === "http-01" ? "HTTP validation" : "DNS validation"}` : ""}
+              {/staging/i.test(detail.issuer) && <span className="pill y" style={{ marginLeft: 8 }}>staging — not browser-trusted</span>}
             </p>
 
             {infoLoading ? (
