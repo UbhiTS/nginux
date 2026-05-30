@@ -242,7 +242,7 @@ button { font-family: inherit; cursor: pointer; }
 .kv:last-child { border: none; }
 .kv .k { color: var(--text-dim); }
 /* security score card: ring with the number centered, text beside it */
-.score-card { display: flex; align-items: center; gap: 18px; }
+.score-card { display: flex; align-items: center; gap: 18px; padding: 16px 18px; }
 .ring { position: relative; width: 96px; height: 96px; flex-shrink: 0; }
 .ring svg { transform: rotate(-90deg); transform-origin: center; }
 .ring .num { position: absolute; inset: 0; display: grid; place-items: center; font-size: 26px; font-weight: 800; color: var(--text); }

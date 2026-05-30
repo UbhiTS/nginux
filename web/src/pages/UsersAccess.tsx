@@ -86,6 +86,7 @@ export function UsersAccess({
   };
 
   const resetPw = () => { setPwCur(""); setPwNext(""); setPwConfirm(""); setPwErr(""); };
+  const openPw = () => { resetPw(); setPwOk(false); setPwOpen(true); };
   const submitPw = async (e: React.FormEvent) => {
     e.preventDefault();
     setPwErr(""); setPwOk(false);
@@ -145,38 +146,9 @@ export function UsersAccess({
 
         {tab === "users" && (
           <>
-            <div className="card card-pad" style={{ marginBottom: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <Icon.lock className="acct-ic" />
-                <div style={{ flex: 1 }}>
-                  <div className="nt">Password</div>
-                  <div className="nd">Change the password for your account ({currentUser.username}).</div>
-                </div>
-                {!pwOpen && (
-                  <button className="btn btn-sm" style={{ alignSelf: "center" }} onClick={() => { setPwOpen(true); setPwOk(false); }}>
-                    Change password
-                  </button>
-                )}
-              </div>
-              {pwOk && !pwOpen && (
-                <div className="test-result ok" style={{ marginTop: 12 }}><Icon.check /><div>Password changed.</div></div>
-              )}
-              {pwOpen && (
-                <form onSubmit={submitPw} style={{ marginTop: 14, maxWidth: 360 }}>
-                  <div className="field"><label>Current password</label>
-                    <input className="input" type="password" value={pwCur} onChange={(e) => setPwCur(e.target.value)} autoFocus /></div>
-                  <div className="field"><label>New password</label>
-                    <input className="input" type="password" value={pwNext} onChange={(e) => setPwNext(e.target.value)} /></div>
-                  <div className="field"><label>Confirm new password</label>
-                    <input className="input" type="password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} /></div>
-                  {pwErr && <div className="test-result bad" style={{ marginTop: 0, marginBottom: 12 }}><Icon.x /><div>{pwErr}</div></div>}
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button className="btn btn-primary" disabled={pwBusy}>{pwBusy ? <span className="spinner" /> : null}Save</button>
-                    <button type="button" className="btn btn-ghost" onClick={() => { setPwOpen(false); resetPw(); }}>Cancel</button>
-                  </div>
-                </form>
-              )}
-            </div>
+            {pwOk && (
+              <div className="test-result ok" style={{ marginBottom: 18 }}><Icon.check /><div>Your password was changed.</div></div>
+            )}
 
             {!currentUser.twofaEnabled && (
               <div className="nudge" style={{ marginBottom: 18 }}>
@@ -235,7 +207,7 @@ export function UsersAccess({
                 <div>Last login</div>
                 <div />
               </div>
-              {users.map((u, i) => (
+              {(users.some((u) => u.id === currentUser.id) ? users : [currentUser, ...users]).map((u, i) => (
                 <div key={u.id} className="arow" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 210px" }}>
                   <div className="who">
                     <span className="av" style={{ background: avatarColor[i % avatarColor.length] }}>
@@ -256,7 +228,9 @@ export function UsersAccess({
                   </div>
                   <div className="muted">{u.lastLoginAt ? fmt(u.lastLoginAt) : "never"}</div>
                   <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                    {currentUser.role === "admin" && u.id !== currentUser.id && (
+                    {u.id === currentUser.id ? (
+                      <button className="btn btn-ghost btn-sm" onClick={openPw}>Change password</button>
+                    ) : currentUser.role === "admin" ? (
                       <>
                         <button className="btn btn-ghost btn-sm" onClick={() => openReset(u)}>
                           Reset password
@@ -273,7 +247,7 @@ export function UsersAccess({
                           Delete
                         </button>
                       </>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -300,6 +274,28 @@ export function UsersAccess({
           </div>
         )}
       </div>
+
+      {pwOpen && (
+        <div className="modal-backdrop" onClick={() => setPwOpen(false)}>
+          <div className="card card-pad modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 650, marginBottom: 4 }}>Change your password</div>
+            <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>Update the password for your account ({currentUser.username}).</p>
+            <form onSubmit={submitPw}>
+              <div className="field"><label>Current password</label>
+                <input className="input" type="password" value={pwCur} onChange={(e) => setPwCur(e.target.value)} autoFocus /></div>
+              <div className="field"><label>New password</label>
+                <input className="input" type="password" value={pwNext} onChange={(e) => setPwNext(e.target.value)} /></div>
+              <div className="field"><label>Confirm new password</label>
+                <input className="input" type="password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} /></div>
+              {pwErr && <div className="test-result bad" style={{ marginTop: 0, marginBottom: 12 }}><Icon.x /><div>{pwErr}</div></div>}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn btn-primary" disabled={pwBusy}>{pwBusy ? <span className="spinner" /> : null}Save</button>
+                <button type="button" className="btn btn-ghost" onClick={() => { setPwOpen(false); resetPw(); }}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {addOpen && (
         <div className="modal-backdrop" onClick={() => setAddOpen(false)}>

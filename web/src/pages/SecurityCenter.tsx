@@ -82,18 +82,18 @@ export function SecurityCenter() {
             <div className="card">
               <div className="card-head">Recent security events</div>
               <div className="atable">
-                <div className="ahead" style={{ gridTemplateColumns: "150px 1fr auto" }}>
+                <div className="ahead" style={{ gridTemplateColumns: "150px 1fr 90px" }}>
                   <div>Time</div>
                   <div>Event</div>
-                  <div />
+                  <div style={{ textAlign: "center" }}>Type</div>
                 </div>
                 {events.slice(0, 8).map((e) => (
-                  <div key={e.id} className="arow" style={{ gridTemplateColumns: "150px 1fr auto" }}>
+                  <div key={e.id} className="arow" style={{ gridTemplateColumns: "150px 1fr 90px" }}>
                     <div className="muted mono">{fmt(e.ts)}</div>
                     <div>
                       <b>{e.actor}</b> · {e.summary}
                     </div>
-                    <span className={`pill ${sevPill[e.severity]}`}>{e.type.split(".")[0]}</span>
+                    <span className={`pill ${sevPill[e.severity]}`} style={{ justifySelf: "center" }}>{e.type.split(".")[0]}</span>
                   </div>
                 ))}
               </div>

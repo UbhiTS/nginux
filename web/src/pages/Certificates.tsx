@@ -65,20 +65,20 @@ export function Certificates() {
         </div>
 
         <div className="card">
-          <div className="ahead" style={{ gridTemplateColumns: "1.5fr 1fr 1fr 1.2fr auto" }}>
+          <div className="ahead" style={{ gridTemplateColumns: "1.5fr 1fr 1fr 1.2fr 110px" }}>
             <div>Domain</div>
-            <div>Status</div>
+            <div style={{ textAlign: "center" }}>Status</div>
             <div>Expires</div>
             <div>Issuer</div>
             <div />
           </div>
           {certs.map((c) => (
-            <div key={c.domain} className="arow" style={{ gridTemplateColumns: "1.5fr 1fr 1fr 1.2fr auto" }}>
+            <div key={c.domain} className="arow" style={{ gridTemplateColumns: "1.5fr 1fr 1fr 1.2fr 110px" }}>
               <div className="cert-domain">
                 {c.domain}
                 {c.lastError && <div className="muted" style={{ fontSize: 11, color: "var(--red)" }}>{c.lastError}</div>}
               </div>
-              <div><span className={`pill ${statusPill[c.status]}`}>{c.status}</span></div>
+              <div style={{ textAlign: "center" }}><span className={`pill ${statusPill[c.status]}`}>{c.status}</span></div>
               <div>
                 {c.daysRemaining !== null ? (
                   <span style={{ color: c.daysRemaining < 30 ? "var(--yellow)" : undefined }}>
@@ -91,7 +91,7 @@ export function Certificates() {
                 {c.wildcard && <span className="pill b" style={{ marginLeft: 4 }}>Wildcard</span>}
                 {c.method === "selfsigned" && <span className="pill n" style={{ marginLeft: 4 }}>self-signed</span>}
               </div>
-              <button className="btn btn-ghost btn-sm" disabled={busy === c.domain} onClick={() => renew(c.domain)}>
+              <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} disabled={busy === c.domain} onClick={() => renew(c.domain)}>
                 {busy === c.domain ? <span className="spinner" /> : "Renew now"}
               </button>
             </div>
