@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Route } from "../App.tsx";
-import { api, type Uptime } from "../api.ts";
+import { api, type Certificate, type Uptime } from "../api.ts";
 import type { ProxyHost } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
@@ -31,11 +31,13 @@ export function HostDetail({
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [saveErr, setSaveErr] = useState("");
+  const [certs, setCerts] = useState<Certificate[]>([]);
 
   const refetch = () => {
     api.getHost(hostId).then(setHost).catch(() => setHost(null));
     api.hostConfig(hostId).then(setConfig).catch(() => setConfig(""));
     api.uptime(hostId).then(setUptime).catch(() => setUptime(null));
+    api.certificates().then(setCerts).catch(() => {});
   };
   useEffect(refetch, [hostId]);
 
@@ -74,9 +76,11 @@ export function HostDetail({
   }
 
   const b = banner[host.health];
-  const certDays = host.certExpiresAt
-    ? Math.round((Date.parse(host.certExpiresAt) - Date.now()) / 86400_000)
-    : null;
+  // The real certificate for this domain (from the cert store), not the host's
+  // stale certExpiresAt field.
+  const cert = certs.find((c) => c.domain === host.domain) ?? null;
+  const certDays = cert?.daysRemaining ?? null;
+  const certStatusCls = cert ? (cert.status === "valid" ? "g" : cert.status === "expiring" || cert.status === "expired" || cert.status === "error" ? "r" : "n") : "n";
 
   const remove = async () => {
     setDeleting(true);
@@ -224,9 +228,7 @@ export function HostDetail({
               <div className="card-pad">
                 <div className="kv">
                   <span className="k">Status</span>
-                  <span className={`pill ${certDays !== null ? "g" : "n"}`}>
-                    {certDays !== null ? "Valid" : "None"}
-                  </span>
+                  <span className={`pill ${certStatusCls}`}>{cert ? cert.status : "none"}</span>
                 </div>
                 <div className="kv">
                   <span className="k">Expires in</span>
@@ -234,7 +236,7 @@ export function HostDetail({
                 </div>
                 <div className="kv">
                   <span className="k">Issuer</span>
-                  <span className="v">Let's Encrypt</span>
+                  <span className="v">{cert ? cert.issuer || "—" : "—"}</span>
                 </div>
               </div>
             </div>
