@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import type { Route } from "../App.tsx";
-import { api } from "../api.ts";
+import { api, type Certificate } from "../api.ts";
 import type { ApplyResult, Preset, Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
+
+type CertChoice = "existing" | "dns-01" | "http-01" | "selfsigned";
 
 const STEPS = ["What", "Where", "Address", "Secure", "Done"];
 
@@ -26,7 +28,8 @@ export function Wizard({
   const [login, setLogin] = useState(true);
   const [twofa, setTwofa] = useState(true);
   const [country, setCountry] = useState(true);
-  const [certMethod, setCertMethod] = useState<"selfsigned" | "http-01" | "dns-01">("selfsigned");
+  const [certMethod, setCertMethod] = useState<CertChoice>("dns-01");
+  const [certs, setCerts] = useState<Certificate[]>([]);
   const [creating, setCreating] = useState(false);
   const [apply, setApply] = useState<ApplyResult | null>(null);
   const [certResult, setCertResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -39,9 +42,19 @@ export function Wizard({
       setPresets(p);
       setPreset(p.find((x) => x.id === "plex") ?? p[0]);
     });
+    api.certificates().then(setCerts).catch(() => {});
   }, []);
 
   const parsed = parseForward(forward);
+  const domain = `${sub}.${base}`;
+  const existingCert = sub ? certs.find((c) => c.domain === domain) ?? null : null;
+
+  // Smart default: reuse a cert that already exists for this exact domain;
+  // otherwise issue a trusted one (DNS) by default. Re-evaluates if the domain
+  // or cert list changes; the user can still override on the Secure step.
+  useEffect(() => {
+    setCertMethod(existingCert ? "existing" : "dns-01");
+  }, [domain, existingCert]);
 
   const runTest = async () => {
     if (!parsed) return;
@@ -63,7 +76,6 @@ export function Wizard({
     setCertResult(null);
     setStep(5);
     setCreating(true);
-    const domain = `${sub}.${base}`;
     try {
       const res = await api.createHost({
         name: preset.label.split(" ")[0] === "Custom" ? sub || "Service" : preset.label.split(" / ")[0],
@@ -84,10 +96,11 @@ export function Wizard({
         enabled: true,
       });
       setApply(res.apply);
-      // If they asked for a trusted certificate, request it now as part of setup.
-      // A failure here doesn't undo the service — it's live on the self-signed
-      // bootstrap cert — so we surface it as a soft warning they can retry.
-      if (ssl && certMethod !== "selfsigned") {
+      // Issue a trusted cert only when a Let's Encrypt method is chosen. "existing"
+      // reuses the cert already on disk; "selfsigned" uses the bootstrap cert — both
+      // need no issuance. A Let's Encrypt failure doesn't undo the service (it's live
+      // on the self-signed bootstrap cert), so we surface it as a soft warning.
+      if (ssl && (certMethod === "http-01" || certMethod === "dns-01")) {
         try {
           await api.issueCert(domain, certMethod);
           setCertResult({ ok: true, message: "Trusted Let's Encrypt certificate installed." });
@@ -228,20 +241,27 @@ export function Wizard({
               <Toggle on={twofa} set={setTwofa} title="Require 2FA (two-factor)" desc="A one-time code on top of the password." icon={<Icon.lock />} />
               <Toggle on={country} set={setCountry} title={`Only allow my country (${country2})`} desc="Restrict access by visitor country. Takes effect once a GeoIP database is connected — until then it stays open." icon={<Icon.globe />} />
               {ssl && (
-                <div style={{ marginTop: 18 }}>
-                  <div className="section-title" style={{ marginBottom: 8 }}>Certificate</div>
-                  <label className={`radio-card${certMethod === "selfsigned" ? " sel" : ""}`} onClick={() => setCertMethod("selfsigned")}>
-                    <div className="rc-top"><input type="radio" checked={certMethod === "selfsigned"} readOnly /> Self-signed (instant)</div>
-                    <div className="rc-desc">Works right away, but browsers show a "not secure" warning. You can upgrade anytime from Certificates.</div>
-                  </label>
-                  <label className={`radio-card${certMethod === "http-01" ? " sel" : ""}`} onClick={() => setCertMethod("http-01")}>
-                    <div className="rc-top"><input type="radio" checked={certMethod === "http-01"} readOnly /> Trusted · Let's Encrypt (HTTP)</div>
-                    <div className="rc-desc">Free trusted certificate. Needs port 80 reachable from the internet (forward TCP 80 → this server) and public DNS for {sub || "this"}.{base}.</div>
-                  </label>
-                  <label className={`radio-card${certMethod === "dns-01" ? " sel" : ""}`} onClick={() => setCertMethod("dns-01")}>
-                    <div className="rc-top"><input type="radio" checked={certMethod === "dns-01"} readOnly /> Trusted · Let's Encrypt (DNS)</div>
-                    <div className="rc-desc">Free trusted certificate, no open ports needed. Requires a DNS provider connected in Settings.</div>
-                  </label>
+                <div className="field" style={{ marginTop: 18, marginBottom: 0 }}>
+                  <label>Certificate</label>
+                  <select className="input" value={certMethod} onChange={(e) => setCertMethod(e.target.value as CertChoice)}>
+                    {existingCert && (
+                      <option value="existing">
+                        Use existing certificate — {existingCert.domain} ({existingCert.method === "selfsigned" ? "self-signed" : existingCert.issuer || "Let's Encrypt"})
+                      </option>
+                    )}
+                    <option value="dns-01">Create new certificate: Let's Encrypt (DNS)</option>
+                    <option value="http-01">Create new certificate: Let's Encrypt (HTTP)</option>
+                    <option value="selfsigned">Self-signed (instant, not trusted)</option>
+                  </select>
+                  <div className="hint">
+                    {certMethod === "existing"
+                      ? `Reuses the certificate already issued for ${domain}${existingCert?.method === "selfsigned" ? " (self-signed — browsers will still warn)." : "."}`
+                      : certMethod === "dns-01"
+                      ? "Free trusted certificate, no open ports needed. Requires a DNS provider connected in Settings."
+                      : certMethod === "http-01"
+                      ? `Free trusted certificate. Needs port 80 reachable from the internet (forward TCP 80 → this server) and public DNS for ${domain}.`
+                      : "Instant, but browsers show a “not secure” warning. You can upgrade anytime from Certificates."}
+                  </div>
                 </div>
               )}
               {apply && !apply.ok && (
