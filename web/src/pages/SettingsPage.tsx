@@ -185,15 +185,15 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
       </div>
 
       <div className="card atable" style={{ marginBottom: 12 }}>
-        <div className="ahead" style={{ gridTemplateColumns: "1.6fr 1fr 0.7fr auto" }}>
-          <div>Restore point</div><div>When</div><div>Services</div><div />
+        <div className="ahead" style={{ gridTemplateColumns: "1.6fr 1fr 0.7fr 90px" }}>
+          <div>Restore point</div><div>When</div><div style={{ textAlign: "center" }}>Services</div><div />
         </div>
         {versions.slice(0, 8).map((v) => (
-          <div key={v.id} className="arow" style={{ gridTemplateColumns: "1.6fr 1fr 0.7fr auto" }}>
+          <div key={v.id} className="arow" style={{ gridTemplateColumns: "1.6fr 1fr 0.7fr 90px" }}>
             <div>{v.label} <span className="muted" style={{ fontSize: 11 }}>· {v.actor}</span></div>
             <div className="muted">{new Date(v.ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
-            <div className="muted">{v.hostCount}</div>
-            <button className="btn btn-ghost btn-sm" onClick={() => restore(v.id)}>Restore</button>
+            <div className="muted" style={{ textAlign: "center" }}>{v.hostCount}</div>
+            <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={() => restore(v.id)}>Restore</button>
           </div>
         ))}
         {versions.length === 0 && <div className="placeholder"><p>No restore points yet — they're captured automatically before each change.</p></div>}
@@ -285,8 +285,8 @@ function Notifications() {
       </div>
       <div className="card atable">
         {channels.map((c) => (
-          <div key={c.id} className="arow" style={{ gridTemplateColumns: "auto 1fr auto auto auto", gap: 12 }}>
-            <span className="pill n">{c.type}</span>
+          <div key={c.id} className="arow" style={{ gridTemplateColumns: "72px 1fr auto auto auto", gap: 12 }}>
+            <span className="pill n" style={{ justifySelf: "center" }}>{c.type}</span>
             <div><b>{c.name}</b> <span className="muted" style={{ fontSize: 11 }}>{c.lastStatus ?? "untested"}</span></div>
             <button className={`switch${c.enabled ? " on" : ""}`} onClick={async () => { await api.setChannelEnabled(c.id, !c.enabled); load(); }} />
             <button className="btn btn-ghost btn-sm" onClick={() => test(c.id)}>Test</button>

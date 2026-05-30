@@ -145,11 +145,11 @@ export function SecurityCenter() {
               </div>
               <div className="atable">
                 {bans.map((b) => (
-                  <div key={b.ip} className="arow" style={{ gridTemplateColumns: "1fr 1.4fr 0.8fr auto" }}>
+                  <div key={b.ip} className="arow" style={{ gridTemplateColumns: "1fr 1.4fr 0.8fr 80px" }}>
                     <div className="mono">{b.ip}</div>
                     <div className="muted">{b.reason}</div>
-                    <div><span className={`pill ${b.source === "auto" ? "r" : "n"}`}>{b.source}</span></div>
-                    <button className="btn btn-ghost btn-sm" onClick={async () => { await api.removeBan(b.ip); loadBans(); }}>Unban</button>
+                    <div style={{ textAlign: "center" }}><span className={`pill ${b.source === "auto" ? "r" : "n"}`}>{b.source}</span></div>
+                    <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={async () => { await api.removeBan(b.ip); loadBans(); }}>Unban</button>
                   </div>
                 ))}
                 {bans.length === 0 && <div className="placeholder"><p>No banned IPs. Brute-force attempts are auto-banned (5 fails in 5 min).</p></div>}

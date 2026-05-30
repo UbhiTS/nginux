@@ -97,10 +97,10 @@ export function AgentsApi() {
               <div className="card-head">Recent agent activity</div>
               <div className="atable">
                 {events.slice(0, 8).map((e) => (
-                  <div key={e.id} className="arow" style={{ gridTemplateColumns: "150px 1fr auto" }}>
+                  <div key={e.id} className="arow" style={{ gridTemplateColumns: "150px 1fr 130px" }}>
                     <div className="muted mono">{fmt(e.ts)}</div>
                     <div><b>{e.actor}</b> · {e.summary}</div>
-                    <span className="pill n">{e.type.replace("agent.", "")}</span>
+                    <span className="pill n" style={{ justifySelf: "center" }}>{e.type.replace("agent.", "")}</span>
                   </div>
                 ))}
                 {events.length === 0 && <div className="placeholder"><p>No agent activity yet.</p></div>}
@@ -137,8 +137,8 @@ function ApprovalsCard({ pending, decide }: { pending: Approval[]; decide: (id: 
     <div className="card">
       <div className="card-head">Pending approvals <span className="pill y">{pending.length}</span></div>
       {pending.map((a) => (
-        <div key={a.id} className="arow" style={{ gridTemplateColumns: "auto 1fr auto", gap: 14 }}>
-          <span className={`pill ${tier(a.tier).cls}`}>{tier(a.tier).label}</span>
+        <div key={a.id} className="arow" style={{ gridTemplateColumns: "84px 1fr auto", gap: 14 }}>
+          <span className={`pill ${tier(a.tier).cls}`} style={{ justifySelf: "center" }}>{tier(a.tier).label}</span>
           <div><b>{a.agent}</b> wants to <span className="mono">{a.summary}</span></div>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-sm btn-danger" onClick={() => decide(a.id, false)}>Deny</button>
@@ -329,11 +329,11 @@ function EventsTab({ origin }: { origin: string }) {
       </div>
       <div className="card atable">
         {webhooks.map((w) => (
-          <div key={w.id} className="arow" style={{ gridTemplateColumns: "1.6fr 1fr 1fr auto" }}>
+          <div key={w.id} className="arow" style={{ gridTemplateColumns: "1.6fr 1fr 1.1fr 70px" }}>
             <div className="mono">{w.url}</div>
             <div className="muted">{w.events.join(", ")}</div>
-            <div><span className="pill n">{w.lastStatus ?? "no deliveries"}</span></div>
-            <button className="btn btn-ghost btn-sm" onClick={async () => { await api.deleteWebhook(w.id); api.webhooks().then(setWebhooks); }}>Delete</button>
+            <div style={{ textAlign: "center" }}><span className="pill n">{w.lastStatus ?? "no deliveries"}</span></div>
+            <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={async () => { await api.deleteWebhook(w.id); api.webhooks().then(setWebhooks); }}>Delete</button>
           </div>
         ))}
         {webhooks.length === 0 && <div className="placeholder"><p>No webhooks yet.</p></div>}

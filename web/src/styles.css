@@ -277,6 +277,29 @@ button { font-family: inherit; cursor: pointer; }
 .cert-row:last-child { border: none; }
 .cert-domain { font-weight: 600; font-family: var(--mono); font-size: 12.5px; }
 
+/* Services list (Services page) + shared host cells (Security Center exposure) */
+.col-head, .host-row { display: grid; grid-template-columns: 1.8fr 1fr 1fr 1.2fr 90px; gap: 14px; align-items: center; padding: 12px 18px; }
+.col-head { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); font-weight: 600; border-bottom: 1px solid var(--border); }
+.host-row { border-bottom: 1px solid var(--border-soft); cursor: pointer; transition: background .12s; font-size: 13px; }
+.host-row:last-child { border-bottom: none; }
+.host-row:hover { background: var(--bg-elev2); }
+.host-row > button { justify-self: end; }
+.host-main { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.host-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--bg-elev2); display: grid; place-items: center; font-size: 18px; flex-shrink: 0; }
+.host-name { font-weight: 600; font-size: 14px; }
+.host-url { font-size: 12px; color: var(--text-dim); }
+.host-status-text { display: flex; align-items: center; gap: 8px; }
+.host-meta { display: flex; flex-direction: column; color: var(--text-dim); line-height: 1.55; }
+.host-meta .strong, .strong { font-weight: 600; color: var(--text); }
+
+/* MCP/agent endpoint rows */
+.endpoint { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 13px; }
+.endpoint .tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); flex-shrink: 0; }
+.endpoint .url { font-family: var(--mono); color: var(--text); word-break: break-all; }
+
+/* Settings section wrapper */
+.set-section { margin-bottom: 4px; }
+
 /* ---------- Topology tree ---------- */
 .topo { position: relative; display: grid; grid-template-columns: auto auto 1fr; gap: 64px; padding: 28px 26px; align-items: center; min-height: 280px; }
 .topo-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }

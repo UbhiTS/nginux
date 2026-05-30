@@ -45,8 +45,8 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout }: Props
         {item("dashboard", "Dashboard", Icon.dashboard)}
 
         <div
-          className={`nav-parent${svcOpen ? " open" : ""}`}
-          onClick={() => setSvcOpen((o) => !o)}
+          className={`nav-parent${svcOpen ? " open" : ""}${route.name === "services" ? " active" : ""}`}
+          onClick={() => navigate({ name: "services" })}
         >
           <button
             className="nav-add-btn"
@@ -60,7 +60,13 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout }: Props
           </button>
           Services
           <span className="svc-count">{hosts.length}</span>
-          <Icon.chevron className="nav-caret" />
+          <span
+            className="nav-caret-btn"
+            title={svcOpen ? "Collapse" : "Expand"}
+            onClick={(e) => { e.stopPropagation(); setSvcOpen((o) => !o); }}
+          >
+            <Icon.chevron className="nav-caret" />
+          </span>
         </div>
         <div className={`nav-children${svcOpen ? "" : " collapsed"}`}>
           {hosts.map((h) => (
