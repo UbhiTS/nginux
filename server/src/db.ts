@@ -14,6 +14,21 @@ const DB_PATH = join(DATA_DIR, "nginux.db");
 
 export const db = new DatabaseSync(DB_PATH);
 
+// Memoize prepared statements by SQL text. Every db.prepare(sql) in the codebase
+// reuses one compiled statement instead of recompiling on each call — a free win
+// on hot paths (session lookup, host list, audit insert, metrics, etc.). Safe
+// because node:sqlite is synchronous: a statement is bound + executed per call
+// with no overlapping iteration. DDL still goes through db.exec, untouched.
+{
+  const compile = db.prepare.bind(db);
+  const cache = new Map<string, ReturnType<typeof compile>>();
+  db.prepare = ((sql: string) => {
+    let stmt = cache.get(sql);
+    if (!stmt) { stmt = compile(sql); cache.set(sql, stmt); }
+    return stmt;
+  }) as typeof db.prepare;
+}
+
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;   -- safe + fast with WAL
