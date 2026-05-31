@@ -66,6 +66,8 @@
 body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
+/* Visible keyboard focus ring (mouse clicks don't trigger :focus-visible). */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------- Layout ---------- */
 .app { display: flex; min-height: 100vh; }

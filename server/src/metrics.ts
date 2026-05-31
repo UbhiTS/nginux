@@ -130,9 +130,13 @@ export function recentLogs(filter?: string, limit = 200): LogEntry[] {
   return out;
 }
 
-function percentile(p: number): number {
-  if (msSamples.length === 0) return 0;
-  const sorted = [...msSamples].sort((a, b) => a - b);
+// Sort the latency samples ONCE per caller, then read any percentile off it —
+// summary() and prometheus() each need p50 + p95, so this halves the sorts.
+function sortedMs(): number[] {
+  return msSamples.length ? [...msSamples].sort((a, b) => a - b) : [];
+}
+function percentileOf(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
   return Math.round(sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]);
 }
 
@@ -142,13 +146,14 @@ function topN(map: Map<string, number>, n: number) {
 
 export function summary() {
   const errors = statusClass["4xx"] + statusClass["5xx"];
+  const sorted = sortedMs();
   return {
     totalRequests,
     totalBytes,
     statusClass,
     errorRate: totalRequests ? +((errors / totalRequests) * 100).toFixed(2) : 0,
-    p50: percentile(50),
-    p95: percentile(95),
+    p50: percentileOf(sorted, 50),
+    p95: percentileOf(sorted, 95),
     topHosts: topN(byHost, 6),
     topIps: topN(byIp, 6),
     topPaths: topN(byPath, 6),
@@ -320,8 +325,9 @@ export function prometheus(): string {
   for (const [host, n] of byHost) lines.push(`nginux_requests_by_host_total{host="${escLabel(host)}"} ${n}`);
   lines.push("# HELP nginux_response_ms Response time percentiles.");
   lines.push("# TYPE nginux_response_ms gauge");
-  lines.push(`nginux_response_ms{quantile="0.5"} ${percentile(50)}`);
-  lines.push(`nginux_response_ms{quantile="0.95"} ${percentile(95)}`);
+  const sorted = sortedMs();
+  lines.push(`nginux_response_ms{quantile="0.5"} ${percentileOf(sorted, 50)}`);
+  lines.push(`nginux_response_ms{quantile="0.95"} ${percentileOf(sorted, 95)}`);
   return lines.join("\n") + "\n";
 }
 
