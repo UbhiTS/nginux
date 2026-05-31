@@ -39,9 +39,13 @@ export function App() {
   }, []);
 
   const reload = useCallback(async () => {
-    const [h, s] = await Promise.all([api.listHosts(), api.settings()]);
-    setHosts(h);
-    setSettings(s);
+    // Don't let a transient backend hiccup throw an unhandled rejection that
+    // leaves the UI on a stale/empty shell — fail soft and keep what we have.
+    try {
+      const [h, s] = await Promise.all([api.listHosts(), api.settings()]);
+      setHosts(h);
+      setSettings(s);
+    } catch { /* keep previous state; individual pages surface their own errors */ }
   }, []);
 
   // Load app data once signed in.
@@ -64,7 +68,14 @@ export function App() {
     setUser(await api.me());
   }, []);
 
-  if (!authChecked) return null;
+  if (!authChecked) {
+    return (
+      <div style={{ display: "grid", placeItems: "center", height: "100vh", gap: 14, color: "var(--text-dim)" }}>
+        <img src="/favicon.svg" alt="" width={44} height={44} style={{ borderRadius: 10 }} />
+        <span className="spinner" />
+      </div>
+    );
+  }
   if (!user) return <Login onSignedIn={setUser} />;
   if (user.mustChangePassword) return <ChangePassword user={user} onChanged={setUser} />;
 

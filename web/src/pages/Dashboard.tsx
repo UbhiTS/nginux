@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import type { Route } from "../App.tsx";
-import { api } from "../api.ts";
+import { api, type MetricsSummary } from "../api.ts";
 import type { ProxyHost, Topology as TopologyData } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { NetworkTraffic } from "../components/NetworkTraffic.tsx";
+
+const fmtCount = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
 
 export function Dashboard({
   hosts,
@@ -13,9 +15,13 @@ export function Dashboard({
   navigate: (r: Route) => void;
 }) {
   const [topology, setTopology] = useState<TopologyData | null>(null);
+  const [summary, setSummary] = useState<MetricsSummary | null>(null);
 
   useEffect(() => {
     api.topology().then(setTopology).catch(() => setTopology(null));
+    // Real traffic numbers; only admin/editor can read metrics, so a readonly
+    // user simply sees "—" rather than a fabricated figure.
+    api.metricsSummary().then(setSummary).catch(() => setSummary(null));
   }, [hosts]);
 
   const online = hosts.filter((h) => h.enabled && h.health === "online").length;
@@ -29,6 +35,31 @@ export function Dashboard({
     ? Math.min(...withCert.map((h) => days(h.certExpiresAt!)))
     : null;
   const unprotected = hosts.filter((h) => h.ssl && !h.requireLogin).length;
+
+  // Fresh install: a welcoming hero beats a grid of zeros + an empty map.
+  if (hosts.length === 0) {
+    return (
+      <>
+        <div className="topbar">
+          <h1>Dashboard</h1>
+        </div>
+        <div className="content">
+          <div className="card" style={{ textAlign: "center", padding: "52px 24px" }}>
+            <div style={{ fontSize: 40 }}>🚀</div>
+            <h2 style={{ marginTop: 12 }}>Welcome to NginUX</h2>
+            <p className="muted" style={{ maxWidth: 460, margin: "10px auto 22px", lineHeight: 1.6 }}>
+              Let's get your first service online. Point a domain at an app on your network and
+              NginUX sets up the reverse proxy and a free HTTPS certificate for you — about a minute, no nginx config required.
+            </p>
+            <button className="btn btn-primary" onClick={() => navigate({ name: "wizard" })}>
+              <Icon.plus />
+              Expose your first service
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -78,12 +109,14 @@ export function Dashboard({
           <div className="card stat">
             <div className="label">
               <Icon.chart />
-              Traffic today
+              Requests
             </div>
             <div className="value">
-              142k <small>reqs</small>
+              {summary ? fmtCount(summary.totalRequests) : "—"} <small>total</small>
             </div>
-            <div className="trend">12% vs yesterday</div>
+            <div className="trend" style={{ color: summary && summary.errorRate > 5 ? "var(--yellow)" : "var(--text-dim)" }}>
+              {summary ? `${summary.errorRate}% errors · ${summary.p95}ms p95` : "Since the proxy started"}
+            </div>
           </div>
 
           <div className="card stat">

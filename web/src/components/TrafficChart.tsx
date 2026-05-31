@@ -21,7 +21,6 @@ export function TrafficChart({ range, metric, host }: { range: string; metric: "
             <div style={{ display: "flex", gap: 26, marginBottom: 12, alignItems: "flex-start" }}>
               <Metric label={(metric === "bandwidth" ? "Bandwidth" : "Requests") + (host ? ` · ${host}` : "")} value={traffic.total} />
               <Metric label="Peak" value={traffic.peak} suffix={traffic.unit} />
-              <Metric label="Avg p95" value="112" suffix="ms" />
               {metric === "bandwidth" && (
                 <div style={{ marginLeft: "auto", display: "flex", gap: 14, fontSize: 11, color: "var(--text-dim)", alignSelf: "center" }}>
                   <span><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: 2, background: "var(--accent)", marginRight: 5 }} />Out (response)</span>
