@@ -564,7 +564,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
               <label>Create or import a certificate for {draft.domain}</label>
               <div className="input-group">
                 <select className="input" value={leMethod} onChange={(e) => setLeMethod(e.target.value as CertMethod)} disabled={!!certBusy}>
-                  <option value="dns-01">Let's Encrypt (DNS) — trusted, needs a DNS provider</option>
+                  {hasDnsProvider && <option value="dns-01">Let's Encrypt (DNS) — trusted, no open ports needed</option>}
                   <option value="http-01">Let's Encrypt (HTTP) — trusted, needs port 80 + public DNS</option>
                   <option value="selfsigned">Self-signed — instant, not browser-trusted</option>
                 </select>

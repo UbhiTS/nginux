@@ -111,6 +111,14 @@ export function SettingsPage({
                   <label>GoDaddy API secret</label>
                   <input className="input" type="password" value={settings.godaddySecret} onChange={(e) => update({ godaddySecret: e.target.value })} placeholder="secret" />
                 </div>
+                <div className="info-line" style={{ marginTop: 12, alignItems: "flex-start" }}>
+                  <Icon.alert />
+                  <span>
+                    Heads-up: per GoDaddy's developer docs, their Domains API only works on accounts with
+                    <b> 10 or more domains</b> (or a Discount Domain Club membership). With fewer, the API returns
+                    <b> ACCESS_DENIED</b> and DNS-01 validation will fail — use <b>HTTP validation</b> or <b>Cloudflare</b> instead.
+                  </span>
+                </div>
               </>
             )}
             {settings.dnsProvider === "cloudflare" && (

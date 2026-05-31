@@ -349,7 +349,7 @@ export function Wizard({
                         {existingCert && (
                           <option value="existing">Use existing — {existingCert.domain} ({existingCert.method === "selfsigned" ? "self-signed" : existingCert.issuer || "Let's Encrypt"})</option>
                         )}
-                        <option value="dns-01">Let's Encrypt (DNS) — trusted, needs a DNS provider</option>
+                        {hasDnsProvider && <option value="dns-01">Let's Encrypt (DNS) — trusted, no open ports needed</option>}
                         <option value="http-01">Let's Encrypt (HTTP) — trusted, needs port 80 + public DNS</option>
                         <option value="selfsigned">Self-signed — instant, not trusted</option>
                       </select>
