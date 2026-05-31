@@ -239,7 +239,7 @@ export function Wizard({
                         </div>
                       ))}
                 </div>
-                {preset && (
+                {preset && (!term || matches.some((m) => m.id === preset.id)) && (
                   <div className="info-line" style={{ marginTop: 14 }}>
                     <Icon.info />
                     <span><b>{preset.label}</b> — {preset.notes}</span>
