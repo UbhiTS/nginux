@@ -9,8 +9,13 @@ Nginx config, manages TLS certificates, gates services behind login/2FA, watches
 traffic, and exposes a first-class agent/automation API — all from a single
 Docker image that runs anywhere Docker runs (Windows, Linux, NAS, macOS).
 
-> Status: working application, locally verified. A few features are
-> credential- or infrastructure-gated (see [Roadmap](#roadmap)).
+It's a friendlier alternative to hand-written nginx, Nginx Proxy Manager, or
+SWAG — with a built-in agent/MCP API on top. One `docker compose up`, no nginx
+config required.
+
+> ⚠️ **Keep the control plane (`:4600`) on your LAN — never port-forward it.**
+> Only the data plane (`:80`/`:443`) should face the internet, and set a strong
+> admin password before exposing anything. See [Deploying securely](SECURITY.md#deploying-securely).
 
 ---
 
@@ -128,9 +133,10 @@ npm run cli -- <command>
 - **Risk-tiered tools** (read / low / medium / high) with optional auto-approval
   for trusted agents and a human **approval queue** for the rest.
 - **SSE event stream** (`/api/events/sse`) and **HMAC-signed outbound webhooks**.
-- Built-in tools: `list_services`, `get_service`, `get_security_audit`,
-  `list_certificates`, `get_health`, `issue_cert`, `renew_cert`, `create_service`,
-  `update_service`, `disable_login`, `delete_service`.
+- **30+ built-in tools** spanning services (list/create/update/enable/delete),
+  certificates (issue/renew/autorenew/client-certs), GeoIP, bans, metrics, logs,
+  topology, presets, users, and settings — each scope- and risk-tiered, and only
+  ever exposed to a caller that holds the matching scope.
 
 ### Observability
 - Nginx **JSON access log** → tailer → in-memory ring buffer + rolling aggregates
@@ -251,7 +257,8 @@ entered in **Settings** at runtime — never baked into the image.
 
 ## Security model
 
-NginUX is built defense-in-depth, suitable for an internet-exposed control plane:
+NginUX is built defense-in-depth. The control plane is meant to live on your LAN
+(see the warning at the top) — these are the protections it ships with:
 
 - **Authentication:** scrypt password hashing with per-user salt and constant-time
   comparison; CSPRNG session tokens (256-bit) in `HttpOnly`/`SameSite=Lax`/`Secure`
@@ -285,6 +292,11 @@ Built and verified locally. Remaining items are gated on external infrastructure
 
 ---
 
+## Contributing & security
+
+Issues and PRs welcome. For security reports, please use private disclosure —
+see [SECURITY.md](SECURITY.md).
+
 ## License
 
-Private / unpublished.
+[MIT](LICENSE) © Tarunpreet Ubhi
