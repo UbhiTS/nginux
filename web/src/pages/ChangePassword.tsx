@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, type AuthUser } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { BrandLogo } from "../components/BrandLogo.tsx";
 
 /** Forced on first login when the account still has the default password. */
 export function ChangePassword({ user, onChanged }: { user: AuthUser; onChanged: (u: AuthUser) => void }) {
@@ -30,9 +31,9 @@ export function ChangePassword({ user, onChanged }: { user: AuthUser; onChanged:
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 }}>
       <div className="card" style={{ width: 380, padding: 32 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22 }}>
-          <img className="brand-logo" src="/favicon.svg" alt="NginUX" />
+          <BrandLogo className="brand-logo" />
           <div className="brand-name">
-            NginUX<small>reverse proxy, simplified</small>
+            NginUX<small>your homelab's front door</small>
           </div>
         </div>
         <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Set a new password</h2>

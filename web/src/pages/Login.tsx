@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, type AuthUser } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { BrandLogo } from "../components/BrandLogo.tsx";
 
 export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
   const [username, setUsername] = useState("");
@@ -33,9 +34,9 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 }}>
       <div className="card" style={{ width: 380, padding: 32 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22 }}>
-          <img className="brand-logo" src="/favicon.svg" alt="NginUX" />
+          <BrandLogo className="brand-logo" />
           <div className="brand-name">
-            NginUX<small>reverse proxy, simplified</small>
+            NginUX<small>your homelab's front door</small>
           </div>
         </div>
         <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
