@@ -199,6 +199,10 @@ button { font-family: inherit; cursor: pointer; }
 .preset.selected { border-color: var(--accent); background: var(--accent-soft); }
 .preset .emoji { font-size: 26px; }
 .preset .pname { font-weight: 600; font-size: 12.5px; margin-top: 7px; }
+/* Scrollable, category-grouped app picker (scales past a single screenful). */
+.preset-scroll { max-height: 360px; overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }
+.preset-cat { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); font-weight: 600; margin: 14px 2px 8px; }
+.preset-cat:first-child { margin-top: 2px; }
 
 .info-line { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-dim); }
 .info-line svg { width: 14px; height: 14px; color: var(--accent); flex-shrink: 0; }

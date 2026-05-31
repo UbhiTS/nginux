@@ -66,6 +66,7 @@ export interface Preset {
   id: string;
   label: string;
   emoji: string;
+  category: string;
   websockets: boolean;
   http2: boolean;
   extraDirectives: string[];

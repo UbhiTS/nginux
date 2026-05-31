@@ -36,6 +36,7 @@ export function Wizard({
   const [step, setStep] = useState(1);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [preset, setPreset] = useState<Preset | null>(null);
+  const [q, setQ] = useState(""); // app search on the picker step
   const [forward, setForward] = useState("http://192.168.1.50:32400");
   const [test, setTest] = useState<{ reachable: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
@@ -196,36 +197,51 @@ export function Wizard({
         <div className="wizard-wrap">
           <Stepper step={step} />
 
-          {step === 1 && (
-            <div className="card wcard">
-              <h2>What do you want to expose?</h2>
-              <p className="wsub">Pick the app you're running — we'll apply the right settings automatically.</p>
-              <div className="preset-grid">
-                {presets.map((p) => (
-                  <div
-                    key={p.id}
-                    className={`preset${preset?.id === p.id ? " selected" : ""}`}
-                    onClick={() => setPreset(p)}
-                  >
-                    <div className="emoji">{p.emoji}</div>
-                    <div className="pname">{p.label}</div>
-                  </div>
-                ))}
+          {step === 1 && (() => {
+            const card = (p: Preset) => (
+              <div key={p.id} className={`preset${preset?.id === p.id ? " selected" : ""}`} onClick={() => setPreset(p)}>
+                <div className="emoji">{p.emoji}</div>
+                <div className="pname">{p.label}</div>
               </div>
-              {preset && (
-                <div className="info-line" style={{ marginTop: 14 }}>
-                  <Icon.info />
-                  {preset.notes}
+            );
+            const term = q.trim().toLowerCase();
+            const matches = presets.filter((p) => `${p.label} ${p.id} ${p.category} ${p.notes}`.toLowerCase().includes(term));
+            const cats = [...new Set(presets.map((p) => p.category))]; // preset order is already category-grouped
+            return (
+              <div className="card wcard">
+                <h2>What do you want to expose?</h2>
+                <p className="wsub">Pick the app you're running — we'll apply the right settings. Not listed? Choose <b>Custom</b>.</p>
+                <div className="search" style={{ maxWidth: "none", marginBottom: 14 }}>
+                  <Icon.search />
+                  <input placeholder="Search apps — Plex, Immich, Home Assistant…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
                 </div>
-              )}
-              <div className="wnav">
-                <span />
-                <button className="btn btn-primary" disabled={!preset} onClick={() => setStep(2)}>
-                  Continue <Icon.arrowRight />
-                </button>
+                <div className="preset-scroll">
+                  {term
+                    ? matches.length
+                      ? <div className="preset-grid">{matches.map(card)}</div>
+                      : <div className="muted" style={{ fontSize: 13, padding: "10px 2px" }}>No match for “{q}”. Pick <b>Custom / Generic</b> and set it up manually.</div>
+                    : cats.map((cat) => (
+                        <div key={cat}>
+                          <div className="preset-cat">{cat}</div>
+                          <div className="preset-grid">{presets.filter((p) => p.category === cat).map(card)}</div>
+                        </div>
+                      ))}
+                </div>
+                {preset && (
+                  <div className="info-line" style={{ marginTop: 14 }}>
+                    <Icon.info />
+                    <span><b>{preset.label}</b> — {preset.notes}</span>
+                  </div>
+                )}
+                <div className="wnav">
+                  <span />
+                  <button className="btn btn-primary" disabled={!preset} onClick={() => setStep(2)}>
+                    Continue <Icon.arrowRight />
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {step === 2 && (
             <div className="card wcard">
