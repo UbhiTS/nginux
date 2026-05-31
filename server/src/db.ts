@@ -188,11 +188,13 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS client_certs (
     id          TEXT PRIMARY KEY,
     hostId      TEXT NOT NULL,
+    domain      TEXT NOT NULL DEFAULT '',
     name        TEXT NOT NULL,
     serial      TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     notAfter    TEXT NOT NULL,
-    createdAt   TEXT NOT NULL
+    createdAt   TEXT NOT NULL,
+    revokedAt   TEXT
   );
 
   CREATE TABLE IF NOT EXISTS bans (
@@ -213,50 +215,6 @@ db.exec(`
     hostCount INTEGER NOT NULL DEFAULT 0
   );
 `);
-
-// Add any columns missing from an older hosts table (idempotent migration).
-function migrateHosts() {
-  const cols = new Set((db.prepare("PRAGMA table_info(hosts)").all() as Record<string, unknown>[]).map((c) => String(c.name)));
-  const additions: [string, string][] = [
-    ["maintenanceMode", "INTEGER NOT NULL DEFAULT 0"],
-    ["securityHeaders", "INTEGER NOT NULL DEFAULT 1"],
-    ["hsts", "INTEGER NOT NULL DEFAULT 0"],
-    ["rateLimit", "INTEGER NOT NULL DEFAULT 0"],
-    ["blockExploits", "INTEGER NOT NULL DEFAULT 0"],
-    ["ipAllow", "TEXT NOT NULL DEFAULT ''"],
-    ["ipDeny", "TEXT NOT NULL DEFAULT ''"],
-    ["customHeaders", "TEXT NOT NULL DEFAULT ''"],
-    ["customNginx", "TEXT NOT NULL DEFAULT ''"],
-    ["upstreams", "TEXT NOT NULL DEFAULT ''"],
-    ["lbMethod", "TEXT NOT NULL DEFAULT 'round_robin'"],
-    ["protocol", "TEXT NOT NULL DEFAULT 'http'"],
-    ["listenPort", "INTEGER NOT NULL DEFAULT 0"],
-    ["pathRules", "TEXT NOT NULL DEFAULT ''"],
-    ["mtls", "INTEGER NOT NULL DEFAULT 0"],
-    ["rateLimitKbps", "INTEGER NOT NULL DEFAULT 0"],
-    ["maxConns", "INTEGER NOT NULL DEFAULT 0"],
-  ];
-  for (const [name, def] of additions) {
-    if (!cols.has(name)) db.exec(`ALTER TABLE hosts ADD COLUMN ${name} ${def}`);
-  }
-}
-migrateHosts();
-
-// Idempotent migration for older users tables.
-function migrateUsers() {
-  const cols = new Set((db.prepare("PRAGMA table_info(users)").all() as Record<string, unknown>[]).map((c) => String(c.name)));
-  if (!cols.has("mustChangePassword")) db.exec("ALTER TABLE users ADD COLUMN mustChangePassword INTEGER NOT NULL DEFAULT 0");
-}
-migrateUsers();
-
-// client_certs gains a per-CA domain and a soft-delete revocation timestamp so
-// revoked certs can be published in a CRL (and not silently dropped).
-function migrateClientCerts() {
-  const cols = new Set((db.prepare("PRAGMA table_info(client_certs)").all() as Record<string, unknown>[]).map((c) => String(c.name)));
-  if (!cols.has("domain")) db.exec("ALTER TABLE client_certs ADD COLUMN domain TEXT NOT NULL DEFAULT ''");
-  if (!cols.has("revokedAt")) db.exec("ALTER TABLE client_certs ADD COLUMN revokedAt TEXT");
-}
-migrateClientCerts();
 
 // Indexes on hot query paths (filtered/ordered scans that grow over time).
 db.exec(`

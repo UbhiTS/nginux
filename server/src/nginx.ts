@@ -167,7 +167,8 @@ export function generateHostConfig(h: ProxyHost): string {
 `
     : "";
 
-  // GeoIP country lock (Phase 2 wires the real geo map; placeholder var here).
+  // GeoIP country lock: $nginux_allowed_country is defined by geoip.conf
+  // (allow-all when no MaxMind DB; real per-country map when present).
   const geoBlock = h.countryLock
     ? `
     if ($nginux_allowed_country = 0) { return 403; }`

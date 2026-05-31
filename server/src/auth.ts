@@ -41,16 +41,11 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  let params = { N: 1 << 14, r: 8, p: 1 }; // legacy default for the old "salt:hash" format
-  let saltHex: string | undefined, hashHex: string | undefined;
-  if (stored.startsWith("scrypt$")) {
-    const [, n, r, p, s, h] = stored.split("$");
-    params = { N: Number(n), r: Number(r), p: Number(p) };
-    saltHex = s; hashHex = h;
-  } else {
-    [saltHex, hashHex] = stored.split(":");
-  }
-  if (!saltHex || !hashHex || !params.N) return false;
+  // Format: scrypt$N$r$p$saltHex$hashHex
+  const [tag, n, r, p, saltHex, hashHex] = stored.split("$");
+  if (tag !== "scrypt" || !saltHex || !hashHex) return false;
+  const params = { N: Number(n), r: Number(r), p: Number(p) };
+  if (!params.N || !params.r || !params.p) return false;
   const hash = await scryptAsync(password, Buffer.from(saltHex, "hex"), 64, params);
   const expected = Buffer.from(hashHex, "hex");
   return hash.length === expected.length && timingSafeEqual(hash, expected);

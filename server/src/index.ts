@@ -49,6 +49,7 @@ import {
 } from "./auth.ts";
 import type { ProxyHost } from "./types.ts";
 import { otpauthURL, verifyTotp, verifyTotpCounter } from "./totp.ts";
+import { VERSION } from "./version.ts";
 import {
   AcmeError,
   deleteCert,
@@ -385,7 +386,7 @@ app.get("/api/health", async (_req, reply) => {
   return reply.code(db ? 200 : 503).send({
     status: db ? "ok" : "degraded",
     service: "nginux",
-    version: "0.1.0",
+    version: VERSION,
     db,
     time: new Date().toISOString(),
   });
@@ -617,7 +618,7 @@ app.post("/api/config/versions/:id/restore", async (req, reply) => {
 });
 app.get("/api/config/export", async (req, reply) => {
   if (!requireAdmin(req, reply)) return; // full dump includes provider secrets
-  return { version: "0.1.0", exportedAt: new Date().toISOString(), hosts: listHosts(), settings: getSettings() };
+  return { version: VERSION, exportedAt: new Date().toISOString(), hosts: listHosts(), settings: getSettings() };
 });
 app.post("/api/config/import", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;

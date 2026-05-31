@@ -1,8 +1,9 @@
 name: Release
 
-# On every push to main: bump the patch version (v0.0.1 -> v0.0.2 -> ...),
+# On every push to main: bump the patch version (v1.0.0 -> v1.0.1 -> ...),
 # build the Docker image, publish it to GHCR, then tag the commit and cut a
 # GitHub Release. Uses only the built-in GITHUB_TOKEN — no secrets required.
+# v1.0.0 is the baseline release; with no prior tags the first run cuts v1.0.0.
 on:
   push:
     branches: [main]
@@ -47,7 +48,7 @@ jobs:
           git fetch --tags --force
           latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1)"
           if [ -z "$latest" ]; then
-            next="v0.0.1"
+            next="v1.0.0"
           else
             ver="${latest#v}"
             major="${ver%%.*}"; rest="${ver#*.}"

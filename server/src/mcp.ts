@@ -2,6 +2,7 @@ import { listEvents, securityOverview } from "./auth.ts";
 import { listHosts } from "./repo.ts";
 import { listCerts } from "./certs.ts";
 import { callTool, toolCatalog, type Principal } from "./tools.ts";
+import { VERSION } from "./version.ts";
 
 const PROTOCOL_VERSION = "2024-11-05";
 
@@ -48,7 +49,7 @@ export async function handleMcp(principal: Principal, msg: JsonRpcRequest): Prom
       return ok(id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {}, resources: {}, prompts: {} },
-        serverInfo: { name: "nginux", version: "0.1.0" },
+        serverInfo: { name: "nginux", version: VERSION },
       });
 
     case "notifications/initialized":
