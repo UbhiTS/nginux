@@ -422,9 +422,9 @@ export function Topology({
                       return (
                         <div className="svc-metrics">
                           <span className="m-req" title={range === "live" ? "Requests in the last 60s (in sync with the live graph below)" : undefined}>{fmtCount(st.requests)} req</span>
-                          <span className="m-bw" title="↑ upload (into your services) · ↓ download (out to visitors)">
-                            <span className="bw-dir"><Icon.arrowUp className="bw-arr" />{range === "live" ? fmtMbps(st.bytesIn) : fmtBytes(st.bytesIn)}</span>
-                            <span className="bw-dir"><Icon.arrowDown className="bw-arr" />{range === "live" ? fmtMbps(st.bytesOut) : fmtBytes(st.bytesOut)}</span>
+                          <span className="m-bw" title="→ incoming (into your services) · ← outgoing (out to visitors)">
+                            <span className="bw-dir"><Icon.arrowRight className="bw-arr" />{range === "live" ? fmtMbps(st.bytesIn) : fmtBytes(st.bytesIn)}</span>
+                            <span className="bw-dir"><Icon.arrowLeft className="bw-arr" />{range === "live" ? fmtMbps(st.bytesOut) : fmtBytes(st.bytesOut)}</span>
                             {range === "live" && <span className="bw-unit">Mbps</span>}
                           </span>
                         </div>
