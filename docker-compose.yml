@@ -16,6 +16,12 @@ services:
       - nginux-data:/data # sqlite db, generated nginx config, certs
     environment:
       - LOG_LEVEL=info
+      # Run as your host user so everything NginUX writes to the volume is owned
+      # by you (manageable over SMB / your NAS file browser), like other
+      # self-hosted containers. Set these to match your user — often 1000:1000;
+      # check with `id`. Set both to 0 to run everything as root (legacy).
+      - PUID=1000
+      - PGID=1000
       # Trust X-Forwarded-For only from loopback (the bundled nginx's auth
       # subrequests), so real client IPs are recorded without letting a direct
       # :4600 client spoof them. Keep :4600 on the LAN — never port-forward it to

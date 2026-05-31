@@ -26,7 +26,10 @@ WORKDIR /app
 
 # nginx is the data plane; openssl bootstraps the self-signed cert; tini is a
 # proper init (PID 1) that reaps zombies and forwards signals to both processes.
-RUN apk add --no-cache nginx nginx-mod-stream nginx-mod-http-geoip2 libmaxminddb openssl tini
+# setpriv (util-linux) drops the runtime user to PUID/PGID while keeping the
+# NET_BIND_SERVICE ambient capability so nginx can still bind :80/:443 unprivileged
+# (works under no-new-privileges, where setcap file-caps would be neutralised).
+RUN apk add --no-cache nginx nginx-mod-stream nginx-mod-http-geoip2 libmaxminddb openssl tini setpriv
 
 # prod-only deps + app code (server runs straight from TS via type-stripping)
 COPY --from=deps /app/node_modules ./node_modules
