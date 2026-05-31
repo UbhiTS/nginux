@@ -61,14 +61,20 @@ export function totp(secret: string, time = Date.now(), step = 30): string {
 
 /** Verify a token allowing ±`window` time steps for clock drift. */
 export function verifyTotp(token: string, secret: string, window = 1): boolean {
+  return verifyTotpCounter(token, secret, window) >= 0;
+}
+
+/** Like verifyTotp but returns the matched time-step counter (or -1). The caller
+ *  can persist the last-consumed counter to reject replays within the window. */
+export function verifyTotpCounter(token: string, secret: string, window = 1): number {
   const t = token.trim();
-  if (!/^\d{6}$/.test(t)) return false;
+  if (!/^\d{6}$/.test(t)) return -1;
   const counter = Math.floor(Date.now() / 1000 / 30);
   for (let w = -window; w <= window; w++) {
     const expected = hotp(secret, counter + w);
-    if (timingSafeEqual(Buffer.from(expected), Buffer.from(t))) return true;
+    if (timingSafeEqual(Buffer.from(expected), Buffer.from(t))) return counter + w;
   }
-  return false;
+  return -1;
 }
 
 export function otpauthURL(secret: string, account: string, issuer = "NginUX"): string {

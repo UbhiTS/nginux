@@ -53,6 +53,9 @@ export async function changePassword(userId: string, currentPassword: string, ne
   if (!r) return false;
   if (!(await verifyPassword(currentPassword, String(r.passwordHash)))) return false;
   db.prepare("UPDATE users SET passwordHash = ?, mustChangePassword = 0 WHERE id = ?").run(await hashPassword(newPassword), userId);
+  // Invalidate every existing session (a stolen one must not survive a password
+  // change). The caller re-issues a fresh session for the current request.
+  destroyUserSessions(userId);
   return true;
 }
 

@@ -48,7 +48,7 @@ import {
   type User,
 } from "./auth.ts";
 import type { ProxyHost } from "./types.ts";
-import { otpauthURL, verifyTotp } from "./totp.ts";
+import { otpauthURL, verifyTotp, verifyTotpCounter } from "./totp.ts";
 import {
   AcmeError,
   deleteCert,
@@ -710,6 +710,12 @@ app.get("/api/logs/stream", (req, reply) => {
 const LOGIN_MAX = 10;          // attempts
 const LOGIN_WINDOW_MS = 60_000; // per minute, per key (ip + username)
 const loginHits = new Map<string, number[]>();
+// Per-account 2FA brute-force lockout + TOTP replay guard (in-memory; the window
+// is short so a restart clearing them is harmless).
+const TWOFA_MAX_FAILS = 5;
+const TWOFA_LOCK_MS = 5 * 60_000;
+const twofaFails = new Map<string, { n: number; until: number }>();
+const totpUsed = new Map<string, number>(); // userId -> last consumed time-step
 function rateLimited(key: string, max: number, windowMs: number): boolean {
   const now = Date.now();
   const hits = (loginHits.get(key) ?? []).filter((t) => now - t < windowMs);
@@ -741,13 +747,29 @@ app.post("/api/auth/login", async (req, reply) => {
 
   if (row.twofaEnabled) {
     if (!token) return reply.send({ twofaRequired: true });
-    const secret = getTwofaSecret(String(row.id));
-    // Accept a TOTP code or a one-time backup code.
-    const ok = (secret && verifyTotp(token, secret)) || useBackupCode(String(row.id), token);
+    const uid = String(row.id);
+    // Per-account 2FA lockout, independent of source IP (so rotating IPs can't
+    // multiply guesses against one account).
+    const lock = twofaFails.get(uid);
+    if (lock && lock.until > Date.now()) {
+      logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "2FA locked — too many wrong codes", ip, meta: {} });
+      return reply.code(429).send({ error: "Too many 2FA attempts. Wait a few minutes.", twofaRequired: true });
+    }
+    const secret = getTwofaSecret(uid);
+    // Accept a TOTP code (rejecting replay of an already-used step) or a one-time backup code.
+    const counter = secret ? verifyTotpCounter(token, secret) : -1;
+    const totpOk = counter >= 0 && counter > (totpUsed.get(uid) ?? -1);
+    const ok = totpOk || useBackupCode(uid, token);
     if (!ok) {
+      const f = twofaFails.get(uid) ?? { n: 0, until: 0 };
+      f.n += 1;
+      if (f.n >= TWOFA_MAX_FAILS) { f.until = Date.now() + TWOFA_LOCK_MS; f.n = 0; }
+      twofaFails.set(uid, f);
       logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Incorrect 2FA code", ip, meta: {} });
       return reply.code(401).send({ error: "That 2FA code didn't match.", twofaRequired: true });
     }
+    if (totpOk) totpUsed.set(uid, counter); // burn this step so it can't be replayed
+    twofaFails.delete(uid);
   }
 
   const sessionToken = createSession(String(row.id), device(req), ip);
@@ -783,7 +805,12 @@ app.get("/api/auth/forward", async (req, reply) => {
   const originalHost = (req.headers["x-original-host"] as string) || (req.headers["x-forwarded-host"] as string);
   if (originalHost) {
     const host = getHostByDomain(originalHost.split(":")[0]);
-    if (host?.require2fa && !u.twofaEnabled) return reply.code(401).send({ ok: false });
+    if (host) {
+      if (host.require2fa && !u.twofaEnabled) return reply.code(401).send({ ok: false });
+      // A scoped user only passes the per-host login gate for hosts in their
+      // scope — otherwise one NginUX login would unlock every protected app.
+      if (u.role === "scoped" && !scopedAllows(u, host)) return reply.code(403).send({ ok: false });
+    }
   }
   return reply.code(200).send({ ok: true });
 });
@@ -802,6 +829,10 @@ app.post("/api/auth/change-password", async (req, reply) => {
   if (!(await changePassword(u.id, parsed.data.currentPassword, parsed.data.newPassword))) {
     return reply.code(400).send({ error: "Your current password is incorrect." });
   }
+  // changePassword revoked all sessions; issue a fresh one so the current client
+  // stays signed in while any other (possibly stolen) sessions are now dead.
+  const fresh = createSession(u.id, device(req), clientIp(req));
+  reply.header("set-cookie", sessionCookie(fresh, cookieSecure(req.protocol === "https")));
   logEvent({ type: "security.password_changed", severity: "notice", actor: u.username, summary: "Changed account password", ip: clientIp(req), meta: {} });
   return { ok: true, user: getUserById(u.id) };
 });
@@ -1188,6 +1219,9 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   app.log.info(`NginUX control plane on http://${HOST}:${PORT}`);
   if (seeded.usingDefault) {
     app.log.warn(`First run — default login is "admin" / "admin". You'll be required to set a new password on first sign-in.`);
+  }
+  if (process.env.NODE_ENV === "production" && !FORWARD_SECRET) {
+    app.log.warn("NGINUX_FORWARD_SECRET is not set — set it so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
   }
   // Render the data plane on boot so nginx serves the managed hosts.
   const result = await applyConfig();
