@@ -12,6 +12,7 @@ import {
   deleteHost,
   getHost,
   getHostByDomain,
+  getHostByDomainCached,
   getTopology,
   listHosts,
   updateHost,
@@ -30,6 +31,7 @@ import {
   deleteUser,
   destroySession,
   enableTwofa,
+  getLastTotpCounter,
   getTwofaSecret,
   getUserById,
   listEvents,
@@ -40,6 +42,7 @@ import {
   seedAuthIfEmpty,
   securityExposure,
   securityOverview,
+  setLastTotpCounter,
   useBackupCode,
   SESSION_COOKIE,
   sessionCookie,
@@ -554,8 +557,13 @@ app.put("/api/hosts/:id", async (req, reply) => {
 app.delete("/api/hosts/:id", async (req, reply) => {
   if (!requireRole(req, reply, "admin", "editor")) return;
   const { id } = req.params as { id: string };
+  const existing = getHost(id);
   snapshot(`Before removing a service`, currentUser(req)?.username ?? "system");
   if (!deleteHost(id)) return reply.code(404).send({ error: "Service not found" });
+  // deleteHost() already cascaded the host's client_certs + incidents rows. The
+  // domain is unique to this host, so its managed cert (DB row + on-disk dir) is
+  // now unreferenced — remove it too. Best-effort: don't fail the delete on it.
+  if (existing) { try { deleteCert(existing.domain); } catch { /* ignore */ } }
   const apply = await applyConfig();
   void syncGitOps(`Remove a service`);
   logEvent({ type: "host.deleted", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Removed a service`, ip: clientIp(req), meta: { id } });
@@ -777,7 +785,6 @@ const loginHits = new Map<string, number[]>();
 const TWOFA_MAX_FAILS = 5;
 const TWOFA_LOCK_MS = 5 * 60_000;
 const twofaFails = new Map<string, { n: number; until: number }>();
-const totpUsed = new Map<string, number>(); // userId -> last consumed time-step
 function rateLimited(key: string, max: number, windowMs: number): boolean {
   const now = Date.now();
   const hits = (loginHits.get(key) ?? []).filter((t) => now - t < windowMs);
@@ -820,7 +827,8 @@ app.post("/api/auth/login", async (req, reply) => {
     const secret = getTwofaSecret(uid);
     // Accept a TOTP code (rejecting replay of an already-used step) or a one-time backup code.
     const counter = secret ? verifyTotpCounter(token, secret) : -1;
-    const totpOk = counter >= 0 && counter > (totpUsed.get(uid) ?? -1);
+    // Reject replay of an already-consumed step (persisted, so it survives restart).
+    const totpOk = counter >= 0 && counter > getLastTotpCounter(uid);
     const ok = totpOk || useBackupCode(uid, token);
     if (!ok) {
       const f = twofaFails.get(uid) ?? { n: 0, until: 0 };
@@ -830,7 +838,7 @@ app.post("/api/auth/login", async (req, reply) => {
       logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Incorrect 2FA code", ip, meta: {} });
       return reply.code(401).send({ error: "That 2FA code didn't match.", twofaRequired: true });
     }
-    if (totpOk) totpUsed.set(uid, counter); // burn this step so it can't be replayed
+    if (totpOk) setLastTotpCounter(uid, counter); // burn this step so it can't be replayed
     twofaFails.delete(uid);
   }
 
@@ -866,7 +874,7 @@ app.get("/api/auth/forward", async (req, reply) => {
   // If we can identify the target host, enforce its per-host requirements.
   const originalHost = (req.headers["x-original-host"] as string) || (req.headers["x-forwarded-host"] as string);
   if (originalHost) {
-    const host = getHostByDomain(originalHost.split(":")[0]);
+    const host = getHostByDomainCached(originalHost.split(":")[0]);
     if (host) {
       if (host.require2fa && !u.twofaEnabled) return reply.code(401).send({ ok: false });
       // A scoped user only passes the per-host login gate for hosts in their

@@ -134,7 +134,11 @@ export async function createUser(input: {
 }
 
 export function deleteUser(id: string): boolean {
-  return db.prepare("DELETE FROM users WHERE id = ?").run(id).changes > 0;
+  const removed = db.prepare("DELETE FROM users WHERE id = ?").run(id).changes > 0;
+  // Don't leave the deleted user's sessions behind — a live cookie would
+  // otherwise keep resolving until it expired on its own.
+  if (removed) destroyUserSessions(id);
+  return removed;
 }
 
 // ---------- 2FA ----------
@@ -161,11 +165,17 @@ export function enableTwofa(userId: string): string[] {
   return codes;
 }
 
-/** Consume a one-time backup code (constant-time match); true if it was valid. */
+/** Consume a one-time backup code (constant-time match); true if it was valid.
+ *  The write is a compare-and-swap on the exact JSON we read, so two requests
+ *  racing the same code can't both succeed: the loser's UPDATE matches nothing
+ *  (the stored value already changed) and is retried/rejected rather than
+ *  double-spending. (node:sqlite is synchronous so there's no await between read
+ *  and write today, but the CAS keeps this correct if that ever changes.) */
 export function useBackupCode(userId: string, code: string): boolean {
   const r = db.prepare("SELECT backupCodes FROM users WHERE id = ?").get(userId) as Row | undefined;
   if (!r?.backupCodes) return false;
-  const stored: string[] = JSON.parse(String(r.backupCodes));
+  const before = String(r.backupCodes);
+  const stored: string[] = JSON.parse(before);
   const target = Buffer.from(hashCode(code.trim()), "hex");
   let matchIdx = -1;
   stored.forEach((h, i) => {
@@ -174,8 +184,23 @@ export function useBackupCode(userId: string, code: string): boolean {
   });
   if (matchIdx === -1) return false;
   stored.splice(matchIdx, 1);
-  db.prepare("UPDATE users SET backupCodes = ? WHERE id = ?").run(JSON.stringify(stored), userId);
-  return true;
+  const res = db
+    .prepare("UPDATE users SET backupCodes = ? WHERE id = ? AND backupCodes = ?")
+    .run(JSON.stringify(stored), userId, before);
+  return Number(res.changes) > 0;
+}
+
+/** Last TOTP time-step this user has already consumed (-1 if none). Used to
+ *  reject replay of an already-used code; persisted so it survives a restart. */
+export function getLastTotpCounter(userId: string): number {
+  const r = db.prepare("SELECT twofaLastCounter FROM users WHERE id = ?").get(userId) as Row | undefined;
+  return r ? Number(r.twofaLastCounter ?? -1) : -1;
+}
+
+/** Burn a TOTP time-step so it can't be replayed. Monotonic: never moves backward. */
+export function setLastTotpCounter(userId: string, counter: number): void {
+  db.prepare("UPDATE users SET twofaLastCounter = ? WHERE id = ? AND twofaLastCounter < ?")
+    .run(counter, userId, counter);
 }
 
 export function userNeeds2fa(username: string): boolean {

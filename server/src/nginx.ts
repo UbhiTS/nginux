@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -252,36 +252,47 @@ ${locationBody}    }
   return lines.join("\n\n") + "\n";
 }
 
-/** Write every enabled host's config to disk, removing stale files. */
+/** Write every enabled host's config to disk, removing stale files.
+ *  Reconciles desired-vs-on-disk: writes only files whose content changed and
+ *  removes only files no longer wanted. The old "delete every .conf then rewrite
+ *  all" churned the disk on every apply and briefly unlinked configs nginx may
+ *  still be reading mid-reload — this leaves untouched files in place. */
 export function writeAllConfigs(): string[] {
   if (!existsSync(CONF_DIR)) mkdirSync(CONF_DIR, { recursive: true });
   if (!existsSync(STREAM_DIR)) mkdirSync(STREAM_DIR, { recursive: true });
   // Refresh the country-lock include from current settings + DB presence.
   writeGeoipConf();
 
-  // Clear previously generated files (only our managed .conf files).
-  for (const dir of [CONF_DIR, STREAM_DIR]) {
-    for (const f of readdirSync(dir)) {
-      if (f.endsWith(".conf")) rmSync(join(dir, f));
-    }
-  }
-
-  const written: string[] = [];
+  // Build the full desired set (absolute path -> content) first.
+  const desired = new Map<string, string>();
   const sniHosts: ProxyHost[] = [];
   for (const h of listHosts()) {
     if (!h.enabled) continue;
     if (h.protocol === "sni") { sniHosts.push(h); continue; }
     const isStream = h.protocol === "tcp" || h.protocol === "udp";
     const file = join(isStream ? STREAM_DIR : CONF_DIR, `${h.domain}.conf`);
-    writeFileSync(file, isStream ? generateStreamConfig(h) : generateHostConfig(h));
-    written.push(file);
+    desired.set(file, isStream ? generateStreamConfig(h) : generateHostConfig(h));
   }
   if (sniHosts.length) {
-    const file = join(STREAM_DIR, "_sni_passthrough.conf");
-    writeFileSync(file, generateSniPassthrough(sniHosts));
-    written.push(file);
+    desired.set(join(STREAM_DIR, "_sni_passthrough.conf"), generateSniPassthrough(sniHosts));
   }
-  return written;
+
+  // Remove only our managed .conf files that are no longer desired.
+  for (const dir of [CONF_DIR, STREAM_DIR]) {
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".conf")) continue;
+      const p = join(dir, f);
+      if (!desired.has(p)) rmSync(p);
+    }
+  }
+
+  // Write only files whose content actually changed.
+  for (const [file, content] of desired) {
+    let current: string | null = null;
+    try { current = readFileSync(file, "utf8"); } catch { /* missing → write */ }
+    if (current !== content) writeFileSync(file, content);
+  }
+  return [...desired.keys()];
 }
 
 async function nginxInstalled(): Promise<boolean> {

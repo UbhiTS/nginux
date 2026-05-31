@@ -22,6 +22,24 @@ export function getHostByDomain(domain: string): ProxyHost | null {
   return row ? rowToHost(row) : null;
 }
 
+// Read-through cache for the forward-auth hot path: nginx calls
+// /api/auth/forward on *every* request to a login-gated host, and host policy is
+// read-mostly. Invalidated wholesale on any host mutation (create/update/delete/
+// replace), so it can never serve stale policy. Bounded so probing many unknown
+// domains can't grow it without limit.
+const hostByDomainCache = new Map<string, ProxyHost | null>();
+export function getHostByDomainCached(domain: string): ProxyHost | null {
+  const hit = hostByDomainCache.get(domain);
+  if (hit !== undefined) return hit;
+  if (hostByDomainCache.size > 1000) hostByDomainCache.clear();
+  const h = getHostByDomain(domain);
+  hostByDomainCache.set(domain, h);
+  return h;
+}
+function invalidateHostCache(): void {
+  hostByDomainCache.clear();
+}
+
 export function createHost(input: NewProxyHost): ProxyHost {
   const now = new Date().toISOString();
   const id = randomUUID();
@@ -44,6 +62,7 @@ export function createHost(input: NewProxyHost): ProxyHost {
     input.protocol ?? "http", input.listenPort ?? 0, input.pathRules ?? "", b(input.mtls ?? false),
     input.rateLimitKbps ?? 0, input.maxConns ?? 0, now, now,
   );
+  invalidateHostCache();
   return getHost(id)!;
 }
 
@@ -70,11 +89,17 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
     merged.protocol ?? "http", merged.listenPort ?? 0, merged.pathRules ?? "", b(merged.mtls),
     merged.rateLimitKbps ?? 0, merged.maxConns ?? 0, merged.updatedAt, id,
   );
+  invalidateHostCache();
   return getHost(id);
 }
 
 export function deleteHost(id: string): boolean {
   const res = db.prepare("DELETE FROM hosts WHERE id = ?").run(id);
+  // Cascade the rows keyed to this host so they aren't left orphaned. These
+  // tables reference hostId by value (no SQL FK), so we clean them up here.
+  db.prepare("DELETE FROM client_certs WHERE hostId = ?").run(id);
+  db.prepare("DELETE FROM incidents WHERE hostId = ?").run(id);
+  invalidateHostCache();
   return res.changes > 0;
 }
 
@@ -107,6 +132,7 @@ export function replaceAllHosts(hosts: ProxyHost[]): void {
     db.exec("ROLLBACK");
     throw err;
   }
+  invalidateHostCache();
 }
 
 /** Build the Internet → gateway → servers → services tree for the dashboard. */
