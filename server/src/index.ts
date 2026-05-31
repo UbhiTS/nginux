@@ -71,9 +71,8 @@ import {
   resolveToken,
   revokeToken,
   seedTokensIfEmpty,
-  type Scope,
 } from "./tokens.ts";
-import { callTool, decideApproval, listApprovals, toolCatalog, type Principal } from "./tools.ts";
+import { callTool, decideApproval, listApprovals, scopesForRole, toolCatalog, type Principal } from "./tools.ts";
 import { createWebhook, deleteWebhook, listWebhooks, subscribe } from "./events.ts";
 import { handleMcp } from "./mcp.ts";
 import {
@@ -126,13 +125,14 @@ seedTokensIfEmpty();
 writeGeoipConf(); // keep the country-lock include in sync with settings on boot
 reconcileImportedCerts(); // pick up any cert files dropped into /data/certs (migrations)
 
-const ALL_SCOPES: Scope[] = ["read", "report", "control", "security"];
 const currentUser = (req: FastifyRequest): User | null =>
   userForSession(parseCookie(req.headers.cookie)[SESSION_COOKIE]);
-/** Resolve the caller to a user (session) or agent (bearer token). */
+/** Resolve the caller to a user (session) or agent (bearer token). A user's tool
+ *  scopes come from their role so the MCP/agent path enforces the same RBAC as
+ *  REST (a readonly/scoped user can't run control/security tools). */
 const principal = (req: FastifyRequest): Principal | null => {
   const u = currentUser(req);
-  if (u) return { kind: "user", name: u.username, scopes: ALL_SCOPES, user: u };
+  if (u) return { kind: "user", name: u.username, scopes: scopesForRole(u.role), user: u };
   return resolveToken(bearerFrom(req.headers.authorization));
 };
 // Only believe X-Forwarded-For from a trusted hop. NGINUX_TRUST_PROXY=true trusts

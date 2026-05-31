@@ -1,7 +1,12 @@
-import { listEvents, securityOverview } from "./auth.ts";
-import { listHosts } from "./repo.ts";
+import { listEvents, securityExposure, securityOverview, listUsers, type User } from "./auth.ts";
+import { getTopology, listHosts } from "./repo.ts";
 import { listCerts } from "./certs.ts";
-import { callTool, toolCatalog, type Principal } from "./tools.ts";
+import { listBans } from "./bans.ts";
+import { summary as metricsSummary } from "./metrics.ts";
+import { PRESETS } from "./presets.ts";
+import { getSettings, redactSettings } from "./db.ts";
+import { callTool, toolCatalogFor, type Principal } from "./tools.ts";
+import type { Scope } from "./tokens.ts";
 import { VERSION } from "./version.ts";
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -13,11 +18,38 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-const RESOURCES = [
-  { uri: "hosts://list", name: "Host list", description: "All proxy hosts + state", mimeType: "application/json" },
-  { uri: "config://current", name: "Live config snapshot", description: "Current managed config", mimeType: "application/json" },
-  { uri: "audit://recent", name: "Audit log", description: "Recent audit events", mimeType: "application/json" },
-  { uri: "metrics://overview", name: "Security overview", description: "Posture score + counts", mimeType: "application/json" },
+// Read-only resource views. Each carries the feature-scope a caller needs — the
+// same gating as the equivalent read tool, so resources can't be a bypass.
+interface ResourceDef {
+  uri: string;
+  name: string;
+  description: string;
+  scope: Scope;
+  read: (p: Principal) => unknown;
+}
+
+function visibleHosts(p: Principal) {
+  const hosts = listHosts();
+  return p.kind === "user" && p.user.role === "scoped"
+    ? hosts.filter((h) => {
+        const keys = (p.user as User).scope.split(/[\s,]+/).map((s) => s.toLowerCase()).filter(Boolean);
+        return keys.includes(h.id.toLowerCase()) || keys.includes(h.name.toLowerCase()) || keys.includes(h.domain.toLowerCase());
+      })
+    : hosts;
+}
+
+const RESOURCES: ResourceDef[] = [
+  { uri: "hosts://list", name: "Host list", description: "All proxy hosts + state", scope: "read", read: (p) => visibleHosts(p) },
+  { uri: "topology://current", name: "Network topology", description: "Servers, services and gateway", scope: "read", read: () => { const s = getSettings(); return getTopology({ publicIp: s.publicIp, gatewayIp: s.gatewayIp }); } },
+  { uri: "presets://list", name: "App presets", description: "Built-in app presets", scope: "read", read: () => Object.values(PRESETS) },
+  { uri: "settings://current", name: "Settings", description: "Instance settings (secrets redacted)", scope: "read", read: () => redactSettings(getSettings()) },
+  { uri: "certificates://list", name: "Certificates", description: "All certificates + status", scope: "report", read: () => listCerts() },
+  { uri: "config://current", name: "Config snapshot", description: "Hosts + certificates", scope: "report", read: (p) => ({ hosts: visibleHosts(p), certificates: listCerts() }) },
+  { uri: "audit://recent", name: "Audit log", description: "Recent audit events", scope: "report", read: () => listEvents({ limit: 50 }) },
+  { uri: "metrics://overview", name: "Security overview", description: "Posture score + counts", scope: "report", read: () => ({ overview: securityOverview(), exposure: securityExposure() }) },
+  { uri: "metrics://traffic", name: "Traffic metrics", description: "Requests, bandwidth, top talkers", scope: "report", read: () => metricsSummary() },
+  { uri: "bans://list", name: "IP bans", description: "Active IP bans", scope: "report", read: () => listBans() },
+  { uri: "users://list", name: "Users", description: "Accounts (no secrets) — admin only", scope: "report", read: () => listUsers() },
 ];
 
 const PROMPTS = [
@@ -26,16 +58,6 @@ const PROMPTS = [
   { name: "incident_response", description: "Investigate and respond to a security incident." },
   { name: "weekly_security_review", description: "Summarize the week's security posture." },
 ];
-
-function readResource(uri: string): unknown {
-  switch (uri) {
-    case "hosts://list": return listHosts();
-    case "config://current": return { hosts: listHosts(), certificates: listCerts() };
-    case "audit://recent": return listEvents({ limit: 50 });
-    case "metrics://overview": return securityOverview();
-    default: return null;
-  }
-}
 
 const ok = (id: JsonRpcRequest["id"], result: unknown) => ({ jsonrpc: "2.0" as const, id, result });
 const err = (id: JsonRpcRequest["id"], code: number, message: string) => ({ jsonrpc: "2.0" as const, id, error: { code, message } });
@@ -60,10 +82,11 @@ export async function handleMcp(principal: Principal, msg: JsonRpcRequest): Prom
       return ok(id, {});
 
     case "tools/list":
+      // Only advertise tools this caller can actually invoke (scope + adminOnly).
       return ok(id, {
-        tools: toolCatalog().map((t) => ({
+        tools: toolCatalogFor(principal).map((t) => ({
           name: t.name,
-          description: `${t.description} [risk: ${t.tier}]`,
+          description: `${t.description} [risk: ${t.tier}${t.adminOnly ? ", admin" : ""}]`,
           inputSchema: t.inputSchema,
         })),
       });
@@ -86,13 +109,19 @@ export async function handleMcp(principal: Principal, msg: JsonRpcRequest): Prom
     }
 
     case "resources/list":
-      return ok(id, { resources: RESOURCES });
+      // Only list resources the caller's scope permits.
+      return ok(id, {
+        resources: RESOURCES.filter((r) => principal.scopes.includes(r.scope)).map((r) => ({
+          uri: r.uri, name: r.name, description: r.description, mimeType: "application/json",
+        })),
+      });
 
     case "resources/read": {
       const uri = String(params.uri);
-      const data = readResource(uri);
-      if (data === null) return err(id, -32602, `Unknown resource: ${uri}`);
-      return ok(id, { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(data, null, 2) }] });
+      const res = RESOURCES.find((r) => r.uri === uri);
+      if (!res) return err(id, -32602, `Unknown resource: ${uri}`);
+      if (!principal.scopes.includes(res.scope)) return err(id, -32603, `This caller lacks the "${res.scope}" scope for ${uri}.`);
+      return ok(id, { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(res.read(principal), null, 2) }] });
     }
 
     case "prompts/list":
