@@ -80,9 +80,6 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout }: Props
               <span className={`dot ${h.enabled ? healthClass[h.health] : "n"}`} title={h.enabled ? undefined : "Paused"} />
             </div>
           ))}
-          <div className="nav-child nav-add" onClick={() => navigate({ name: "wizard" })}>
-            <span className="ce">＋</span>Expose a service
-          </div>
         </div>
 
         {item("certs", "Certificates", Icon.cert)}

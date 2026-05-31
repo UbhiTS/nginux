@@ -41,9 +41,7 @@ export function Wizard({
   const [testing, setTesting] = useState(false);
   const [sub, setSub] = useState("");
   const [ssl, setSsl] = useState(true);
-  const [login, setLogin] = useState(true);
-  const [twofa, setTwofa] = useState(true);
-  const [country, setCountry] = useState(true);
+  const [advCert, setAdvCert] = useState(false);
   const [certMethod, setCertMethod] = useState<CertChoice>("dns-01");
   const [certs, setCerts] = useState<Certificate[]>([]);
   const [creating, setCreating] = useState(false);
@@ -55,7 +53,7 @@ export function Wizard({
   const abortRef = useRef<AbortController | null>(null);
 
   const base = settings?.baseDomain ?? "example.com";
-  const country2 = settings?.homeCountry ?? "your country";
+  const hasDnsProvider = (settings?.dnsProvider ?? "none") !== "none";
 
   useEffect(() => {
     api.presets().then((p) => {
@@ -69,12 +67,15 @@ export function Wizard({
   const domain = `${sub}.${base}`;
   const existingCert = sub ? certs.find((c) => c.domain === domain) ?? null : null;
 
-  // Smart default: reuse a cert that already exists for this exact domain;
-  // otherwise issue a trusted one (DNS) by default. Re-evaluates if the domain
-  // or cert list changes; the user can still override on the Secure step.
+  // Smart default so the wizard always succeeds without scary failures:
+  //  - reuse a cert that already exists for this exact domain, else
+  //  - request a trusted Let's Encrypt cert ONLY if a DNS provider is connected
+  //    (dns-01 can actually work), else
+  //  - start on an instant self-signed cert (upgrade later from Certificates).
+  // The user can still override under "Advanced".
   useEffect(() => {
-    setCertMethod(existingCert ? "existing" : "dns-01");
-  }, [domain, existingCert]);
+    setCertMethod(existingCert ? "existing" : hasDnsProvider ? "dns-01" : "selfsigned");
+  }, [domain, existingCert, hasDnsProvider]);
 
   const runTest = async () => {
     if (!parsed) return;
@@ -150,9 +151,12 @@ export function Wizard({
         websockets: preset.websockets,
         http2: preset.http2,
         ssl,
-        requireLogin: login,
-        require2fa: twofa,
-        countryLock: country,
+        // Access controls (login / 2FA / country lock) are added afterwards from
+        // the service's Protection settings — they can lock you out, so they're
+        // a deliberate post-launch step, not part of "get it online".
+        requireLogin: false,
+        require2fa: false,
+        countryLock: false,
         serverGroup: parsed.host,
         serverIp: parsed.host,
         enabled: true,
@@ -293,35 +297,42 @@ export function Wizard({
           {step === 4 && (
             <div className="card wcard">
               <h2>Secure it</h2>
-              <p className="wsub">We'll get a free HTTPS certificate automatically. Add a login to control access.</p>
+              <p className="wsub">We serve it over HTTPS and handle the certificate for you.</p>
               <Toggle on={ssl} set={setSsl} title="HTTPS encryption" desc="Free certificate, renewed automatically." icon={<Icon.lock />} />
-              <Toggle on={login} set={setLogin} title="Require login to access this app" desc="Visitors sign in through NginUX before reaching the app." icon={<Icon.users />} />
-              <Toggle on={twofa} set={setTwofa} title="Require 2FA (two-factor)" desc="A one-time code on top of the password." icon={<Icon.lock />} />
-              <Toggle on={country} set={setCountry} title={`Only allow my country (${country2})`} desc="Restrict access by visitor country. Takes effect once a GeoIP database is connected — until then it stays open." icon={<Icon.globe />} />
               {ssl && (
-                <div className="field" style={{ marginTop: 18, marginBottom: 0 }}>
-                  <label>Certificate</label>
-                  <select className="input" value={certMethod} onChange={(e) => setCertMethod(e.target.value as CertChoice)}>
-                    {existingCert && (
-                      <option value="existing">
-                        Use existing certificate — {existingCert.domain} ({existingCert.method === "selfsigned" ? "self-signed" : existingCert.issuer || "Let's Encrypt"})
-                      </option>
-                    )}
-                    <option value="dns-01">Create new certificate: Let's Encrypt (DNS)</option>
-                    <option value="http-01">Create new certificate: Let's Encrypt (HTTP)</option>
-                    <option value="selfsigned">Self-signed (instant, not trusted)</option>
-                  </select>
-                  <div className="hint">
+                <>
+                  <div className="info-line" style={{ marginTop: 14 }}>
+                    <Icon.info />
                     {certMethod === "existing"
-                      ? `Reuses the certificate already issued for ${domain}${existingCert?.method === "selfsigned" ? " (self-signed — browsers will still warn)." : "."}`
+                      ? `Reuses the certificate already issued for ${domain}.`
                       : certMethod === "dns-01"
-                      ? "Free trusted certificate, no open ports needed. Requires a DNS provider connected in Settings."
+                      ? "We'll request a free, trusted Let's Encrypt certificate over DNS — no open ports needed."
                       : certMethod === "http-01"
-                      ? `Free trusted certificate. Needs port 80 reachable from the internet (forward TCP 80 → this server) and public DNS for ${domain}.`
-                      : "Instant, but browsers show a “not secure” warning. You can upgrade anytime from Certificates."}
+                      ? `We'll request a trusted Let's Encrypt certificate over HTTP — needs port 80 reachable and public DNS for ${domain}.`
+                      : "We'll start on an instant self-signed certificate (browsers show a warning). Connect a DNS provider in Settings for a trusted one automatically — or upgrade anytime from Certificates."}
                   </div>
-                </div>
+                  <div className={`adv-toggle${advCert ? " open" : ""}`} style={{ marginTop: 10 }} onClick={() => setAdvCert((o) => !o)}>
+                    <Icon.chevron className="chev" />
+                    Advanced — choose certificate method
+                  </div>
+                  {advCert && (
+                    <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
+                      <select className="input" value={certMethod} onChange={(e) => setCertMethod(e.target.value as CertChoice)}>
+                        {existingCert && (
+                          <option value="existing">Use existing — {existingCert.domain} ({existingCert.method === "selfsigned" ? "self-signed" : existingCert.issuer || "Let's Encrypt"})</option>
+                        )}
+                        <option value="dns-01">Let's Encrypt (DNS) — trusted, needs a DNS provider</option>
+                        <option value="http-01">Let's Encrypt (HTTP) — trusted, needs port 80 + public DNS</option>
+                        <option value="selfsigned">Self-signed — instant, not trusted</option>
+                      </select>
+                    </div>
+                  )}
+                </>
               )}
+              <div className="info-line" style={{ marginTop: 16 }}>
+                <Icon.lock />
+                Login, 2FA and country restrictions live on the service's page — add them once it's running. The dashboard flags anything left unprotected.
+              </div>
               {apply && !apply.ok && (
                 <div className="test-result bad" style={{ marginTop: 14 }}>
                   <Icon.x />
