@@ -64,6 +64,18 @@ export function Wizard({
     api.certificates().then(setCerts).catch(() => {});
   }, []);
 
+  // Prefill the internal address with the selected app's usual scheme + port,
+  // keeping whatever host the user has already typed (so picking Home Assistant
+  // shows :8123, Proxmox shows https://…:8006, etc.).
+  useEffect(() => {
+    if (!preset) return;
+    setForward((prev) => {
+      const p = parseForward(prev);
+      const host = p?.host ?? "192.168.1.50";
+      return `${preset.forwardScheme ?? "http"}://${host}:${preset.defaultPort}`;
+    });
+  }, [preset]);
+
   const parsed = parseForward(forward);
   const domain = `${sub}.${base}`;
   const existingCert = sub ? certs.find((c) => c.domain === domain) ?? null : null;
