@@ -9,7 +9,7 @@ Please report security issues **privately** — do not open a public issue.
 
 ## Supported versions
 
-The latest `1.x` release (and `:latest` image) is supported.
+The latest `0.x` release (and `:latest` image) is supported.
 
 ## Deploying securely
 

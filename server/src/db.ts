@@ -229,19 +229,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_approvals_status   ON approvals(status, ts);
 `);
 
-// Lightweight additive migrations: add columns introduced after a DB was first
-// created. CREATE TABLE IF NOT EXISTS won't touch an existing table, so new
-// columns need an explicit (idempotent) ALTER for already-initialised installs.
-function ensureColumn(table: string, column: string, ddl: string): void {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-  }
-}
-// Persisted TOTP replay guard: the last consumed time-step counter per user, so
-// a used code can't be replayed even across a control-plane restart.
-ensureColumn("users", "twofaLastCounter", "twofaLastCounter INTEGER NOT NULL DEFAULT -1");
-
 /** Trim the audit log so it can't grow without bound. Keeps recent rows by time
  *  and an absolute cap by count; returns how many rows were removed. */
 export function pruneAuditLog(retainDays = Number(process.env.NGINUX_AUDIT_RETAIN_DAYS ?? 90), hardCap = 50_000): number {
