@@ -95,9 +95,10 @@ export function HostDetail({
   }
 
   const b = banner[host.health];
-  // The real certificate this host serves (its chosen certDomain, or its own),
-  // from the cert store — not the host's stale certExpiresAt field.
-  const cert = certs.find((c) => c.domain === (host.certDomain || host.domain)) ?? null;
+  // The certificate this host actually serves (its chosen certDomain, or its
+  // own), from the cert store — but only when HTTPS is on. With HTTPS off the
+  // service is plain HTTP, so any cert still sitting in the store isn't in use.
+  const cert = host.ssl ? (certs.find((c) => c.domain === (host.certDomain || host.domain)) ?? null) : null;
   const certDays = cert?.daysRemaining ?? null;
   const certStatusCls = cert ? (cert.status === "valid" ? "g" : cert.status === "expiring" || cert.status === "expired" || cert.status === "error" ? "r" : "n") : "n";
 
@@ -188,7 +189,7 @@ export function HostDetail({
             <div className="sd">
               {host.enabled ? (
                 <>
-                  {certDays !== null ? `Certificate valid for ${certDays} days` : "No certificate yet"} ·{" "}
+                  {!host.ssl ? "Served over HTTP — not encrypted" : certDays !== null ? `Certificate valid for ${certDays} days` : "No certificate yet"} ·{" "}
                   {host.require2fa
                     ? "Protected by login + 2FA"
                     : host.requireLogin
@@ -315,23 +316,32 @@ export function HostDetail({
                 )}
               </div>
               <div className="card-pad">
-                <div className="kv">
-                  <span className="k">Status</span>
-                  <span className={`pill ${certStatusCls}`}>{cert ? cert.status : "none"}</span>
-                </div>
-                <div className="kv">
-                  <span className="k">Expires in</span>
-                  <span className="v">{certDays !== null ? `${certDays} days` : "—"}</span>
-                </div>
-                <div className="kv">
-                  <span className="k">Issuer</span>
-                  <span className="v">{cert ? cert.issuer || "—" : "—"}</span>
-                </div>
-                {host.certDomain && (
-                  <div className="kv">
-                    <span className="k">Using cert</span>
-                    <span className="v mono">{host.certDomain}</span>
+                {!host.ssl ? (
+                  <div className="kv" style={{ border: "none" }}>
+                    <span className="k">Status</span>
+                    <span className="v muted">Not in use — served over HTTP</span>
                   </div>
+                ) : (
+                  <>
+                    <div className="kv">
+                      <span className="k">Status</span>
+                      <span className={`pill ${certStatusCls}`}>{cert ? cert.status : "none"}</span>
+                    </div>
+                    <div className="kv">
+                      <span className="k">Expires in</span>
+                      <span className="v">{certDays !== null ? `${certDays} days` : "—"}</span>
+                    </div>
+                    <div className="kv">
+                      <span className="k">Issuer</span>
+                      <span className="v">{cert ? cert.issuer || "—" : "—"}</span>
+                    </div>
+                    {host.certDomain && (
+                      <div className="kv">
+                        <span className="k">Using cert</span>
+                        <span className="v mono">{host.certDomain}</span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
