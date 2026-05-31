@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type AuthUser } from "./api.ts";
 import type { ProxyHost, Settings } from "./types.ts";
 import { useTheme } from "./theme.ts";
+import { Icon } from "./icons.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { Dashboard } from "./pages/Dashboard.tsx";
 import { Services } from "./pages/Services.tsx";
@@ -32,6 +33,8 @@ export function App() {
   const [route, setRoute] = useState<Route>({ name: "dashboard" });
   const [hosts, setHosts] = useState<ProxyHost[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  // Mobile drawer (no effect above the CSS breakpoint, where the sidebar is always shown).
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Check session on load.
   useEffect(() => {
@@ -55,6 +58,7 @@ export function App() {
 
   const navigate = useCallback((r: Route) => {
     setRoute(r);
+    setDrawerOpen(false); // close the mobile drawer after picking a destination
     window.scrollTo(0, 0);
   }, []);
 
@@ -81,7 +85,21 @@ export function App() {
 
   return (
     <div className="app">
-      <Sidebar hosts={hosts} route={route} navigate={navigate} theme={theme} user={user} onLogout={logout} />
+      <button
+        className="drawer-toggle"
+        aria-label="Open navigation menu"
+        aria-expanded={drawerOpen}
+        onClick={() => setDrawerOpen(true)}
+      >
+        <Icon.menu />
+      </button>
+      <button
+        className={`drawer-backdrop${drawerOpen ? " open" : ""}`}
+        aria-label="Close navigation menu"
+        tabIndex={drawerOpen ? 0 : -1}
+        onClick={() => setDrawerOpen(false)}
+      />
+      <Sidebar open={drawerOpen} hosts={hosts} route={route} navigate={navigate} theme={theme} user={user} onLogout={logout} />
       <div className="main">
         {route.name === "dashboard" && <Dashboard hosts={hosts} navigate={navigate} />}
         {route.name === "services" && <Services hosts={hosts} navigate={navigate} reload={reload} />}

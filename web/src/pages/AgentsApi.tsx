@@ -56,13 +56,13 @@ export function AgentsApi() {
         <span className="pill g"><span className="dot g" />MCP server running</span>
       </div>
       <div className="content">
-        <div className="sectabs">
-          <div className={`sectab${tab === "overview" ? " active" : ""}`} onClick={() => setTab("overview")}>Overview</div>
-          <div className={`sectab${tab === "mcp" ? " active" : ""}`} onClick={() => setTab("mcp")}>MCP server</div>
-          <div className={`sectab${tab === "safety" ? " active" : ""}`} onClick={() => setTab("safety")}>
+        <div className="sectabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === "overview"} className={`sectab${tab === "overview" ? " active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
+          <button type="button" role="tab" aria-selected={tab === "mcp"} className={`sectab${tab === "mcp" ? " active" : ""}`} onClick={() => setTab("mcp")}>MCP server</button>
+          <button type="button" role="tab" aria-selected={tab === "safety"} className={`sectab${tab === "safety" ? " active" : ""}`} onClick={() => setTab("safety")}>
             Permissions &amp; safety {pending.length > 0 && <span className="badge">{pending.length}</span>}
-          </div>
-          <div className={`sectab${tab === "events" ? " active" : ""}`} onClick={() => setTab("events")}>Events &amp; webhooks</div>
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "events"} className={`sectab${tab === "events" ? " active" : ""}`} onClick={() => setTab("events")}>Events &amp; webhooks</button>
         </div>
 
         {tab === "overview" && ov && (

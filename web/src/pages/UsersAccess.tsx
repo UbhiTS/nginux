@@ -153,9 +153,9 @@ export function UsersAccess({
         )}
       </div>
       <div className="content">
-        <div className="sectabs">
-          <div className={`sectab${tab === "users" ? " active" : ""}`} onClick={() => setTab("users")}>Users &amp; roles</div>
-          <div className={`sectab${tab === "sessions" ? " active" : ""}`} onClick={() => setTab("sessions")}>Active sessions</div>
+        <div className="sectabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === "users"} className={`sectab${tab === "users" ? " active" : ""}`} onClick={() => setTab("users")}>Users &amp; roles</button>
+          <button type="button" role="tab" aria-selected={tab === "sessions"} className={`sectab${tab === "sessions" ? " active" : ""}`} onClick={() => setTab("sessions")}>Active sessions</button>
         </div>
 
         {tab === "users" && (

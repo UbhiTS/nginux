@@ -391,6 +391,9 @@ export function Topology({
                   <div
                     key={s.id}
                     className={`svc${s.enabled ? "" : " svc-paused"}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${s.name}`}
                     ref={(el) => {
                       if (el) svcRefs.current.set(s.id, el);
                       else svcRefs.current.delete(s.id);
@@ -398,6 +401,7 @@ export function Topology({
                     onMouseEnter={() => onHover(s.domain)}
                     onMouseLeave={() => onHover(null)}
                     onClick={() => navigate({ name: "host", hostId: s.id })}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: s.id }); } }}
                   >
                     <span className="svc-tag" style={{ background: PALETTE[idx % PALETTE.length] }} />
                     <span className="svc-emoji">{s.emoji}</span>

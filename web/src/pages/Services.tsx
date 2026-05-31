@@ -63,7 +63,15 @@ export function Services({
           {hosts.map((h) => {
             const d = days(h.certExpiresAt);
             return (
-              <div key={h.id} className={`host-row${h.enabled ? "" : " is-paused"}`} onClick={() => navigate({ name: "host", hostId: h.id })}>
+              <div
+                key={h.id}
+                className={`host-row${h.enabled ? "" : " is-paused"}`}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open ${h.name}`}
+                onClick={() => navigate({ name: "host", hostId: h.id })}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: h.id }); } }}
+              >
                 <div className="host-main">
                   <div className="host-icon">{h.emoji}</div>
                   <div>
@@ -87,6 +95,8 @@ export function Services({
                 <button
                   className={`switch${h.enabled ? " on" : ""}`}
                   title={h.enabled ? "Serving — click to pause" : "Paused — click to serve"}
+                  aria-label={h.enabled ? `Pause ${h.name}` : `Serve ${h.name}`}
+                  aria-pressed={h.enabled}
                   disabled={toggling === h.id}
                   onClick={(e) => { e.stopPropagation(); void toggle(h); }}
                 />

@@ -124,7 +124,7 @@ export function HostDetail({
   return (
     <>
       <div className="topbar">
-        <button className="btn btn-ghost btn-sm" onClick={() => navigate({ name: "dashboard" })}>
+        <button className="btn btn-ghost btn-sm" aria-label="Back to dashboard" onClick={() => navigate({ name: "dashboard" })}>
           <Icon.arrowLeft />
         </button>
         <h1>

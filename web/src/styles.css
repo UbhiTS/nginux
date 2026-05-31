@@ -81,7 +81,7 @@ button { font-family: inherit; cursor: pointer; }
 .brand-name small { display:block; font-weight:500; font-size:10px; color: var(--text-faint); letter-spacing: .3px; }
 .nav { padding: 10px; flex: 1; overflow-y: auto; }
 .nav-label { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--text-faint); padding: 12px 10px 6px; font-weight: 600; }
-.nav-item { display: flex; align-items: center; gap: 11px; padding: 9px 10px; border-radius: var(--radius-sm); color: var(--text-dim); font-weight: 500; font-size: 13.5px; transition: .12s; cursor: pointer; }
+.nav-item { display: flex; align-items: center; gap: 11px; padding: 9px 10px; border-radius: var(--radius-sm); color: var(--text-dim); font-weight: 500; font-size: 13.5px; transition: .12s; cursor: pointer; width: 100%; text-align: left; background: none; border: none; font-family: inherit; }
 .nav-item:hover { background: var(--bg-elev2); color: var(--text); }
 .nav-item.active { background: var(--accent-soft); color: var(--text); }
 .nav-item.active svg { color: var(--accent); }
@@ -93,11 +93,13 @@ button { font-family: inherit; cursor: pointer; }
 .nav-add-btn:hover { background: var(--accent); color: #fff; }
 .nav-add-btn svg { width: 13px; height: 13px; }
 .nav-parent .svc-count { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--text-faint); background: var(--bg-elev2); border-radius: 10px; padding: 0 7px; }
+.nav-caret-btn { background: none; border: none; padding: 2px; margin: -2px; display: flex; cursor: pointer; color: inherit; border-radius: 5px; }
+.nav-caret-btn:hover { background: var(--bg-elev2); }
 .nav-caret { width: 14px !important; height: 14px !important; transition: .2s; color: var(--text-faint); }
 .nav-parent.open .nav-caret { transform: rotate(90deg); }
 .nav-children { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 2px 0; overflow: hidden; max-height: 600px; transition: max-height .25s ease; }
 .nav-children.collapsed { max-height: 0; margin: 0; }
-.nav-child { display: flex; align-items: center; gap: 9px; padding: 7px 10px 7px 22px; margin-left: 16px; border-left: 1.5px solid var(--border); color: var(--text-dim); font-size: 13px; font-weight: 500; border-radius: 0 7px 7px 0; transition: .12s; cursor: pointer; }
+.nav-child { display: flex; align-items: center; gap: 9px; padding: 7px 10px 7px 22px; margin-left: 16px; border: none; border-left: 1.5px solid var(--border); color: var(--text-dim); font-size: 13px; font-weight: 500; border-radius: 0 7px 7px 0; transition: .12s; cursor: pointer; width: calc(100% - 16px); text-align: left; background: none; font-family: inherit; }
 .nav-child:hover { background: var(--bg-elev2); color: var(--text); }
 .nav-child.active { background: var(--accent-soft); color: var(--text); border-left-color: var(--accent); }
 .nav-child .ce { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
@@ -384,7 +386,7 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ---------- Security center / tabs / tables ---------- */
 .sectabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 22px; overflow-x: auto; }
-.sectab { padding: 10px 13px; font-size: 13px; font-weight: 600; color: var(--text-dim); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; cursor: pointer; display: flex; align-items: center; gap: 7px; }
+.sectab { padding: 10px 13px; font-size: 13px; font-weight: 600; color: var(--text-dim); border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; cursor: pointer; display: flex; align-items: center; gap: 7px; background: none; font-family: inherit; }
 .sectab.active { color: var(--text); border-bottom-color: var(--accent); }
 .sectab:hover { color: var(--text); }
 .sectab .badge { background: var(--red); color: #fff; font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 10px; }
@@ -424,4 +426,48 @@ button { font-family: inherit; cursor: pointer; }
 @media (max-width: 860px) {
   .topo { grid-template-columns: 1fr; gap: 24px; }
   .topo-lines { display: none; }
+}
+
+/* ---------- Mobile: sidebar becomes a slide-in drawer ---------- */
+/* Hamburger + backdrop are desktop-hidden; the breakpoint reveals them and
+   slides the (otherwise off-canvas) sidebar in over a dimmed backdrop. */
+.drawer-toggle { display: none; }
+.drawer-backdrop { display: none; }
+@media (max-width: 760px) {
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    box-shadow: 0 0 40px rgba(0,0,0,.5);
+  }
+  .sidebar.open { transform: translateX(0); }
+  .main { margin-left: 0; }
+  /* Make room for the fixed hamburger in every page's topbar. */
+  .topbar { padding-left: 60px; }
+  .topbar h1 { font-size: 16px; }
+  .content { padding: 18px 16px 56px; }
+  .stats { grid-template-columns: 1fr; }
+  .preset-grid { grid-template-columns: 1fr; }
+  .search { display: none; }
+
+  /* Grid "tables" keep fixed columns — let their container scroll sideways on
+     narrow screens instead of squashing columns on top of each other. */
+  .atable,
+  .card:has(> .ahead), .card:has(> .arow),
+  .card:has(> .host-row), .card:has(> .col-head) { overflow-x: auto; }
+  .ahead, .arow, .host-row, .col-head, .audit-row { min-width: 520px; }
+
+  .drawer-toggle {
+    display: grid; place-items: center;
+    position: fixed; top: 11px; left: 12px; z-index: 21;
+    width: 38px; height: 38px; border-radius: 9px;
+    background: var(--bg-elev); border: 1px solid var(--border); color: var(--text);
+    cursor: pointer;
+  }
+  .drawer-toggle svg { width: 19px; height: 19px; }
+  .drawer-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 19;
+    background: rgba(0,0,0,.45); border: none;
+    opacity: 0; pointer-events: none; transition: opacity .25s ease;
+  }
+  .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
 }

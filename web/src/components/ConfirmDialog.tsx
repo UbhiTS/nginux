@@ -33,7 +33,7 @@ export function ConfirmDialog({
 
   return (
     <div className="modal-backdrop" onClick={() => !busy && onCancel()}>
-      <div className="card card-pad modal-card confirm-card" onClick={(e) => e.stopPropagation()}>
+      <div className="card card-pad modal-card confirm-card" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <div className={`confirm-icon${danger ? " danger" : ""}`}>
           {danger ? <Icon.alert /> : <Icon.info />}
         </div>

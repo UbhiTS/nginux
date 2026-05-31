@@ -41,15 +41,15 @@ export function SecurityCenter() {
         <h1>Security Center</h1>
       </div>
       <div className="content">
-        <div className="sectabs">
-          <div className={`sectab${tab === "overview" ? " active" : ""}`} onClick={() => setTab("overview")}>Overview</div>
-          <div className={`sectab${tab === "exposure" ? " active" : ""}`} onClick={() => setTab("exposure")}>
+        <div className="sectabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === "overview"} className={`sectab${tab === "overview" ? " active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
+          <button type="button" role="tab" aria-selected={tab === "exposure"} className={`sectab${tab === "exposure" ? " active" : ""}`} onClick={() => setTab("exposure")}>
             What's exposed {unprotected > 0 && <span className="badge">{unprotected}</span>}
-          </div>
-          <div className={`sectab${tab === "logins" ? " active" : ""}`} onClick={() => setTab("logins")}>Login activity</div>
-          <div className={`sectab${tab === "failures" ? " active" : ""}`} onClick={() => setTab("failures")}>
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "logins"} className={`sectab${tab === "logins" ? " active" : ""}`} onClick={() => setTab("logins")}>Login activity</button>
+          <button type="button" role="tab" aria-selected={tab === "failures"} className={`sectab${tab === "failures" ? " active" : ""}`} onClick={() => setTab("failures")}>
             Login failures {failures.length > 0 && <span className="badge">{failures.length}</span>}
-          </div>
+          </button>
         </div>
 
         {tab === "overview" && overview && (
