@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
-import { closeDb, dbOk, getSettings, pruneAuditLog, saveSettings, seedIfEmpty } from "./db.ts";
+import { closeDb, dbOk, getSettings, pruneAuditLog, redactSettings, saveSettings, seedIfEmpty } from "./db.ts";
 import { PRESETS, getPreset } from "./presets.ts";
 import {
   createHost,
@@ -96,6 +96,7 @@ import { generateSniPassthrough } from "./nginx.ts";
 import {
   assertSafeOutboundUrl,
   hasNginxMetachars,
+  isDangerousHost,
   isHeaderName,
   isHost,
   isHostPort,
@@ -167,6 +168,8 @@ app.setErrorHandler((err, req, reply) => {
 // Auth guard. Human UI routes need a session; agent routes (MCP + events)
 // accept a session OR a Bearer API token (agents never use 2FA).
 const OPEN_PATHS = new Set(["/api/health", "/api/auth/login", "/api/auth/forward"]);
+// While a user still holds a temporary password, only these endpoints are reachable.
+const PW_CHANGE_ALLOWED = new Set(["/api/auth/change-password", "/api/auth/logout", "/api/auth/me"]);
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** CSRF defense: a cookie-authenticated mutation carrying a cross-origin
  *  Origin/Referer is rejected. Browsers always send Origin on cross-site
@@ -188,8 +191,30 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
     if (!principal(req)) return reply.code(401).send({ error: "Valid session or API token required" });
     return;
   }
-  if (!currentUser(req)) return reply.code(401).send({ error: "Authentication required" });
+  const u = currentUser(req);
+  if (!u) return reply.code(401).send({ error: "Authentication required" });
   if (crossOriginBlocked(req)) return reply.code(403).send({ error: "Cross-origin request blocked." });
+  // A temporary-password account is confined to the change-password flow until it
+  // sets a real password — enforced here, not just in the SPA.
+  if (u.mustChangePassword && !PW_CHANGE_ALLOWED.has(path)) {
+    return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
+  }
+});
+
+// Security headers on every control-plane response (the admin UI + API on :4600).
+// frame-ancestors/X-Frame-Options stop the UI being framed (clickjacking); nosniff
+// stops MIME sniffing; the CSP locks script/style/connect to same-origin.
+app.addHook("onSend", async (_req, reply, payload) => {
+  reply.header("X-Frame-Options", "DENY");
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+  reply.header(
+    "Content-Security-Policy",
+    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
+      "script-src 'self'; font-src 'self' data:; connect-src 'self'; object-src 'none'; " +
+      "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+  );
+  return payload;
 });
 
 function requireAdmin(req: FastifyRequest, reply: FastifyReply): User | null {
@@ -232,9 +257,44 @@ function requireHostAccess(
 }
 
 /** customNginx is a raw-directive escape hatch — only admins may set it. */
-function rejectPrivilegedFields(req: FastifyRequest, reply: FastifyReply, body: { customNginx?: string }): boolean {
-  if (body.customNginx !== undefined && body.customNginx !== "" && currentUser(req)?.role !== "admin") {
+// Fields a `scoped` user must not set: they manage a service but may not change
+// its security posture or routing (which could expose it or repoint it).
+const SCOPED_FORBIDDEN_FIELDS = [
+  "requireLogin", "require2fa", "mtls", "countryLock", "securityHeaders", "hsts",
+  "blockExploits", "ipAllow", "ipDeny", "customHeaders", "pathRules", "upstreams",
+] as const;
+
+function rejectPrivilegedFields(req: FastifyRequest, reply: FastifyReply, body: Record<string, unknown>): boolean {
+  const role = currentUser(req)?.role;
+  // Raw nginx directives are an admin-only escape hatch.
+  if (body.customNginx !== undefined && body.customNginx !== "" && role !== "admin") {
     reply.code(403).send({ error: "Only an admin may set custom nginx directives." });
+    return false;
+  }
+  // Scoped users can't touch security/routing fields (e.g. can't strip requireLogin).
+  if (role === "scoped") {
+    const touched = SCOPED_FORBIDDEN_FIELDS.filter((f) => body[f] !== undefined);
+    if (touched.length) {
+      reply.code(403).send({ error: `Scoped users can't change security or routing settings (${touched.join(", ")}). Ask an admin.` });
+      return false;
+    }
+  }
+  return true;
+}
+
+/** May this caller READ this host? Scoped users only within scope; others yes. */
+function canReadHost(req: FastifyRequest, host: Pick<ProxyHost, "id" | "name" | "domain">): boolean {
+  const u = currentUser(req);
+  if (!u) return false;
+  return u.role !== "scoped" || scopedAllows(u, host);
+}
+
+/** For routes reachable by agent tokens OR users: token principals pass (their
+ *  scope is enforced separately); a user session must hold one of `roles`. */
+function userRoleAtLeast(req: FastifyRequest, reply: FastifyReply, ...roles: Role[]): boolean {
+  const u = currentUser(req);
+  if (u && !roles.includes(u.role)) {
+    reply.code(403).send({ error: `This action requires one of: ${roles.join(", ")}.` });
     return false;
   }
   return true;
@@ -278,8 +338,8 @@ const customNginxField = z.string().default("").refine(
 );
 
 const hostInput = z.object({
-  name: z.string().min(1).max(100),
-  emoji: z.string().max(16).default("⚙️"),
+  name: z.string().min(1).max(100).refine((s) => !hasNginxMetachars(s), "Name may not contain ; { } or line breaks."),
+  emoji: z.string().max(16).refine((s) => !hasNginxMetachars(s), "Invalid emoji.").default("⚙️"),
   domain: z.string().min(1).max(253).refine(isHostname, "Invalid domain/hostname."),
   forwardScheme: z.enum(["http", "https"]).default("http"),
   forwardHost: z.string().min(1).refine(isHost, "Invalid forward host (must be a hostname or IP)."),
@@ -351,7 +411,11 @@ const settingsInput = z.object({
   gitOpsEnabled: z.boolean(),
 }).partial();
 
-app.get("/api/settings", async () => getSettings());
+app.get("/api/settings", async (req) => {
+  const s = getSettings();
+  // Only admins see provider credentials; everyone else gets them masked.
+  return currentUser(req)?.role === "admin" ? s : redactSettings(s);
+});
 app.put("/api/settings", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const parsed = settingsInput.safeParse(req.body);
@@ -363,12 +427,17 @@ app.put("/api/settings", async (req, reply) => {
 });
 
 // ---------- hosts ----------
-app.get("/api/hosts", async () => listHosts());
+app.get("/api/hosts", async (req) => {
+  const u = currentUser(req);
+  const hosts = listHosts();
+  // Scoped users only see hosts in their scope.
+  return u?.role === "scoped" ? hosts.filter((h) => scopedAllows(u, h)) : hosts;
+});
 
 app.get("/api/hosts/:id", async (req, reply) => {
   const { id } = req.params as { id: string };
   const host = getHost(id);
-  if (!host) return reply.code(404).send({ error: "Service not found" });
+  if (!host || !canReadHost(req, host)) return reply.code(404).send({ error: "Service not found" });
   return host;
 });
 
@@ -443,7 +512,8 @@ app.delete("/api/hosts/:id", async (req, reply) => {
 // per-host mTLS client certificates
 app.get("/api/hosts/:id/client-certs", async (req, reply) => {
   const { id } = req.params as { id: string };
-  if (!getHost(id)) return reply.code(404).send({ error: "Service not found" });
+  const host = getHost(id);
+  if (!host || !canReadHost(req, host)) return reply.code(404).send({ error: "Service not found" });
   return listClientCerts(id);
 });
 app.post("/api/hosts/:id/client-certs", async (req, reply) => {
@@ -472,6 +542,8 @@ app.delete("/api/hosts/:id/client-certs/:certId", async (req, reply) => {
 // per-host uptime (availability %, history, incidents)
 app.get("/api/hosts/:id/uptime", async (req, reply) => {
   const { id } = req.params as { id: string };
+  const host = getHost(id);
+  if (!host || !canReadHost(req, host)) return reply.code(404).send({ error: "Service not found" });
   const u = getUptime(id);
   if (!u) return reply.code(404).send({ error: "Service not found" });
   return u;
@@ -481,7 +553,7 @@ app.get("/api/hosts/:id/uptime", async (req, reply) => {
 app.get("/api/hosts/:id/config", async (req, reply) => {
   const { id } = req.params as { id: string };
   const host = getHost(id);
-  if (!host) return reply.code(404).send({ error: "Service not found" });
+  if (!host || !canReadHost(req, host)) return reply.code(404).send({ error: "Service not found" });
   let conf: string;
   if (host.protocol === "sni") conf = generateSniPassthrough([host]);
   else if (host.protocol === "tcp" || host.protocol === "udp") conf = generateStreamConfig(host);
@@ -492,9 +564,12 @@ app.get("/api/hosts/:id/config", async (req, reply) => {
 // "Test connection" before proceeding (PRD wizard step 2)
 const testInput = z.object({ host: z.string().min(1), port: z.number().int().min(1).max(65535) });
 app.post("/api/test-connection", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return; // not a probe tool for readonly
   const parsed = testInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   const { host, port } = parsed.data;
+  // Private LAN targets are legitimate for a homelab, but link-local/metadata is not.
+  if (isDangerousHost(host)) return reply.code(400).send({ error: "That destination host is not allowed." });
   const reachable = await tcpProbe(host, port, 2500);
   return {
     reachable,
@@ -528,7 +603,8 @@ app.post("/api/config/versions/:id/restore", async (req, reply) => {
   logEvent({ type: "config.restored", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: `Restored config (${r.restored} services)`, ip: clientIp(req), meta: { id } });
   return { ...r, apply };
 });
-app.get("/api/config/export", async () => {
+app.get("/api/config/export", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return; // full dump includes provider secrets
   return { version: "0.1.0", exportedAt: new Date().toISOString(), hosts: listHosts(), settings: getSettings() };
 });
 app.post("/api/config/import", async (req, reply) => {
@@ -557,7 +633,7 @@ app.get("/api/traffic", async (req) => {
 });
 
 // ---------- logs + metrics ----------
-app.get("/api/metrics/summary", async () => metricsSummary());
+app.get("/api/metrics/summary", async (req, reply) => userRoleAtLeast(req, reply, "admin", "editor") ? metricsSummary() : undefined);
 app.get("/api/metrics/hosts", async (req) => {
   const { range = "live", metric = "requests" } = req.query as { range?: string; metric?: string };
   return hostTraffic(range, metric === "bandwidth" ? "bandwidth" : "requests");
@@ -605,14 +681,19 @@ app.get("/api/metrics/traffic", async (req) => {
 app.get("/api/metrics/prometheus", async (_req, reply) => {
   return reply.type("text/plain; version=0.0.4").send(prometheus());
 });
-app.get("/api/logs/recent", async (req) => {
+const clampLimit = (raw?: string): number | undefined =>
+  raw ? Math.min(1000, Math.max(1, Number(raw) || 1)) : undefined;
+
+app.get("/api/logs/recent", async (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return; // access logs carry client IPs
   const { filter, limit } = req.query as { filter?: string; limit?: string };
-  return recentLogs(filter, limit ? Number(limit) : undefined);
+  return recentLogs(filter, clampLimit(limit));
 });
 let sseClients = 0;
 const SSE_MAX = Number(process.env.NGINUX_SSE_MAX ?? 200);
 
 app.get("/api/logs/stream", (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return; // live access logs carry client IPs
   if (sseClients >= SSE_MAX) return reply.code(503).send({ error: "Too many open streams." });
   sseClients++;
   reply.hijack();
@@ -796,15 +877,16 @@ app.get("/api/sessions", async (req, reply) => {
 });
 
 // ---------- audit + security posture ----------
-app.get("/api/audit", async (req) => {
+app.get("/api/audit", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
   const { type, limit } = req.query as { type?: string; limit?: string };
-  return listEvents({ type, limit: limit ? Number(limit) : undefined });
+  return listEvents({ type, limit: clampLimit(limit) });
 });
-app.get("/api/security/overview", async () => securityOverview());
-app.get("/api/security/exposure", async () => securityExposure());
+app.get("/api/security/overview", async (req, reply) => requireRole(req, reply, "admin", "editor") ? securityOverview() : undefined);
+app.get("/api/security/exposure", async (req, reply) => requireRole(req, reply, "admin", "editor") ? securityExposure() : undefined);
 
 // ---------- IP bans (fail2ban-style) ----------
-app.get("/api/bans", async () => listBans());
+app.get("/api/bans", async (req, reply) => requireRole(req, reply, "admin", "editor") ? listBans() : undefined);
 app.post("/api/bans", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const parsed = z.object({
@@ -826,7 +908,7 @@ app.delete("/api/bans/:ip", async (req, reply) => {
 });
 
 // ---------- certificates ----------
-app.get("/api/certificates", async () => listCerts());
+app.get("/api/certificates", async (req, reply) => requireRole(req, reply, "admin", "editor") ? listCerts() : undefined);
 
 app.post("/api/certificates/:domain/issue", async (req, reply) => {
   if (!requireRole(req, reply, "admin", "editor")) return;
@@ -889,6 +971,7 @@ app.post("/api/certificates/import", async (req, reply) => {
 });
 
 app.get("/api/certificates/:domain/details", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
   const dp = domainParam.safeParse((req.params as { domain: string }).domain);
   if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
   const details = getCertDetails(dp.data);
@@ -942,7 +1025,7 @@ app.delete("/api/geoip", async (req, reply) => {
 });
 
 // ---------- agents: tokens ----------
-app.get("/api/tokens", async () => listTokens());
+app.get("/api/tokens", async (req, reply) => requireAdmin(req, reply) ? listTokens() : undefined);
 app.post("/api/tokens", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const body = z
@@ -965,7 +1048,8 @@ app.delete("/api/tokens/:id", async (req, reply) => {
 
 // ---------- agents: tools, approvals, overview ----------
 app.get("/api/agents/tools", async () => toolCatalog());
-app.get("/api/agents/approvals", async (req) => {
+app.get("/api/agents/approvals", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
   const { status } = req.query as { status?: string };
   return listApprovals(status);
 });
@@ -983,15 +1067,18 @@ app.post("/api/agents/approvals/:id/deny", async (req, reply) => {
   if (!ap) return reply.code(404).send({ error: "Approval not found" });
   return ap;
 });
-app.get("/api/agents/overview", async () => ({
-  agents: listTokens().length,
-  tools: toolCatalog().length,
-  pendingApprovals: listApprovals("pending").length,
-  webhooks: listWebhooks().length,
-}));
+app.get("/api/agents/overview", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  return {
+    agents: listTokens().length,
+    tools: toolCatalog().length,
+    pendingApprovals: listApprovals("pending").length,
+    webhooks: listWebhooks().length,
+  };
+});
 
 // ---------- agents: webhooks ----------
-app.get("/api/webhooks", async () => listWebhooks());
+app.get("/api/webhooks", async (req, reply) => requireAdmin(req, reply) ? listWebhooks() : undefined);
 app.post("/api/webhooks", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const parsed = z.object({ url: z.string().url(), events: z.array(z.string().max(64)).max(50).default(["*"]) }).safeParse(req.body);
@@ -1009,7 +1096,7 @@ app.delete("/api/webhooks/:id", async (req, reply) => {
 });
 
 // ---------- notification channels ----------
-app.get("/api/channels", async () => listChannels());
+app.get("/api/channels", async (req, reply) => requireAdmin(req, reply) ? listChannels() : undefined);
 app.post("/api/channels", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const parsed = z

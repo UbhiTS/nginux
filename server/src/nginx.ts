@@ -49,6 +49,11 @@ export interface ApplyResult {
 
 const splitList = (s: string): string[] => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
 const splitLines = (s: string): string[] => s.split("\n").map((x) => x.trim()).filter(Boolean);
+/** HTML-escape for any user string reflected into a generated HTML response.
+ *  Entities also neutralise quotes that would otherwise break the surrounding
+ *  nginx single-quoted string. */
+const htmlEscape = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 /** Aggregate all SNI passthrough hosts into one stream config (route TLS by SNI,
  *  no termination) using ssl_preread + a map per listen port. */
@@ -199,10 +204,13 @@ export function generateHostConfig(h: ProxyHost): string {
     ? "\n" + h.customNginx.split("\n").map((l) => `        ${l.trim()}`).join("\n")
     : "";
 
-  // Maintenance mode short-circuits the proxy with a friendly page.
+  // Maintenance mode short-circuits the proxy with a friendly page. The name is
+  // HTML-escaped (entities also neutralise the single-quote that would otherwise
+  // close this nginx string), so it can't inject HTML or break out of the directive.
+  const safeName = htmlEscape(h.name);
   const locationBody = h.maintenanceMode
     ? `        default_type text/html;
-        return 503 '<!doctype html><html><head><meta charset="utf-8"><title>Be right back</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}h1{font-size:22px}</style></head><body><div><h1>🔧 Be right back</h1><p>${h.name} is down for maintenance.</p></div></body></html>';`
+        return 503 '<!doctype html><html><head><meta charset="utf-8"><title>Be right back</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}h1{font-size:22px}</style></head><body><div><h1>🔧 Be right back</h1><p>${safeName} is down for maintenance.</p></div></body></html>';`
     : h.protocol === "grpc"
     ? `        grpc_pass grpc://${extraTargets.length ? proxyPass.replace(/^https?:\/\//, "") : `${h.forwardHost}:${h.forwardPort}`};
         grpc_set_header Host $host;${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${customNginx}

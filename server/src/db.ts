@@ -345,9 +345,18 @@ const DEFAULT_SETTINGS: Settings = {
   cloudflareApiToken: "",
   maxmindLicenseKey: "",
   acmeStaging: false,
-  agentAutoApprove: true,
+  agentAutoApprove: false,
   gitOpsEnabled: false,
 };
+
+// Settings fields that hold third-party credentials — never expose these to a
+// non-admin, and never include them in an unauthenticated/low-privilege view.
+export const SECRET_SETTING_KEYS = [
+  "godaddyApiKey",
+  "godaddySecret",
+  "cloudflareApiToken",
+  "maxmindLicenseKey",
+] as const;
 
 export function getSettings(): Settings {
   const rows = db.prepare("SELECT key, value FROM settings").all() as Array<{
@@ -360,6 +369,16 @@ export function getSettings(): Settings {
   merged.agentAutoApprove = String(merged.agentAutoApprove) === "true";
   merged.gitOpsEnabled = String(merged.gitOpsEnabled) === "true";
   return merged as unknown as Settings;
+}
+
+/** Mask credential fields for non-admin callers. A configured secret becomes a
+ *  "set" placeholder so the UI can show it exists without leaking the value. */
+export function redactSettings(s: Settings): Settings {
+  const out = { ...s } as unknown as Record<string, unknown>;
+  for (const k of SECRET_SETTING_KEYS) {
+    out[k] = String(out[k] ?? "") ? "••••••••" : "";
+  }
+  return out as unknown as Settings;
 }
 
 export function saveSettings(patch: Partial<Settings>): Settings {

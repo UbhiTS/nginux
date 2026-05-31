@@ -39,7 +39,13 @@ function getChannelRaw(id: string): Channel | null {
 function maskConfig(config: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(config)) {
-    out[k] = /token|secret|key|user|url/i.test(k) && v.length > 6 ? v.slice(0, 4) + "••••" : v;
+    // Secret-bearing keys are always masked (even short ones); semi-sensitive
+    // identifiers (user/url) are partially shown for readability.
+    const secret = /token|secret|key|pass|pwd|auth/i.test(k);
+    const semi = /user|url/i.test(k);
+    if (secret && v) out[k] = v.length > 6 ? v.slice(0, 4) + "••••" : "••••";
+    else if (semi && v.length > 6) out[k] = v.slice(0, 4) + "••••";
+    else out[k] = v;
   }
   return out;
 }
