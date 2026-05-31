@@ -418,10 +418,9 @@ export function Topology({
                       if (!s.enabled) return null;
                       const st = stats[s.domain];
                       if (!st || (st.requests === 0 && st.bytesIn === 0 && st.bytesOut === 0)) return null;
-                      const rps = st.requests / 60;
                       return (
                         <div className="svc-metrics">
-                          <span className="m-req">{range === "live" ? `${rps >= 10 ? Math.round(rps) : rps.toFixed(1)}/s` : `${fmtCount(st.requests)} req`}</span>
+                          <span className="m-req" title={range === "live" ? "Requests in the last 60s (in sync with the live graph below)" : undefined}>{fmtCount(st.requests)} req</span>
                           <span className="m-bw" title="in / out">
                             {range === "live"
                               ? `${fmtMbps(st.bytesIn)} / ${fmtMbps(st.bytesOut)} Mbps`
