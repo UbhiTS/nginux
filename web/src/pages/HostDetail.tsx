@@ -441,30 +441,42 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
 
-  // Certificate management (only meaningful when this host terminates TLS).
-  const tlsHost = draft.ssl && (draft.protocol === "http" || draft.protocol === "grpc");
+  // Certificate applies to L7 hosts (HTTP / gRPC). A single dropdown drives the
+  // whole thing: no cert (plain HTTP), an existing covering cert, create a new
+  // one, or import — so there's one control, not three.
+  const certApplies = draft.protocol === "http" || draft.protocol === "grpc";
   // The cert for this service's own domain (if one exists), plus any OTHER cert
-  // that actually covers this domain (a wildcard, or a SAN match) — selecting a
-  // cert that doesn't cover the domain would serve a mismatched cert (browser
-  // "insecure" warning), so those are deliberately not offered.
+  // that actually covers this domain (wildcard / SAN). A cert that doesn't cover
+  // the domain would serve a mismatched cert (browser "insecure" warning), so
+  // those are deliberately not offered.
   const ownCert = certs.find((c) => c.domain === draft.domain) ?? null;
   const otherCerts = certs.filter((c) => c.domain !== draft.domain && certCovers(c, draft.domain));
   const [certBusy, setCertBusy] = useState("");
   const [certMsg, setCertMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [showImport, setShowImport] = useState(false);
   const [impCert, setImpCert] = useState("");
   const [impKey, setImpKey] = useState("");
-  // Same certificate-method choice as service creation: DNS-01 (needs a DNS
-  // provider, no open ports), HTTP-01 (needs port 80 + public DNS), or self-signed.
   type CertMethod = "dns-01" | "http-01" | "selfsigned";
-  const [leMethod, setLeMethod] = useState<CertMethod>(hasDnsProvider ? "dns-01" : "http-01");
+  // Unified dropdown value: "none" | "use:self" | "use:<domain>" | "new:<method>" | "import".
+  const [certChoice, setCertChoice] = useState<string>(
+    !draft.ssl ? "none" : draft.certDomain ? `use:${draft.certDomain}` : "use:self",
+  );
+
+  const onCertChoice = (value: string) => {
+    setCertChoice(value);
+    setCertMsg(null);
+    if (value === "none") set({ ssl: false });
+    else if (value === "use:self") set({ ssl: true, certDomain: "" });
+    else if (value.startsWith("use:")) set({ ssl: true, certDomain: value.slice(4) });
+    else set({ ssl: true }); // new:* / import — HTTPS on; the action runs below
+  };
 
   const issue = async (method: CertMethod) => {
     setCertBusy("create");
     setCertMsg(null);
     try {
       await api.issueCert(draft.domain, method);
-      set({ certDomain: "" }); // serve the freshly-issued per-domain cert
+      set({ ssl: true, certDomain: "" }); // serve the freshly-issued per-domain cert
+      setCertChoice("use:self");
       setCertMsg({ ok: true, text: method === "selfsigned" ? "Self-signed certificate created." : `Let's Encrypt certificate issued for ${draft.domain}.` });
       onCertsChanged();
     } catch (e) {
@@ -482,9 +494,16 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
       const r = await api.importCerts([{ path: "cert.pem", content: impCert }, { path: "key.pem", content: impKey }]);
       const dom = r.imported?.[0]?.domain;
       if (dom) {
-        set({ certDomain: dom === draft.domain ? "" : dom });
-        setCertMsg({ ok: true, text: `Imported certificate for ${dom}.` });
-        setImpCert(""); setImpKey(""); setShowImport(false);
+        // Auto-select the imported cert only if it actually covers this domain.
+        const covers = dom === draft.domain
+          || (dom.startsWith("*.") && draft.domain.endsWith(dom.slice(1)) && draft.domain.split(".").length === dom.split(".").length);
+        if (covers) {
+          const cd = dom === draft.domain ? "" : dom;
+          set({ ssl: true, certDomain: cd });
+          setCertChoice(cd ? `use:${cd}` : "use:self");
+        }
+        setCertMsg({ ok: true, text: covers ? `Imported and selected ${dom}.` : `Imported ${dom} — it doesn't cover ${draft.domain}, so it wasn't selected.` });
+        setImpCert(""); setImpKey("");
         onCertsChanged();
       } else {
         setCertMsg({ ok: false, text: r.skipped?.[0]?.reason ? `Couldn't import — ${r.skipped[0].reason}.` : "Couldn't import that certificate." });
@@ -495,6 +514,15 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
       setCertBusy("");
     }
   };
+
+  const certHint =
+    certChoice === "none" ? "Served over plain HTTP — no encryption. Anyone on the network path can read the traffic."
+      : certChoice === "new:dns-01" ? `A free, trusted Let's Encrypt certificate over DNS — no open ports needed${hasDnsProvider ? "" : " (a DNS provider must be connected in Settings — none yet)"}.`
+        : certChoice === "new:http-01" ? `A free, trusted Let's Encrypt certificate over HTTP — needs port 80 reachable from the internet and public DNS for ${draft.domain}.`
+          : certChoice === "new:selfsigned" ? "An instant self-signed certificate — works immediately, but browsers show a warning. Fine for LAN-only or testing."
+            : certChoice === "import" ? "Paste the full-chain certificate and its private key for this domain."
+              : certChoice === "use:self" && !ownCert ? `No certificate for ${draft.domain} yet — it'll use the temporary self-signed cert until you create one.`
+                : "Serves the selected certificate over HTTPS (and redirects HTTP).";
   const Toggle = ({ k, label, desc }: { k: keyof ProxyHost; label: string; desc: string }) => (
     <div className="switch-row">
       <div className="sw-text"><div className="t">{label}</div><div className="d">{desc}</div></div>
@@ -535,59 +563,54 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
       </div>
 
       <div className="section-title" style={{ marginTop: 8 }}>Behaviour</div>
-      <Toggle k="ssl" label="HTTPS" desc="Serve over TLS and redirect HTTP." />
       <Toggle k="websockets" label="WebSockets" desc="Support upgrade connections." />
       <Toggle k="maintenanceMode" label="Maintenance mode" desc="Serve a 'be right back' page instead of proxying." />
 
-      {tlsHost && (
+      {certApplies && (
         <>
           <div className="section-title" style={{ marginTop: 8 }}>Certificate</div>
           <div className="field">
-            <label>Which certificate to serve</label>
-            <select className="input" value={draft.certDomain || draft.domain} onChange={(e) => set({ certDomain: e.target.value === draft.domain ? "" : e.target.value })}>
-              <option value={draft.domain}>
-                {ownCert
-                  ? `${draft.domain} · ${ownCert.issuer || ownCert.method}${ownCert.daysRemaining != null ? ` · ${ownCert.daysRemaining}d left` : ""}`
-                  : `${draft.domain} — no certificate yet (create one below)`}
-              </option>
-              {otherCerts.map((c) => (
-                <option key={c.domain} value={c.domain}>
-                  {c.domain}{c.wildcard ? " · wildcard" : ""} · {c.issuer || c.method}{c.daysRemaining != null ? ` · ${c.daysRemaining}d left` : ""}
+            <label>How {draft.domain} is served</label>
+            <select className="input" value={certChoice} onChange={(e) => onCertChoice(e.target.value)} disabled={!!certBusy}>
+              <option value="none">No certificate — serve over HTTP only (no HTTPS)</option>
+              <optgroup label="Use a certificate (HTTPS)">
+                <option value="use:self">
+                  {ownCert
+                    ? `${draft.domain} · ${ownCert.issuer || ownCert.method}${ownCert.daysRemaining != null ? ` · ${ownCert.daysRemaining}d left` : ""}`
+                    : `${draft.domain} — this service's domain`}
                 </option>
-              ))}
+                {otherCerts.map((c) => (
+                  <option key={c.domain} value={`use:${c.domain}`}>
+                    {c.domain}{c.wildcard ? " · wildcard" : ""} · {c.issuer || c.method}{c.daysRemaining != null ? ` · ${c.daysRemaining}d left` : ""}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Create a new certificate">
+                {hasDnsProvider && <option value="new:dns-01">Let's Encrypt (DNS) — trusted, no open ports needed</option>}
+                <option value="new:http-01">Let's Encrypt (HTTP) — trusted, needs port 80 + public DNS</option>
+                <option value="new:selfsigned">Self-signed — instant, not browser-trusted</option>
+              </optgroup>
+              <option value="import">Import your own certificate…</option>
             </select>
-            <div className="hint">By default this service uses its own domain's certificate. Pick another from your store (e.g. a shared wildcard) to reuse it, or create / import one below.</div>
+            <div className="hint">{certHint}</div>
           </div>
-          {!draft.certDomain && (
+
+          {certChoice.startsWith("new:") && (
             <div className="field">
-              <label>Create or import a certificate for {draft.domain}</label>
-              <div className="input-group">
-                <select className="input" value={leMethod} onChange={(e) => setLeMethod(e.target.value as CertMethod)} disabled={!!certBusy}>
-                  {hasDnsProvider && <option value="dns-01">Let's Encrypt (DNS) — trusted, no open ports needed</option>}
-                  <option value="http-01">Let's Encrypt (HTTP) — trusted, needs port 80 + public DNS</option>
-                  <option value="selfsigned">Self-signed — instant, not browser-trusted</option>
-                </select>
-                <button type="button" className="btn btn-primary" style={{ whiteSpace: "nowrap" }} disabled={certBusy === "create"} onClick={() => issue(leMethod)}>
-                  {certBusy === "create" ? <span className="spinner" /> : null}Create certificate
-                </button>
-              </div>
-              <div className="hint">
-                {leMethod === "dns-01"
-                  ? `Requests a free, trusted Let's Encrypt certificate over DNS — no open ports needed, but a DNS provider (GoDaddy / Cloudflare) must be connected in Settings${hasDnsProvider ? "" : " (none connected yet)"}.`
-                  : leMethod === "http-01"
-                    ? `Requests a trusted Let's Encrypt certificate over HTTP — needs port 80 reachable from the internet and public DNS for ${draft.domain}.`
-                    : "Creates an instant self-signed certificate — works immediately, but browsers show a warning. Fine for LAN-only or testing."}
-              </div>
-              <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={() => setShowImport((v) => !v)}>{showImport ? "Cancel import" : "Import your own…"}</button>
+              <button type="button" className="btn btn-primary btn-sm" disabled={certBusy === "create"} onClick={() => issue(certChoice.slice(4) as CertMethod)}>
+                {certBusy === "create" ? <span className="spinner" /> : null}Create certificate for {draft.domain}
+              </button>
             </div>
           )}
-          {showImport && !draft.certDomain && (
+
+          {certChoice === "import" && (
             <div className="field">
               <textarea className="input mono" rows={3} placeholder="-----BEGIN CERTIFICATE----- (full chain)" value={impCert} onChange={(e) => setImpCert(e.target.value)} />
               <textarea className="input mono" rows={3} style={{ marginTop: 6 }} placeholder="-----BEGIN PRIVATE KEY-----" value={impKey} onChange={(e) => setImpKey(e.target.value)} />
               <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 6 }} disabled={certBusy === "import"} onClick={doImport}>{certBusy === "import" ? <span className="spinner" /> : null}Import certificate</button>
             </div>
           )}
+
           {certMsg && (
             <div className={`test-result ${certMsg.ok ? "ok" : "bad"}`} style={{ marginTop: 4 }}>
               {certMsg.ok ? <Icon.check /> : <Icon.x />}
