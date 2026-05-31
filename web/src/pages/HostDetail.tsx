@@ -443,13 +443,12 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
 
   // Certificate management (only meaningful when this host terminates TLS).
   const tlsHost = draft.ssl && (draft.protocol === "http" || draft.protocol === "grpc");
-  // The cert for this service's own domain (if one exists), and every other cert
-  // in the store — both shown by name so the user can pick exactly what they have
-  // (e.g. a shared wildcard). Certs that actually cover this domain sort first.
+  // The cert for this service's own domain (if one exists), plus any OTHER cert
+  // that actually covers this domain (a wildcard, or a SAN match) — selecting a
+  // cert that doesn't cover the domain would serve a mismatched cert (browser
+  // "insecure" warning), so those are deliberately not offered.
   const ownCert = certs.find((c) => c.domain === draft.domain) ?? null;
-  const otherCerts = certs
-    .filter((c) => c.domain !== draft.domain)
-    .sort((a, b) => Number(certCovers(b, draft.domain)) - Number(certCovers(a, draft.domain)));
+  const otherCerts = certs.filter((c) => c.domain !== draft.domain && certCovers(c, draft.domain));
   const [certBusy, setCertBusy] = useState("");
   const [certMsg, setCertMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [showImport, setShowImport] = useState(false);
