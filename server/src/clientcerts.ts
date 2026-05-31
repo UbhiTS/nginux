@@ -119,8 +119,10 @@ export async function ensureClientCA(domain: string): Promise<void> {
   ]);
   ca.sign(keys.privateKey, forge.md.sha256.create());
   writeFileSync(caCrt, forge.pki.certificateToPem(ca));
-  // The CA signing key can mint client certs that pass mTLS — keep it owner-only.
-  writeFileSync(join(dir, "client-ca.key"), forge.pki.privateKeyToPem(keys.privateKey), { mode: 0o600 });
+  // Default perms (like the other key files) so the data volume stays manageable
+  // by the host owner over SMB. Protect the keys at the filesystem/host level if
+  // your deployment shares the host with untrusted users.
+  writeFileSync(join(dir, "client-ca.key"), forge.pki.privateKeyToPem(keys.privateKey));
   // Seed an (empty) CRL so nginx's ssl_crl always has a file to load.
   writeClientCrl(domain);
 }

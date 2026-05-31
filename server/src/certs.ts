@@ -199,7 +199,7 @@ export function reconcileImportedCerts(): void {
 function writeFiles(domain: string, keyPem: string, certPem: string) {
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "privkey.pem"), keyPem, { mode: 0o600 }); // private key: owner-only
+  writeFileSync(join(dir, "privkey.pem"), keyPem); // default perms so the data volume stays host-manageable
   writeFileSync(join(dir, "fullchain.pem"), certPem);
 }
 
@@ -319,7 +319,7 @@ async function acmeAccountKey(): Promise<Buffer> {
   if (existsSync(ACCOUNT_KEY_PATH)) return readFileSync(ACCOUNT_KEY_PATH);
   const key = await acme.crypto.createPrivateKey();
   mkdirSync(CERT_DIR, { recursive: true });
-  writeFileSync(ACCOUNT_KEY_PATH, key, { mode: 0o600 }); // ACME account key: owner-only
+  writeFileSync(ACCOUNT_KEY_PATH, key); // default perms so the data volume stays host-manageable
   return key;
 }
 
