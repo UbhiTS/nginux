@@ -29,6 +29,9 @@ export interface ProxyHost {
   health: HealthStatus;
   /** ISO date the cert expires, or null when no cert yet. */
   certExpiresAt: string | null;
+  /** Which certificate this host serves. Empty = use/manage one for its own
+   *  domain; otherwise the domain key of an existing cert (e.g. a wildcard). */
+  certDomain: string;
   // --- proxy behaviour & protections ---
   /** Serve a friendly "be right back" page instead of proxying. */
   maintenanceMode: boolean;
@@ -69,7 +72,7 @@ export interface ProxyHost {
 
 type ManagedFields = "id" | "createdAt" | "updatedAt";
 type OptionalOnCreate =
-  | "health" | "certExpiresAt" | "maintenanceMode" | "securityHeaders" | "hsts"
+  | "health" | "certExpiresAt" | "certDomain" | "maintenanceMode" | "securityHeaders" | "hsts"
   | "rateLimit" | "blockExploits" | "ipAllow" | "ipDeny" | "customHeaders" | "customNginx"
   | "upstreams" | "lbMethod" | "protocol" | "listenPort" | "pathRules" | "mtls"
   | "rateLimitKbps" | "maxConns";

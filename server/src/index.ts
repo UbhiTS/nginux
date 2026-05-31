@@ -372,6 +372,12 @@ const hostInput = z.object({
   serverGroup: z.string().max(64).default("default"),
   serverIp: z.string().max(64).default("").refine((s) => s === "" || isHost(s), "Invalid server IP."),
   enabled: z.boolean().default(true),
+  // Which certificate to serve (empty = per-domain). Used as a cert-dir path
+  // segment, so constrain to a safe charset and forbid traversal.
+  certDomain: z.string().max(253).default("").refine(
+    (s) => s === "" || (/^[a-z0-9.*_-]+$/i.test(s) && !s.includes("..")),
+    "Invalid certificate selection.",
+  ),
   maintenanceMode: z.boolean().default(false),
   securityHeaders: z.boolean().default(true),
   hsts: z.boolean().default(false),

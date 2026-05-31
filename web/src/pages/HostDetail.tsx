@@ -91,9 +91,9 @@ export function HostDetail({
   }
 
   const b = banner[host.health];
-  // The real certificate for this domain (from the cert store), not the host's
-  // stale certExpiresAt field.
-  const cert = certs.find((c) => c.domain === host.domain) ?? null;
+  // The real certificate this host serves (its chosen certDomain, or its own),
+  // from the cert store — not the host's stale certExpiresAt field.
+  const cert = certs.find((c) => c.domain === (host.certDomain || host.domain)) ?? null;
   const certDays = cert?.daysRemaining ?? null;
   const certStatusCls = cert ? (cert.status === "valid" ? "g" : cert.status === "expiring" || cert.status === "expired" || cert.status === "error" ? "r" : "n") : "n";
 
@@ -195,7 +195,7 @@ export function HostDetail({
         </div>
 
         {editing && draft ? (
-          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} error={saveErr} />
+          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} error={saveErr} certs={certs} onCertsChanged={() => api.certificates().then(setCerts).catch(() => {})} />
         ) : (
         <div className="detail-grid">
           <div>
@@ -394,15 +394,77 @@ function ClientCerts({ hostId }: { hostId: string }) {
   );
 }
 
-function EditForm({ draft, setDraft, onSave, onCancel, saving, error }: {
+// A cert covers a domain if it names it exactly, lists it in SANs, or is a
+// single-level wildcard matching it (e.g. *.example.com → app.example.com).
+function certCovers(c: Certificate, domain: string): boolean {
+  const names = [c.domain, ...(c.sans ?? [])];
+  return names.some(
+    (n) =>
+      n === domain ||
+      (n.startsWith("*.") &&
+        domain.endsWith(n.slice(1)) &&
+        domain.split(".").length === n.split(".").length),
+  );
+}
+
+function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, onCertsChanged }: {
   draft: ProxyHost;
   setDraft: (d: ProxyHost) => void;
   onSave: () => void;
   onCancel: () => void;
   saving: boolean;
   error?: string;
+  certs: Certificate[];
+  onCertsChanged: () => void;
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
+
+  // Certificate management (only meaningful when this host terminates TLS).
+  const tlsHost = draft.ssl && (draft.protocol === "http" || draft.protocol === "grpc");
+  // Existing certs (other than this domain's own) that could serve it — e.g. a wildcard.
+  const reusable = certs.filter((c) => c.domain !== draft.domain && certCovers(c, draft.domain));
+  const [certBusy, setCertBusy] = useState("");
+  const [certMsg, setCertMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [showImport, setShowImport] = useState(false);
+  const [impCert, setImpCert] = useState("");
+  const [impKey, setImpKey] = useState("");
+
+  const issue = async (method: "http-01" | "selfsigned") => {
+    setCertBusy(method === "selfsigned" ? "self" : "le");
+    setCertMsg(null);
+    try {
+      await api.issueCert(draft.domain, method);
+      set({ certDomain: "" }); // serve the freshly-issued per-domain cert
+      setCertMsg({ ok: true, text: method === "selfsigned" ? "Self-signed certificate created." : `Let's Encrypt certificate issued for ${draft.domain}.` });
+      onCertsChanged();
+    } catch (e) {
+      setCertMsg({ ok: false, text: e instanceof Error ? e.message : "Couldn't create the certificate." });
+    } finally {
+      setCertBusy("");
+    }
+  };
+
+  const doImport = async () => {
+    if (!impCert.trim() || !impKey.trim()) return;
+    setCertBusy("import");
+    setCertMsg(null);
+    try {
+      const r = await api.importCerts([{ path: "cert.pem", content: impCert }, { path: "key.pem", content: impKey }]);
+      const dom = r.imported?.[0]?.domain;
+      if (dom) {
+        set({ certDomain: dom === draft.domain ? "" : dom });
+        setCertMsg({ ok: true, text: `Imported certificate for ${dom}.` });
+        setImpCert(""); setImpKey(""); setShowImport(false);
+        onCertsChanged();
+      } else {
+        setCertMsg({ ok: false, text: r.skipped?.[0]?.reason ? `Couldn't import — ${r.skipped[0].reason}.` : "Couldn't import that certificate." });
+      }
+    } catch (e) {
+      setCertMsg({ ok: false, text: e instanceof Error ? e.message : "Import failed." });
+    } finally {
+      setCertBusy("");
+    }
+  };
   const Toggle = ({ k, label, desc }: { k: keyof ProxyHost; label: string; desc: string }) => (
     <div className="switch-row">
       <div className="sw-text"><div className="t">{label}</div><div className="d">{desc}</div></div>
@@ -446,6 +508,47 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error }: {
       <Toggle k="ssl" label="HTTPS" desc="Serve over TLS and redirect HTTP." />
       <Toggle k="websockets" label="WebSockets" desc="Support upgrade connections." />
       <Toggle k="maintenanceMode" label="Maintenance mode" desc="Serve a 'be right back' page instead of proxying." />
+
+      {tlsHost && (
+        <>
+          <div className="section-title" style={{ marginTop: 8 }}>Certificate</div>
+          <div className="field">
+            <label>Which certificate to serve</label>
+            <select className="input" value={draft.certDomain || ""} onChange={(e) => set({ certDomain: e.target.value })}>
+              <option value="">Automatic — manage a certificate for {draft.domain}</option>
+              {reusable.map((c) => (
+                <option key={c.domain} value={c.domain}>
+                  {c.domain}{c.wildcard ? " · wildcard" : ""} · {c.issuer || c.method}{c.daysRemaining != null ? ` · ${c.daysRemaining}d left` : ""}
+                </option>
+              ))}
+            </select>
+            <div className="hint">Pick an existing certificate (e.g. a wildcard that covers this domain), or keep Automatic to use / create one for {draft.domain}.</div>
+          </div>
+          {!draft.certDomain && (
+            <div className="field">
+              <label>Create or import a certificate for {draft.domain}</label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" className="btn btn-sm" disabled={!!certBusy} onClick={() => issue("http-01")}>{certBusy === "le" ? <span className="spinner" /> : null}Get Let's Encrypt</button>
+                <button type="button" className="btn btn-sm" disabled={!!certBusy} onClick={() => issue("selfsigned")}>{certBusy === "self" ? <span className="spinner" /> : null}Create self-signed</button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowImport((v) => !v)}>{showImport ? "Cancel import" : "Import your own…"}</button>
+              </div>
+            </div>
+          )}
+          {showImport && !draft.certDomain && (
+            <div className="field">
+              <textarea className="input mono" rows={3} placeholder="-----BEGIN CERTIFICATE----- (full chain)" value={impCert} onChange={(e) => setImpCert(e.target.value)} />
+              <textarea className="input mono" rows={3} style={{ marginTop: 6 }} placeholder="-----BEGIN PRIVATE KEY-----" value={impKey} onChange={(e) => setImpKey(e.target.value)} />
+              <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 6 }} disabled={certBusy === "import"} onClick={doImport}>{certBusy === "import" ? <span className="spinner" /> : null}Import certificate</button>
+            </div>
+          )}
+          {certMsg && (
+            <div className={`test-result ${certMsg.ok ? "ok" : "bad"}`} style={{ marginTop: 4 }}>
+              {certMsg.ok ? <Icon.check /> : <Icon.x />}
+              <div>{certMsg.text}</div>
+            </div>
+          )}
+        </>
+      )}
 
       <div className="section-title" style={{ marginTop: 8 }}>Access</div>
       <Toggle k="requireLogin" label="Require login" desc="Gate behind NginUX auth." />

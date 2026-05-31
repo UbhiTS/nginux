@@ -117,8 +117,11 @@ export function generateHostConfig(h: ProxyHost): string {
   // Use the managed per-host cert (self-signed or Let's Encrypt) when present;
   // otherwise fall back to the shared self-signed cert so nginx always boots.
   const certDir = process.env.CERT_DIR ?? join(__dirname, "..", "data", "certs");
-  const liveCert = join(certDir, h.domain, "fullchain.pem");
-  const liveKey = join(certDir, h.domain, "privkey.pem");
+  // Serve the chosen certificate when set (e.g. a shared wildcard), else the
+  // per-domain one. Falls back to the bootstrap self-signed cert if neither exists.
+  const certName = h.certDomain || h.domain;
+  const liveCert = join(certDir, certName, "fullchain.pem");
+  const liveKey = join(certDir, certName, "privkey.pem");
   const haveLive = existsSync(liveCert) && existsSync(liveKey);
   const certPath = haveLive ? liveCert : process.env.NGINX_DEFAULT_CERT ?? "/data/nginx/selfsigned.crt";
   const keyPath = haveLive ? liveKey : process.env.NGINX_DEFAULT_KEY ?? "/data/nginx/selfsigned.key";

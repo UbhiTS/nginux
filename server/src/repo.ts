@@ -46,15 +46,16 @@ export function createHost(input: NewProxyHost): ProxyHost {
   db.prepare(`
     INSERT INTO hosts (id, name, emoji, domain, forwardScheme, forwardHost, forwardPort, preset,
       websockets, http2, ssl, requireLogin, require2fa, countryLock, serverGroup, serverIp,
-      enabled, health, certExpiresAt, maintenanceMode, securityHeaders, hsts, rateLimit,
+      enabled, health, certExpiresAt, certDomain, maintenanceMode, securityHeaders, hsts, rateLimit,
       blockExploits, ipAllow, ipDeny, customHeaders, customNginx, upstreams, lbMethod,
       protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, createdAt, updatedAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     id, input.name, input.emoji, input.domain, input.forwardScheme, input.forwardHost,
     input.forwardPort, input.preset, b(input.websockets), b(input.http2), b(input.ssl),
     b(input.requireLogin), b(input.require2fa), b(input.countryLock), input.serverGroup,
     input.serverIp, b(input.enabled), input.health ?? "unknown", input.certExpiresAt ?? null,
+    input.certDomain ?? "",
     b(input.maintenanceMode ?? false), b(input.securityHeaders ?? true), b(input.hsts ?? false),
     b(input.rateLimit ?? false), b(input.blockExploits ?? false), input.ipAllow ?? "",
     input.ipDeny ?? "", input.customHeaders ?? "", input.customNginx ?? "",
@@ -73,7 +74,7 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
   db.prepare(`
     UPDATE hosts SET name=?, emoji=?, domain=?, forwardScheme=?, forwardHost=?, forwardPort=?,
       preset=?, websockets=?, http2=?, ssl=?, requireLogin=?, require2fa=?, countryLock=?,
-      serverGroup=?, serverIp=?, enabled=?, health=?, certExpiresAt=?,
+      serverGroup=?, serverIp=?, enabled=?, health=?, certExpiresAt=?, certDomain=?,
       maintenanceMode=?, securityHeaders=?, hsts=?, rateLimit=?, blockExploits=?,
       ipAllow=?, ipDeny=?, customHeaders=?, customNginx=?, upstreams=?, lbMethod=?,
       protocol=?, listenPort=?, pathRules=?, mtls=?, rateLimitKbps=?, maxConns=?, updatedAt=?
@@ -82,7 +83,7 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
     merged.name, merged.emoji, merged.domain, merged.forwardScheme, merged.forwardHost,
     merged.forwardPort, merged.preset, b(merged.websockets), b(merged.http2), b(merged.ssl),
     b(merged.requireLogin), b(merged.require2fa), b(merged.countryLock), merged.serverGroup,
-    merged.serverIp, b(merged.enabled), merged.health, merged.certExpiresAt,
+    merged.serverIp, b(merged.enabled), merged.health, merged.certExpiresAt, merged.certDomain ?? "",
     b(merged.maintenanceMode), b(merged.securityHeaders), b(merged.hsts), b(merged.rateLimit),
     b(merged.blockExploits), merged.ipAllow, merged.ipDeny, merged.customHeaders, merged.customNginx,
     merged.upstreams ?? "", merged.lbMethod ?? "round_robin",
@@ -108,10 +109,10 @@ export function replaceAllHosts(hosts: ProxyHost[]): void {
   const insert = db.prepare(`
     INSERT INTO hosts (id, name, emoji, domain, forwardScheme, forwardHost, forwardPort, preset,
       websockets, http2, ssl, requireLogin, require2fa, countryLock, serverGroup, serverIp,
-      enabled, health, certExpiresAt, maintenanceMode, securityHeaders, hsts, rateLimit,
+      enabled, health, certExpiresAt, certDomain, maintenanceMode, securityHeaders, hsts, rateLimit,
       blockExploits, ipAllow, ipDeny, customHeaders, customNginx, upstreams, lbMethod,
       protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, createdAt, updatedAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   db.exec("BEGIN");
   try {
@@ -120,7 +121,7 @@ export function replaceAllHosts(hosts: ProxyHost[]): void {
       insert.run(
         h.id, h.name, h.emoji, h.domain, h.forwardScheme, h.forwardHost, h.forwardPort, h.preset,
         b(h.websockets), b(h.http2), b(h.ssl), b(h.requireLogin), b(h.require2fa), b(h.countryLock),
-        h.serverGroup, h.serverIp, b(h.enabled), h.health, h.certExpiresAt ?? null,
+        h.serverGroup, h.serverIp, b(h.enabled), h.health, h.certExpiresAt ?? null, h.certDomain ?? "",
         b(h.maintenanceMode), b(h.securityHeaders), b(h.hsts), b(h.rateLimit), b(h.blockExploits),
         h.ipAllow ?? "", h.ipDeny ?? "", h.customHeaders ?? "", h.customNginx ?? "",
         h.upstreams ?? "", h.lbMethod ?? "round_robin", h.protocol ?? "http", h.listenPort ?? 0,

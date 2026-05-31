@@ -22,6 +22,9 @@ export interface ProxyHost {
   enabled: boolean;
   health: HealthStatus;
   certExpiresAt: string | null;
+  /** Which certificate this host serves. Empty = use/manage one for its own
+   *  domain; otherwise the domain key of an existing cert (e.g. a wildcard). */
+  certDomain: string;
   maintenanceMode: boolean;
   securityHeaders: boolean;
   hsts: boolean;
