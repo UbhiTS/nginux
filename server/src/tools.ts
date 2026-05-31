@@ -34,7 +34,7 @@ function sanitizeHostPatch(raw: Record<string, unknown>): Partial<ProxyHost> {
     if (typeof patch[f] === "string" && !splitList(patch[f] as string).every(isIpOrCidr)) throw new Error(`Invalid ${f} entry.`);
   }
   if (typeof patch.upstreams === "string" && !splitLines(patch.upstreams as string).every(isHostPort)) throw new Error("Invalid upstreams entry.");
-  if (typeof patch.customHeaders === "string" && !splitLines(patch.customHeaders as string).every((l) => { const i = l.indexOf(":"); return i > 0 && isHeaderName(l.slice(0, i).trim()) && !/[\n\r]/.test(l.slice(i + 1)); })) throw new Error("Invalid customHeaders.");
+  if (typeof patch.customHeaders === "string" && !splitLines(patch.customHeaders as string).every((l) => { const i = l.indexOf(":"); return i > 0 && isHeaderName(l.slice(0, i).trim()) && !/[\n\r"]/.test(l.slice(i + 1)); })) throw new Error("Invalid customHeaders.");
   if (typeof patch.pathRules === "string" && !splitLines(patch.pathRules as string).every((l) => { const [p, t, ...rest] = l.split(/\s+/); return rest.length === 0 && isLocationPath(p) && isHostPort(t); })) throw new Error("Invalid pathRules.");
   return patch as Partial<ProxyHost>;
 }

@@ -366,14 +366,17 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
     }), ACME_TIMEOUT_MS, "Let's Encrypt issuance");
 
     writeFiles(domain, key.toString(), certPem.toString());
-    const parsed = forge.pki.certificateFromPem(certPem.toString());
+    // Parse with node:crypto X509Certificate (EC-aware) — node-forge can't read
+    // EC certs and would throw here, marking a SUCCESSFUL issuance as failed and
+    // triggering rate-limit-burning retries. The cert is already on disk.
+    const info = parseLeaf(certPem.toString());
     upsertCert({
       domain,
-      status: statusFromExpiry(parsed.validity.notAfter),
+      status: info ? statusFromExpiry(new Date(info.notAfter)) : "valid",
       issuer: s.acmeStaging ? "Let's Encrypt (staging)" : "Let's Encrypt",
       method,
-      notBefore: parsed.validity.notBefore.toISOString(),
-      notAfter: parsed.validity.notAfter.toISOString(),
+      notBefore: info?.notBefore ?? null,
+      notAfter: info?.notAfter ?? null,
       sans: [domain],
       wildcard,
       lastError: null,

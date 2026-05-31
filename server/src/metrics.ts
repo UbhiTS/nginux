@@ -330,19 +330,29 @@ export function startLogTailer(): void {
   const dir = dirname(ACCESS_LOG);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   let offset = existsSync(ACCESS_LOG) ? statSync(ACCESS_LOG).size : 0;
+  let carry = ""; // a log line split across two reads must not be parsed as two
 
   const readNew = () => {
-    if (!existsSync(ACCESS_LOG)) return;
-    const size = statSync(ACCESS_LOG).size;
-    if (size < offset) offset = 0; // rotated
-    if (size === offset) return;
-    let buf = "";
-    createReadStream(ACCESS_LOG, { start: offset, end: size })
-      .on("data", (c) => (buf += c))
-      .on("end", () => {
-        offset = size;
-        for (const line of buf.split("\n")) parseLine(line);
-      });
+    try {
+      if (!existsSync(ACCESS_LOG)) return;
+      const size = statSync(ACCESS_LOG).size;
+      if (size < offset) { offset = 0; carry = ""; } // rotated/truncated
+      if (size <= offset) return;
+      const end = size; // snapshot; bytes written after this are caught next tick
+      let buf = "";
+      createReadStream(ACCESS_LOG, { start: offset, end })
+        // An unhandled stream 'error' (EBUSY, rotation mid-read) would otherwise
+        // throw and crash the process — swallow it and retry next tick.
+        .on("error", () => {})
+        .on("data", (c) => (buf += c))
+        .on("end", () => {
+          offset = end + 1; // createReadStream end is inclusive
+          const text = carry + buf;
+          const lines = text.split("\n");
+          carry = lines.pop() ?? ""; // keep the trailing partial line for next read
+          for (const line of lines) parseLine(line);
+        });
+    } catch { /* stat/read race — retry on the next watch tick */ }
   };
   watchFile(ACCESS_LOG, { interval: 1000 }, readNew);
 }

@@ -293,12 +293,24 @@ async function nginxInstalled(): Promise<boolean> {
   }
 }
 
+// Single-flight serialization: writeAllConfigs() rewrites the whole conf.d and
+// then `nginx -t`/reload run — two of these overlapping would let one request's
+// test run against another's half-written files and break create/update rollback
+// (which assumes it's the only writer). Every applyConfig() waits for the prior
+// one to finish, so writes/tests/reloads never interleave. Also coalesces bursts.
+let applyLock: Promise<unknown> = Promise.resolve();
+export function applyConfig(): Promise<ApplyResult> {
+  const run = applyLock.then(applyConfigInner, applyConfigInner);
+  applyLock = run.catch(() => {}); // the next caller waits for this run regardless of outcome
+  return run;
+}
+
 /**
  * Test-and-reload: write configs, validate with `nginx -t`, then reload.
  * When nginx isn't present (dev box), we still write configs and report clearly
  * rather than failing — the real validation happens in the container.
  */
-export async function applyConfig(): Promise<ApplyResult> {
+async function applyConfigInner(): Promise<ApplyResult> {
   writeAllConfigs();
 
   if (!(await nginxInstalled())) {

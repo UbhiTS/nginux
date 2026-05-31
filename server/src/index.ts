@@ -190,14 +190,22 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   if (!req.url.startsWith("/api")) return;
   const path = req.url.split("?")[0];
   if (OPEN_PATHS.has(path)) return;
+  // CSRF applies to EVERY mutating cookie request, including /api/mcp — a malicious
+  // page must not be able to drive state-changing MCP tools as the logged-in user.
+  // Bearer-token agents send no Origin, so they're unaffected.
+  if (crossOriginBlocked(req)) return reply.code(403).send({ error: "Cross-origin request blocked." });
   const isAgentPath = path === "/api/mcp" || path.startsWith("/api/events") || path.startsWith("/api/logs") || path === "/api/metrics/prometheus";
   if (isAgentPath) {
     if (!principal(req)) return reply.code(401).send({ error: "Valid session or API token required" });
+    // A cookie user with a temporary password is still confined, even via MCP.
+    const cu = currentUser(req);
+    if (cu?.mustChangePassword && !PW_CHANGE_ALLOWED.has(path)) {
+      return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
+    }
     return;
   }
   const u = currentUser(req);
   if (!u) return reply.code(401).send({ error: "Authentication required" });
-  if (crossOriginBlocked(req)) return reply.code(403).send({ error: "Cross-origin request blocked." });
   // A temporary-password account is confined to the change-password flow until it
   // sets a real password — enforced here, not just in the SPA.
   if (u.mustChangePassword && !PW_CHANGE_ALLOWED.has(path)) {
@@ -317,9 +325,11 @@ const ipListField = z.string().default("").refine(
 const customHeadersField = z.string().default("").refine(
   (s) => splitLines(s).every((line) => {
     const i = line.indexOf(":");
-    return i > 0 && isHeaderName(line.slice(0, i).trim()) && !/[\n\r]/.test(line.slice(i + 1));
+    // Reject CR/LF (response splitting) AND " (would close the quoted nginx
+    // add_header string and inject a directive).
+    return i > 0 && isHeaderName(line.slice(0, i).trim()) && !/[\n\r"]/.test(line.slice(i + 1));
   }),
-  'Custom headers must be "Header-Name: value" per line.',
+  'Custom headers must be "Header-Name: value" per line (no quotes).',
 );
 // "/path host:port" per line — both parts strictly validated (config injection sink).
 const pathRulesField = z.string().default("").refine(
@@ -431,6 +441,33 @@ app.put("/api/settings", async (req, reply) => {
 });
 
 // ---------- hosts ----------
+const STREAM_PROTOS = new Set(["tcp", "udp", "sni"]);
+/** Stream/SNI hosts need a real listen port, and tcp/udp ports must be unique —
+ *  a `listen 0;` or a duplicate listen breaks the whole `stream {}` block (and
+ *  can wedge nginx on the next restart, where there's no rollback). SNI hosts may
+ *  share a port (they're multiplexed by server name). Returns an error or null. */
+function streamPortError(h: { protocol: string; listenPort: number; name?: string }, excludeId?: string): string | null {
+  if (!STREAM_PROTOS.has(h.protocol)) return null;
+  if (!Number.isInteger(h.listenPort) || h.listenPort < 1 || h.listenPort > 65535) {
+    return "TCP / UDP / SNI services need a listen port between 1 and 65535.";
+  }
+  for (const o of listHosts()) {
+    if (o.id === excludeId || !STREAM_PROTOS.has(o.protocol) || o.listenPort !== h.listenPort) continue;
+    if (h.protocol === "sni" && o.protocol === "sni") continue; // SNI passthrough multiplexes by host
+    return `Listen port ${h.listenPort} is already used by "${o.name}". Pick a different port.`;
+  }
+  return null;
+}
+/** A host must not claim the control plane's own public hostname (self-hijack). */
+function isControlPlaneDomain(domain: string): boolean {
+  const raw = getSettings().publicUrl?.trim();
+  if (!raw) return false;
+  try {
+    const h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
+    return h === domain.toLowerCase();
+  } catch { return false; }
+}
+
 app.get("/api/hosts", async (req) => {
   const u = currentUser(req);
   const hosts = listHosts();
@@ -453,6 +490,11 @@ app.post("/api/hosts", async (req, reply) => {
   if (getHostByDomain(parsed.data.domain)) {
     return reply.code(409).send({ error: `${parsed.data.domain} is already in use.` });
   }
+  if (isControlPlaneDomain(parsed.data.domain)) {
+    return reply.code(409).send({ error: "That domain is the NginUX control plane itself — choose another." });
+  }
+  const spErr = streamPortError(parsed.data);
+  if (spErr) return reply.code(400).send({ error: spErr });
   snapshot(`Before exposing ${parsed.data.name}`, currentUser(req)?.username ?? "system");
   const host = createHost(parsed.data);
   // Ensure the host has a cert (self-signed now; upgrade to Let's Encrypt later)
@@ -484,6 +526,13 @@ app.put("/api/hosts/:id", async (req, reply) => {
   const parsed = hostInput.partial().safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
+  // Validate the *resulting* host (existing merged with the patch) before writing.
+  const merged = { ...existing, ...parsed.data };
+  if (parsed.data.domain && parsed.data.domain !== existing.domain && isControlPlaneDomain(parsed.data.domain)) {
+    return reply.code(409).send({ error: "That domain is the NginUX control plane itself — choose another." });
+  }
+  const spErr = streamPortError(merged, id);
+  if (spErr) return reply.code(400).send({ error: spErr });
   snapshot(`Before updating a service`, currentUser(req)?.username ?? "system");
   const host = updateHost(id, parsed.data);
   if (!host) return reply.code(404).send({ error: "Service not found" });

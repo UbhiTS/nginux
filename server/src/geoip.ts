@@ -71,7 +71,7 @@ export async function downloadGeoipDb(): Promise<{ sizeBytes: number }> {
     "https://download.maxmind.com/app/geoip_download" +
     `?edition_id=GeoLite2-Country&license_key=${encodeURIComponent(key)}&suffix=tar.gz`;
 
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(60_000) }); // don't hang the request forever
   if (!res.ok) {
     throw new Error(
       res.status === 401
@@ -79,9 +79,13 @@ export async function downloadGeoipDb(): Promise<{ sizeBytes: number }> {
         : `MaxMind download failed (HTTP ${res.status}).`,
     );
   }
+  const gz = Buffer.from(await res.arrayBuffer());
+  // The GeoLite2-Country archive is a few MB; cap the gzip input so a wrong/huge
+  // response can't OOM the 512 MB container before we even decompress.
+  if (gz.length > 64 * 1024 * 1024) throw new Error("MaxMind response was unexpectedly large — aborting.");
   let tar: Buffer;
   try {
-    tar = gunzipSync(Buffer.from(await res.arrayBuffer()));
+    tar = gunzipSync(gz);
   } catch {
     throw new Error("The downloaded file wasn't a valid archive.");
   }

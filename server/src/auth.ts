@@ -251,7 +251,11 @@ export function parseCookie(header: string | undefined): Record<string, string> 
   if (!header) return out;
   for (const part of header.split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k) out[k] = decodeURIComponent(v.join("="));
+    if (!k) continue;
+    // A malformed %-escape in ANY cookie on the domain would otherwise throw and
+    // 500 every authenticated request from that browser — fall back to the raw value.
+    const raw = v.join("=");
+    try { out[k] = decodeURIComponent(raw); } catch { out[k] = raw; }
   }
   return out;
 }

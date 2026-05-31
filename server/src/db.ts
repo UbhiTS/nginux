@@ -299,12 +299,12 @@ export function rowToHost(r: HostRow): ProxyHost {
 // ---- settings ----
 const DEFAULT_SETTINGS: Settings = {
   instanceName: "Home Lab",
-  baseDomain: "ubhi.io",
-  publicUrl: "https://proxy.ubhi.io",
+  baseDomain: "example.com",
+  publicUrl: "",
   theme: "dark",
   letsEncryptEmail: "",
-  homeCountry: "CA",
-  publicIp: "203.0.113.10",
+  homeCountry: "",
+  publicIp: "",
   gatewayIp: "192.168.1.1",
   dnsProvider: "none",
   godaddyApiKey: "",
