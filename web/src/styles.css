@@ -380,6 +380,14 @@ button { font-family: inherit; cursor: pointer; }
 .sectab .badge { background: var(--red); color: #fff; font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 10px; }
 .atable { width: 100%; }
 .ahead, .arow { display: grid; gap: 14px; align-items: center; }
+/* Table cells must be allowed to shrink below their content, so `fr` tracks size
+   purely proportionally and line up across the (separate) header + row grids.
+   Without this, a long unbroken value (e.g. a mono IP/token) in one row widens
+   that row's track and misaligns it from the rest of the table. */
+.ahead > *, .arow > *, .col-head > *, .host-row > *, .audit-row > *, .cert-row > * { min-width: 0; }
+/* Keep long mono values (addresses, fingerprints) from spilling into the next
+   column on narrow widths — clip with an ellipsis instead of overflowing. */
+.arow .mono, .host-row .host-meta.mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .who { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .who > div { min-width: 0; }
 .av { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 13px; flex-shrink: 0; text-transform: uppercase; }
