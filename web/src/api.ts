@@ -7,6 +7,14 @@ import type {
   Traffic,
 } from "./types.ts";
 
+export interface AppNotification {
+  id: string;
+  severity: "critical" | "warning" | "info";
+  title: string;
+  message: string;
+  dismissible: boolean;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   // Only declare a JSON body when we're actually sending one. Otherwise Fastify
@@ -53,6 +61,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ host, port }),
     }),
+  notifications: () => req<AppNotification[]>("/notifications"),
   presets: () => req<Preset[]>("/presets"),
   settings: () => req<Settings>("/settings"),
   saveSettings: (patch: Partial<Settings>) =>

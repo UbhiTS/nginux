@@ -3,6 +3,8 @@ import { api, type AuthUser } from "./api.ts";
 import type { ProxyHost, Settings } from "./types.ts";
 import { useTheme } from "./theme.ts";
 import { Icon } from "./icons.tsx";
+import { BrandLogo } from "./components/BrandLogo.tsx";
+import { Notifications } from "./components/Notifications.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { Dashboard } from "./pages/Dashboard.tsx";
 import { Services } from "./pages/Services.tsx";
@@ -75,7 +77,7 @@ export function App() {
   if (!authChecked) {
     return (
       <div style={{ display: "grid", placeItems: "center", height: "100vh", gap: 14, color: "var(--text-dim)" }}>
-        <img src="/favicon.svg" alt="" width={44} height={44} style={{ borderRadius: 10 }} />
+        <BrandLogo size={44} className="brand-logo" />
         <span className="spinner" />
       </div>
     );
@@ -101,6 +103,7 @@ export function App() {
       />
       <Sidebar open={drawerOpen} hosts={hosts} route={route} navigate={navigate} theme={theme} user={user} onLogout={logout} />
       <div className="main">
+        <Notifications />
         {route.name === "dashboard" && <Dashboard hosts={hosts} navigate={navigate} />}
         {route.name === "services" && <Services hosts={hosts} navigate={navigate} reload={reload} />}
         {route.name === "host" && route.hostId && <HostDetail hostId={route.hostId} navigate={navigate} reload={reload} />}

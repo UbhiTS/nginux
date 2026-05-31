@@ -77,6 +77,36 @@ button { font-family: inherit; cursor: pointer; }
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 16px; border-bottom: 1px solid var(--border-soft); }
 .brand-logo { width: 32px; height: 32px; border-radius: 9px; display: block; object-fit: contain; box-shadow: 0 2px 10px rgba(122, 43, 255, 0.35); }
+
+/* Animated brand mark: the orbit ring + nodes rotate slowly, the sparkle twinkles. */
+.logo-orbit { transform-box: view-box; transform-origin: 32px 32px; animation: logo-spin 16s linear infinite; }
+.logo-spark { transform-box: fill-box; transform-origin: center; animation: logo-twinkle 4.5s ease-in-out infinite; }
+@keyframes logo-spin { to { transform: rotate(360deg); } }
+@keyframes logo-twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  45% { opacity: 0.5; transform: scale(0.82); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .logo-orbit, .logo-spark { animation: none; }
+}
+
+/* ---------- App-wide notification banners ---------- */
+.notif-stack { display: flex; flex-direction: column; }
+.notif-banner { display: flex; align-items: flex-start; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.notif-banner.critical { background: var(--red-soft); border-bottom-color: color-mix(in srgb, var(--red) 32%, transparent); }
+.notif-banner.warning { background: color-mix(in srgb, var(--yellow) 13%, transparent); }
+.notif-banner.info { background: var(--accent-soft); }
+.notif-icon { flex-shrink: 0; display: flex; margin-top: 1px; }
+.notif-icon svg { width: 17px; height: 17px; }
+.notif-banner.critical .notif-icon { color: var(--red); }
+.notif-banner.warning .notif-icon { color: var(--yellow); }
+.notif-banner.info .notif-icon { color: var(--accent); }
+.notif-body { flex: 1; min-width: 0; }
+.notif-title { font-weight: 650; margin-bottom: 2px; }
+.notif-msg { color: var(--text-dim); line-height: 1.5; }
+.notif-x { flex-shrink: 0; background: none; border: none; color: var(--text-faint); cursor: pointer; padding: 4px; border-radius: 6px; display: flex; }
+.notif-x:hover { background: var(--bg-elev2); color: var(--text); }
+.notif-x svg { width: 15px; height: 15px; }
 .brand-name { font-weight: 700; font-size: 16px; letter-spacing: -.2px; }
 .brand-name small { display:block; font-weight:500; font-size:10px; color: var(--text-faint); letter-spacing: .3px; }
 .nav { padding: 10px; flex: 1; overflow-y: auto; }

@@ -4,6 +4,7 @@ import type { ProxyHost } from "../types.ts";
 import type { AuthUser } from "../api.ts";
 import { healthClass } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { BrandLogo } from "./BrandLogo.tsx";
 import type { Theme } from "../theme.ts";
 
 interface Props {
@@ -37,9 +38,9 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
   return (
     <aside className={`sidebar${open ? " open" : ""}`}>
       <div className="brand">
-        <img className="brand-logo" src="/favicon.svg" alt="NginUX" />
+        <BrandLogo className="brand-logo" />
         <div className="brand-name">
-          NginUX<small>reverse proxy, simplified</small>
+          NginUX<small>your homelab's front door</small>
         </div>
       </div>
 

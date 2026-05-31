@@ -18,6 +18,7 @@ import {
   updateHost,
 } from "./repo.ts";
 import { applyConfig, generateHostConfig, generateStreamConfig } from "./nginx.ts";
+import { buildNotifications } from "./notifications.ts";
 import { deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
 import {
   adminSetPassword,
@@ -403,6 +404,14 @@ app.get("/api/health", async (_req, reply) => {
     db,
     time: new Date().toISOString(),
   });
+});
+
+// ---------- notifications (actionable heads-up banners) ----------
+app.get("/api/notifications", async (req, reply) => {
+  const u = currentUser(req);
+  if (!u) return reply.code(401).send({ error: "Not signed in" });
+  const isManager = u.role === "admin" || u.role === "editor";
+  return buildNotifications({ isManager });
 });
 
 // ---------- presets ----------
