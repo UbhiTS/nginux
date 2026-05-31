@@ -37,6 +37,7 @@ export function HostDetail({
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetOpen, setPresetOpen] = useState(false);
   const [certDetail, setCertDetail] = useState(false);
+  const [hasDnsProvider, setHasDnsProvider] = useState(false);
 
   const refetch = () => {
     api.getHost(hostId).then(setHost).catch(() => setHost(null));
@@ -57,6 +58,7 @@ export function HostDetail({
     refetch();
   }, [hostId]);
   useEffect(() => { api.presets().then(setPresets).catch(() => {}); }, []);
+  useEffect(() => { api.settings().then((s) => setHasDnsProvider(s.dnsProvider !== "none")).catch(() => {}); }, []);
 
   const startEdit = () => { setDraft(host); setSaveErr(""); setEditing(true); };
   const saveEdit = async () => {
@@ -201,7 +203,7 @@ export function HostDetail({
         </div>
 
         {editing && draft ? (
-          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} error={saveErr} certs={certs} onCertsChanged={() => api.certificates().then(setCerts).catch(() => {})} />
+          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} error={saveErr} certs={certs} hasDnsProvider={hasDnsProvider} onCertsChanged={() => api.certificates().then(setCerts).catch(() => {})} />
         ) : (
         <div className="detail-grid">
           <div>
@@ -426,7 +428,7 @@ function certCovers(c: Certificate, domain: string): boolean {
   );
 }
 
-function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, onCertsChanged }: {
+function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, hasDnsProvider, onCertsChanged }: {
   draft: ProxyHost;
   setDraft: (d: ProxyHost) => void;
   onSave: () => void;
@@ -434,6 +436,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, onC
   saving: boolean;
   error?: string;
   certs: Certificate[];
+  hasDnsProvider: boolean;
   onCertsChanged: () => void;
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
@@ -452,9 +455,13 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, onC
   const [showImport, setShowImport] = useState(false);
   const [impCert, setImpCert] = useState("");
   const [impKey, setImpKey] = useState("");
+  // Same certificate-method choice as service creation: DNS-01 (needs a DNS
+  // provider, no open ports), HTTP-01 (needs port 80 + public DNS), or self-signed.
+  type CertMethod = "dns-01" | "http-01" | "selfsigned";
+  const [leMethod, setLeMethod] = useState<CertMethod>(hasDnsProvider ? "dns-01" : "http-01");
 
-  const issue = async (method: "http-01" | "selfsigned") => {
-    setCertBusy(method === "selfsigned" ? "self" : "le");
+  const issue = async (method: CertMethod) => {
+    setCertBusy("create");
     setCertMsg(null);
     try {
       await api.issueCert(draft.domain, method);
@@ -555,11 +562,24 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, onC
           {!draft.certDomain && (
             <div className="field">
               <label>Create or import a certificate for {draft.domain}</label>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" className="btn btn-sm" disabled={!!certBusy} onClick={() => issue("http-01")}>{certBusy === "le" ? <span className="spinner" /> : null}Get Let's Encrypt</button>
-                <button type="button" className="btn btn-sm" disabled={!!certBusy} onClick={() => issue("selfsigned")}>{certBusy === "self" ? <span className="spinner" /> : null}Create self-signed</button>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowImport((v) => !v)}>{showImport ? "Cancel import" : "Import your own…"}</button>
+              <div className="input-group">
+                <select className="input" value={leMethod} onChange={(e) => setLeMethod(e.target.value as CertMethod)} disabled={!!certBusy}>
+                  <option value="dns-01">Let's Encrypt (DNS) — trusted, needs a DNS provider</option>
+                  <option value="http-01">Let's Encrypt (HTTP) — trusted, needs port 80 + public DNS</option>
+                  <option value="selfsigned">Self-signed — instant, not browser-trusted</option>
+                </select>
+                <button type="button" className="btn btn-primary" style={{ whiteSpace: "nowrap" }} disabled={certBusy === "create"} onClick={() => issue(leMethod)}>
+                  {certBusy === "create" ? <span className="spinner" /> : null}Create certificate
+                </button>
               </div>
+              <div className="hint">
+                {leMethod === "dns-01"
+                  ? `Requests a free, trusted Let's Encrypt certificate over DNS — no open ports needed, but a DNS provider (GoDaddy / Cloudflare) must be connected in Settings${hasDnsProvider ? "" : " (none connected yet)"}.`
+                  : leMethod === "http-01"
+                    ? `Requests a trusted Let's Encrypt certificate over HTTP — needs port 80 reachable from the internet and public DNS for ${draft.domain}.`
+                    : "Creates an instant self-signed certificate — works immediately, but browsers show a warning. Fine for LAN-only or testing."}
+              </div>
+              <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 8 }} onClick={() => setShowImport((v) => !v)}>{showImport ? "Cancel import" : "Import your own…"}</button>
             </div>
           )}
           {showImport && !draft.certDomain && (
