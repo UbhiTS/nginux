@@ -4,7 +4,6 @@ import { api } from "../api.ts";
 import type { ProxyHost } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { Icon } from "../icons.tsx";
-import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
 const statusText = (h: ProxyHost) => {
   if (h.health === "down") return "Can't reach service";
@@ -25,8 +24,6 @@ export function Services({
   navigate: (r: Route) => void;
   reload: () => Promise<void>;
 }) {
-  const [pending, setPending] = useState<ProxyHost | null>(null);
-  const [deleting, setDeleting] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
 
   const days = (iso: string | null) =>
@@ -41,18 +38,6 @@ export function Services({
       await reload();
     } finally {
       setToggling(null);
-    }
-  };
-
-  const remove = async () => {
-    if (!pending) return;
-    setDeleting(true);
-    try {
-      await api.deleteHost(pending.id);
-      await reload();
-      setPending(null);
-    } finally {
-      setDeleting(false);
     }
   };
 
@@ -74,7 +59,6 @@ export function Services({
             <div>Certificate</div>
             <div>Address</div>
             <div>Enabled</div>
-            <div />
           </div>
           {hosts.map((h) => {
             const d = days(h.certExpiresAt);
@@ -106,9 +90,6 @@ export function Services({
                   disabled={toggling === h.id}
                   onClick={(e) => { e.stopPropagation(); void toggle(h); }}
                 />
-                <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); setPending(h); }}>
-                  Delete
-                </button>
               </div>
             );
           })}
@@ -120,18 +101,6 @@ export function Services({
           )}
         </div>
       </div>
-
-      {pending && (
-        <ConfirmDialog
-          danger
-          title={`Remove ${pending.emoji} ${pending.name}?`}
-          message={<>This takes <b>{pending.domain}</b> offline and deletes its proxy configuration. You can expose it again later.</>}
-          confirmLabel="Remove service"
-          busy={deleting}
-          onConfirm={remove}
-          onCancel={() => setPending(null)}
-        />
-      )}
     </>
   );
 }
