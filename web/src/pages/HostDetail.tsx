@@ -4,6 +4,7 @@ import { api, type Certificate, type Uptime } from "../api.ts";
 import type { Preset, ProxyHost } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
+import { CertDetailModal } from "../components/CertDetailModal.tsx";
 
 const banner = {
   online: { cls: "", icon: <Icon.check />, title: "Working. Everything looks healthy." },
@@ -35,6 +36,7 @@ export function HostDetail({
   const [certs, setCerts] = useState<Certificate[]>([]);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetOpen, setPresetOpen] = useState(false);
+  const [certDetail, setCertDetail] = useState(false);
 
   const refetch = () => {
     api.getHost(hostId).then(setHost).catch(() => setHost(null));
@@ -172,6 +174,10 @@ export function HostDetail({
         />
       )}
 
+      {certDetail && cert && (
+        <CertDetailModal cert={cert} onClose={() => setCertDetail(false)} onChanged={refetch} />
+      )}
+
       <div className="content">
         <div className={`summary-banner ${host.enabled ? b.cls : "warn"}`}>
           <div className="big-check">{host.enabled ? b.icon : <Icon.alert />}</div>
@@ -298,7 +304,14 @@ export function HostDetail({
 
           <div>
             <div className="card" style={{ marginBottom: 18 }}>
-              <div className="card-head">Certificate</div>
+              <div className="card-head">
+                Certificate
+                {cert && (
+                  <button className="pill n preset-chip" title="View certificate details" onClick={() => setCertDetail(true)}>
+                    View details <Icon.chevron className="chev" />
+                  </button>
+                )}
+              </div>
               <div className="card-pad">
                 <div className="kv">
                   <span className="k">Status</span>
@@ -312,6 +325,12 @@ export function HostDetail({
                   <span className="k">Issuer</span>
                   <span className="v">{cert ? cert.issuer || "—" : "—"}</span>
                 </div>
+                {host.certDomain && (
+                  <div className="kv">
+                    <span className="k">Using cert</span>
+                    <span className="v mono">{host.certDomain}</span>
+                  </div>
+                )}
               </div>
             </div>
             <div className="card">
@@ -421,8 +440,13 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, onC
 
   // Certificate management (only meaningful when this host terminates TLS).
   const tlsHost = draft.ssl && (draft.protocol === "http" || draft.protocol === "grpc");
-  // Existing certs (other than this domain's own) that could serve it — e.g. a wildcard.
-  const reusable = certs.filter((c) => c.domain !== draft.domain && certCovers(c, draft.domain));
+  // The cert for this service's own domain (if one exists), and every other cert
+  // in the store — both shown by name so the user can pick exactly what they have
+  // (e.g. a shared wildcard). Certs that actually cover this domain sort first.
+  const ownCert = certs.find((c) => c.domain === draft.domain) ?? null;
+  const otherCerts = certs
+    .filter((c) => c.domain !== draft.domain)
+    .sort((a, b) => Number(certCovers(b, draft.domain)) - Number(certCovers(a, draft.domain)));
   const [certBusy, setCertBusy] = useState("");
   const [certMsg, setCertMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [showImport, setShowImport] = useState(false);
@@ -514,15 +538,19 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, onC
           <div className="section-title" style={{ marginTop: 8 }}>Certificate</div>
           <div className="field">
             <label>Which certificate to serve</label>
-            <select className="input" value={draft.certDomain || ""} onChange={(e) => set({ certDomain: e.target.value })}>
-              <option value="">Automatic — manage a certificate for {draft.domain}</option>
-              {reusable.map((c) => (
+            <select className="input" value={draft.certDomain || draft.domain} onChange={(e) => set({ certDomain: e.target.value === draft.domain ? "" : e.target.value })}>
+              <option value={draft.domain}>
+                {ownCert
+                  ? `${draft.domain} · ${ownCert.issuer || ownCert.method}${ownCert.daysRemaining != null ? ` · ${ownCert.daysRemaining}d left` : ""}`
+                  : `${draft.domain} — no certificate yet (create one below)`}
+              </option>
+              {otherCerts.map((c) => (
                 <option key={c.domain} value={c.domain}>
                   {c.domain}{c.wildcard ? " · wildcard" : ""} · {c.issuer || c.method}{c.daysRemaining != null ? ` · ${c.daysRemaining}d left` : ""}
                 </option>
               ))}
             </select>
-            <div className="hint">Pick an existing certificate (e.g. a wildcard that covers this domain), or keep Automatic to use / create one for {draft.domain}.</div>
+            <div className="hint">By default this service uses its own domain's certificate. Pick another from your store (e.g. a shared wildcard) to reuse it, or create / import one below.</div>
           </div>
           {!draft.certDomain && (
             <div className="field">

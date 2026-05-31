@@ -33,13 +33,17 @@ export function recordCheck(hostId: string, up: boolean, ms: number) {
   const host = getHost(hostId);
   if (!host) return;
   push(hostId, up, ms);
+  const next = up ? "online" : "down";
+  if (host.health === next) return; // no change — leave it (and don't re-log)
   const wasDown = host.health === "down";
-  if (!up && !wasDown) {
-    updateHost(hostId, { health: "down" });
+  updateHost(hostId, { health: next });
+  // Reflect the probe result whatever the previous state (including the initial
+  // "unknown" of a freshly-created host — it must resolve to online/down, not
+  // stay unknown). Only fire incident/alert events on a real up<->down flip.
+  if (!up) {
     openIncident(hostId, host.domain);
     logEvent({ type: "service.upstream_down", severity: "danger", actor: "monitor", summary: `${host.name} is unreachable`, ip: "", meta: { host: host.domain } });
-  } else if (up && wasDown) {
-    updateHost(hostId, { health: "online" });
+  } else if (wasDown) {
     closeIncident(hostId);
     logEvent({ type: "service.upstream_up", severity: "info", actor: "monitor", summary: `${host.name} is back online`, ip: "", meta: { host: host.domain } });
   }
