@@ -851,6 +851,12 @@ app.post("/api/auth/change-password", async (req, reply) => {
 
 app.post("/api/auth/2fa/setup", async (req, reply) => {
   const u = currentUser(req)!;
+  // Require the password to (re)bind 2FA so a hijacked session can't silently
+  // rebind the authenticator to the attacker's device.
+  const { password } = z.object({ password: z.string().min(1) }).parse(req.body ?? {});
+  if (!(await checkCredentials(u.username, password))) {
+    return reply.code(403).send({ error: "Confirm your password to set up two-factor authentication." });
+  }
   const { secret } = beginTwofaSetup(u.id);
   return { secret, otpauth: otpauthURL(secret, u.username) };
 });

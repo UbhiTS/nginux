@@ -74,7 +74,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
-  twofaSetup: () => req<{ secret: string; otpauth: string }>("/auth/2fa/setup", { method: "POST" }),
+  twofaSetup: (password: string) => req<{ secret: string; otpauth: string }>("/auth/2fa/setup", { method: "POST", body: JSON.stringify({ password }) }),
   twofaVerify: (token: string) =>
     req<{ ok: boolean; backupCodes: string[] }>("/auth/2fa/verify", {
       method: "POST",

@@ -18,6 +18,8 @@ export function UsersAccess({
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [enroll, setEnroll] = useState<{ secret: string; otpauth: string } | null>(null);
+  const [pwPrompt, setPwPrompt] = useState(false); // confirm-password gate before 2FA setup
+  const [pw, setPw] = useState("");
   const [code, setCode] = useState("");
   const [backup, setBackup] = useState<string[] | null>(null);
   const [err, setErr] = useState("");
@@ -119,7 +121,13 @@ export function UsersAccess({
   const startEnroll = async () => {
     setBackup(null);
     setErr("");
-    setEnroll(await api.twofaSetup());
+    try {
+      setEnroll(await api.twofaSetup(pw));
+      setPwPrompt(false);
+      setPw("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn't start 2FA setup.");
+    }
   };
   const verifyEnroll = async () => {
     setErr("");
@@ -163,12 +171,23 @@ export function UsersAccess({
                   <div className="nt">Protect your account with 2FA</div>
                   <div className="nd">Add a one-time code on top of your password. Strongly recommended for admins.</div>
                 </div>
-                {!enroll && (
-                  <button className="btn btn-primary btn-sm" style={{ alignSelf: "center" }} onClick={startEnroll}>
+                {!enroll && !pwPrompt && (
+                  <button className="btn btn-primary btn-sm" style={{ alignSelf: "center" }} onClick={() => { setErr(""); setPwPrompt(true); }}>
                     Enable 2FA
                   </button>
                 )}
+                {!enroll && pwPrompt && (
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", alignSelf: "center", flexWrap: "wrap" }}>
+                    <input className="input" type="password" placeholder="Confirm password" style={{ maxWidth: 180 }} value={pw}
+                      onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void startEnroll(); }} />
+                    <button className="btn btn-primary btn-sm" onClick={() => void startEnroll()}>Continue</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => { setPwPrompt(false); setPw(""); setErr(""); }}>Cancel</button>
+                  </div>
+                )}
               </div>
+            )}
+            {pwPrompt && err && (
+              <div className="test-result bad" style={{ marginBottom: 18 }}><Icon.x /><div>{err}</div></div>
             )}
 
             {enroll && (

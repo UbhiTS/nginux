@@ -1,5 +1,4 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
 import { db, getSettings } from "./db.ts";
 import { listHosts } from "./repo.ts";
 import { generateSecret } from "./totp.ts";
@@ -26,18 +25,33 @@ const IS_PROD = process.env.NODE_ENV === "production";
 // Async scrypt so the (deliberately expensive) KDF runs on libuv's threadpool
 // instead of blocking the event loop — keeps the server responsive under a burst
 // of logins or password changes.
-const scrypt = promisify(scryptCb) as (password: string, salt: Buffer, keylen: number) => Promise<Buffer>;
+interface ScryptParams { N: number; r: number; p: number; }
+// Current cost — stronger than node's default (N=2^14). Params are embedded in
+// the stored hash so they can be raised later without breaking old hashes.
+const SCRYPT: ScryptParams = { N: 1 << 15, r: 8, p: 1 };
+const SCRYPT_MAXMEM = 128 * 1024 * 1024; // headroom for N=2^15 (~32 MB)
+const scryptAsync = (password: string, salt: Buffer, keylen: number, params: ScryptParams): Promise<Buffer> =>
+  new Promise((resolve, reject) =>
+    scryptCb(password, salt, keylen, { ...params, maxmem: SCRYPT_MAXMEM }, (err, dk) => (err ? reject(err) : resolve(dk as Buffer))));
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);
-  const hash = await scrypt(password, salt, 64);
-  return `${salt.toString("hex")}:${hash.toString("hex")}`;
+  const hash = await scryptAsync(password, salt, 64, SCRYPT);
+  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString("hex")}$${hash.toString("hex")}`;
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [saltHex, hashHex] = stored.split(":");
-  if (!saltHex || !hashHex) return false;
-  const hash = await scrypt(password, Buffer.from(saltHex, "hex"), 64);
+  let params = { N: 1 << 14, r: 8, p: 1 }; // legacy default for the old "salt:hash" format
+  let saltHex: string | undefined, hashHex: string | undefined;
+  if (stored.startsWith("scrypt$")) {
+    const [, n, r, p, s, h] = stored.split("$");
+    params = { N: Number(n), r: Number(r), p: Number(p) };
+    saltHex = s; hashHex = h;
+  } else {
+    [saltHex, hashHex] = stored.split(":");
+  }
+  if (!saltHex || !hashHex || !params.N) return false;
+  const hash = await scryptAsync(password, Buffer.from(saltHex, "hex"), 64, params);
   const expected = Buffer.from(hashHex, "hex");
   return hash.length === expected.length && timingSafeEqual(hash, expected);
 }
