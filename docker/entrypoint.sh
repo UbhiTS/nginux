@@ -3,19 +3,23 @@
 set -eu
 
 # --- runtime user (PUID / PGID) ----------------------------------------------
-# By default NginUX runs nginx + the control plane as an unprivileged user, so
-# everything written to the /data volume is owned by *your* host user and stays
-# manageable from your file browser / NAS share — matching how other self-hosted
-# containers behave. nginx still binds :80/:443 via the NET_BIND_SERVICE ambient
-# capability (set by setpriv) instead of running as root.
-#   PUID / PGID    : uid/gid to own the data and run as (default 1000:1000)
-#   PUID=0 PGID=0  : run everything as root (legacy behaviour)
-PUID="${PUID:-1000}"
-PGID="${PGID:-1000}"
+# NginUX runs nginx + the control plane as an unprivileged user so everything it
+# writes to the /data volume is owned by *your* host user (manageable from your
+# file browser / NAS share), like other self-hosted containers. nginx still binds
+# :80/:443 via the NET_BIND_SERVICE ambient capability (setpriv), not as root.
+#
+# By default we adopt the owner of the mounted /data directory — so NginUX runs
+# as whoever owns the folder you mounted (the same user you deploy with), with no
+# configuration. Override with the PUID/PGID env vars. A root-owned /data (e.g. a
+# fresh named volume) resolves to uid 0 → runs as root.
 
 # Persistent dirs on the mounted volume
 mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs /data/geoip
 touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/nginx/banned.conf
+
+# Adopt the data-dir owner unless PUID/PGID were set explicitly.
+PUID="${PUID:-$(stat -c %u /data 2>/dev/null || echo 0)}"
+PGID="${PGID:-$(stat -c %g /data 2>/dev/null || echo 0)}"
 
 # nginx.conf includes geoip.conf and its log_format references
 # $geoip2_country_iso_code, so geoip.conf must define BOTH variables before nginx
@@ -39,9 +43,9 @@ fi
 
 # --- decide privilege model --------------------------------------------------
 ROOT_MODE=0
-if [ "$PUID" = "0" ] && [ "$PGID" = "0" ]; then
+if [ "$PUID" = "0" ]; then
   ROOT_MODE=1
-  echo "[nginux] running as root (PUID=0/PGID=0)"
+  echo "[nginux] running as root (data dir is root-owned, or PUID=0)"
 else
   # Resolve or create a group at PGID.
   if getent group "$PGID" >/dev/null 2>&1; then

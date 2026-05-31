@@ -246,7 +246,7 @@ Set via environment variables (the Docker image ships sensible defaults):
 
 | Variable | Purpose | Docker default |
 |----------|---------|----------------|
-| `PUID` / `PGID` | User/group NginUX runs as, so data on the volume is owned by *your* host user (manageable over SMB / a NAS file browser, like other self-hosted containers). nginx still binds `:80`/`:443` via the `NET_BIND_SERVICE` ambient capability. Set both to `0` to run as root. | `1000` / `1000` |
+| `PUID` / `PGID` | User/group NginUX runs as, so data on the volume is owned by *your* host user (manageable over SMB / a NAS file browser, like other self-hosted containers). **Defaults to the owner of the mounted data directory** — so with a bind-mounted folder NginUX simply runs as whoever owns it, no config needed. nginx still binds `:80`/`:443` via the `NET_BIND_SERVICE` ambient capability. Set both to `0` to run as root. | owner of `/data` |
 | `PORT` / `HOST` | Control-plane bind | `4600` / `0.0.0.0` |
 | `NGINUX_DATA_DIR` | SQLite + state root | `/data` |
 | `NGINX_CONF_DIR` | Generated HTTP server blocks | `/data/nginx/conf.d` |
