@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Route } from "../App.tsx";
 import { api, type Certificate, type Uptime } from "../api.ts";
-import type { ProxyHost } from "../types.ts";
+import type { Preset, ProxyHost } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
@@ -33,6 +33,8 @@ export function HostDetail({
   const [toggling, setToggling] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   const [certs, setCerts] = useState<Certificate[]>([]);
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [presetOpen, setPresetOpen] = useState(false);
 
   const refetch = () => {
     api.getHost(hostId).then(setHost).catch(() => setHost(null));
@@ -40,7 +42,19 @@ export function HostDetail({
     api.uptime(hostId).then(setUptime).catch(() => setUptime(null));
     api.certificates().then(setCerts).catch(() => {});
   };
-  useEffect(refetch, [hostId]);
+  // Switching services must reset transient view state — otherwise clicking a
+  // different service in the sidebar while editing would leave the edit form
+  // (and advanced panels) open on top of the new service.
+  useEffect(() => {
+    setEditing(false);
+    setDraft(null);
+    setSaveErr("");
+    setAdvOpen(false);
+    setPresetOpen(false);
+    setConfirmDel(false);
+    refetch();
+  }, [hostId]);
+  useEffect(() => { api.presets().then(setPresets).catch(() => {}); }, []);
 
   const startEdit = () => { setDraft(host); setSaveErr(""); setEditing(true); };
   const saveEdit = async () => {
@@ -188,8 +202,33 @@ export function HostDetail({
             <div className="card" style={{ marginBottom: 18 }}>
               <div className="card-head">
                 Routing
-                <span className="pill n">{host.preset} preset</span>
+                <button
+                  className={`pill n preset-chip${presetOpen ? " open" : ""}`}
+                  title="What this preset applies"
+                  onClick={() => setPresetOpen((o) => !o)}
+                >
+                  {host.preset} preset
+                  <Icon.chevron className="chev" />
+                </button>
               </div>
+              {presetOpen && (
+                <div className="adv-body">
+                  {(() => {
+                    const pd = presets.find((p) => p.id === host.preset) ?? null;
+                    return (
+                      <>
+                        <div className="kv"><span className="k">What this preset sets up</span><span className="v" style={{ textAlign: "right", maxWidth: 360 }}>{pd?.notes ?? "Custom configuration."}</span></div>
+                        <div style={{ marginTop: 10 }}>
+                          <div className="muted" style={{ fontSize: 12, marginBottom: 5 }}>Extra nginx directives applied to this host:</div>
+                          {pd && pd.extraDirectives.length
+                            ? <div className="code">{pd.extraDirectives.join("\n")}</div>
+                            : <div className="muted" style={{ fontSize: 12.5 }}>None — only the WebSockets / HTTP/2 settings shown below.</div>}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
               <div className="card-pad">
                 <div className="kv">
                   <span className="k">Public address</span>

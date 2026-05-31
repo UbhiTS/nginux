@@ -152,6 +152,10 @@ button { font-family: inherit; cursor: pointer; }
 .pill.r { background: var(--red-soft); color: var(--red); }
 .pill.b { background: var(--accent-soft); color: var(--accent); }
 .pill.n { background: var(--bg-elev2); color: var(--text-dim); }
+/* A pill that's also a toggle button (e.g. the Routing "preset" chip). */
+.preset-chip { border: none; cursor: pointer; }
+.preset-chip .chev { transition: transform .2s; }
+.preset-chip.open .chev { transform: rotate(90deg); }
 
 /* ---------- Stat tiles ---------- */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 22px; }
