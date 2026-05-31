@@ -53,8 +53,18 @@ export function subscribeLog(fn: (e: LogEntry) => void): () => void {
   return () => logSubscribers.delete(fn);
 }
 
+// Cardinality cap for the per-IP / per-path / per-host / per-country counters.
+// These are keyed on attacker-influenced values (client IP, URL path, Host
+// header), so without a bound a flood of distinct keys could exhaust memory.
+const MAX_KEYS = 5000;
 function bump(map: Map<string, number>, key: string) {
   map.set(key, (map.get(key) ?? 0) + 1);
+  if (map.size > MAX_KEYS) {
+    // Evict the cold (lowest-count) keys, keeping the busiest half.
+    const keep = [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_KEYS >> 1);
+    map.clear();
+    for (const [k, n] of keep) map.set(k, n);
+  }
 }
 
 export function ingest(e: LogEntry): void {
@@ -304,7 +314,10 @@ export function prometheus(): string {
   for (const [cls, n] of Object.entries(statusClass)) lines.push(`nginux_responses_total{class="${cls}"} ${n}`);
   lines.push("# HELP nginux_requests_by_host_total Requests per host.");
   lines.push("# TYPE nginux_requests_by_host_total counter");
-  for (const [host, n] of byHost) lines.push(`nginux_requests_by_host_total{host="${host}"} ${n}`);
+  // Escape the label value — `host` comes from the client Host header, so it
+  // must not break the Prometheus exposition format.
+  const escLabel = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+  for (const [host, n] of byHost) lines.push(`nginux_requests_by_host_total{host="${escLabel(host)}"} ${n}`);
   lines.push("# HELP nginux_response_ms Response time percentiles.");
   lines.push("# TYPE nginux_response_ms gauge");
   lines.push(`nginux_response_ms{quantile="0.5"} ${percentile(50)}`);

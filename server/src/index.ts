@@ -134,12 +134,15 @@ const principal = (req: FastifyRequest): Principal | null => {
   if (u) return { kind: "user", name: u.username, scopes: ALL_SCOPES, user: u };
   return resolveToken(bearerFrom(req.headers.authorization));
 };
-// Only believe X-Forwarded-For when explicitly told to trust the proxy in front
-// of us (e.g. set NGINUX_TRUST_PROXY=true when nginx forwards to the control
-// plane). Otherwise an attacker could spoof XFF to forge audit IPs / dodge bans.
-const TRUST_PROXY: boolean | string =
+// Only believe X-Forwarded-For from a trusted hop. NGINUX_TRUST_PROXY=true trusts
+// XFF *only from loopback* — the bundled nginx forwards auth subrequests from
+// 127.0.0.1, so we get real client IPs there, while a browser hitting :4600
+// directly (a non-loopback peer) can't spoof XFF to forge audit IPs / dodge bans.
+// Set NGINUX_TRUST_PROXY to a specific IP/CIDR when fronting :4600 with your own
+// reverse proxy. Anything falsy = never trust XFF.
+const TRUST_PROXY: boolean | string | ((addr: string, hop: number) => boolean) =
   process.env.NGINUX_TRUST_PROXY === "1" || process.env.NGINUX_TRUST_PROXY === "true"
-    ? true
+    ? (addr: string) => addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1"
     : (process.env.NGINUX_TRUST_PROXY || false);
 const clientIp = (req: FastifyRequest) => req.ip; // resolved by Fastify per trustProxy
 const device = (req: FastifyRequest) => (req.headers["user-agent"] as string)?.slice(0, 120) || "unknown";

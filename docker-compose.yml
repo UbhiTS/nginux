@@ -16,10 +16,15 @@ services:
       - nginux-data:/data # sqlite db, generated nginx config, certs
     environment:
       - LOG_LEVEL=info
-      # nginx terminates TLS and forwards to the control plane on loopback, so
-      # trust its X-Forwarded-For. Set a strong admin password on first run.
+      # Trust X-Forwarded-For only from loopback (the bundled nginx's auth
+      # subrequests), so real client IPs are recorded without letting a direct
+      # :4600 client spoof them. Keep :4600 on the LAN — never port-forward it to
+      # the internet (only 80/443 should face the internet).
       - NGINUX_TRUST_PROXY=true
+      # Set a strong admin password on first run (else default is admin/admin):
       # - NGINUX_ADMIN_PASSWORD=change-me-to-something-strong
+      # Set a random secret so the per-host login gate can't be called directly:
+      # - NGINUX_FORWARD_SECRET=change-me-to-a-long-random-string
     # Drop all Linux capabilities, then add back only what's needed to bind
     # :80/:443 and let nginx manage its workers — big blast-radius reduction.
     cap_drop: [ALL]
