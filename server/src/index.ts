@@ -91,7 +91,7 @@ import { diffVersion, listVersions, restoreVersion, snapshot } from "./versionin
 import { gitLog, syncGitOps } from "./gitops.ts";
 import { importNginxConf } from "./importer.ts";
 import { addBan, listBans, removeBan, startBanEngine } from "./bans.ts";
-import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert } from "./clientcerts.ts";
+import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert, writeClientCrl } from "./clientcerts.ts";
 import { generateSniPassthrough } from "./nginx.ts";
 import {
   assertSafeOutboundUrl,
@@ -536,7 +536,16 @@ app.delete("/api/hosts/:id/client-certs/:certId", async (req, reply) => {
   if (!listClientCerts(id).some((c) => c.id === certId)) {
     return reply.code(404).send({ error: "Certificate not found for this service." });
   }
-  return { ok: revokeClientCert(certId) };
+  const ok = revokeClientCert(certId);
+  if (ok) {
+    // Publish the revocation in the CA's CRL and reload nginx so the cert is
+    // actually refused (deleting the DB row alone left it valid until expiry).
+    writeClientCrl(host.domain);
+    const apply = await applyConfig();
+    logEvent({ type: "cert.client_revoked", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Revoked a client cert for ${host.domain}`, ip: clientIp(req), meta: { certId } });
+    return { ok, apply };
+  }
+  return { ok };
 });
 
 // per-host uptime (availability %, history, incidents)

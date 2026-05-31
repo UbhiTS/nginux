@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { X509Certificate, createPrivateKey } from "node:crypto";
+import { X509Certificate, createPrivateKey, randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import forge from "node-forge";
@@ -199,7 +199,7 @@ export function reconcileImportedCerts(): void {
 function writeFiles(domain: string, keyPem: string, certPem: string) {
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "privkey.pem"), keyPem);
+  writeFileSync(join(dir, "privkey.pem"), keyPem, { mode: 0o600 }); // private key: owner-only
   writeFileSync(join(dir, "fullchain.pem"), certPem);
 }
 
@@ -258,7 +258,7 @@ export async function issueSelfSigned(domain: string): Promise<Certificate> {
   const keys = await generateRsaKeyPair(2048);
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
-  cert.serialNumber = Date.now().toString(16);
+  cert.serialNumber = (() => { const b = randomBytes(16); b[0] &= 0x7f; if (b[0] === 0) b[0] = 1; return b.toString("hex"); })();
   cert.validity.notBefore = new Date();
   cert.validity.notAfter = new Date(Date.now() + 825 * 86400_000);
   const attrs = [{ name: "commonName", value: domain }, { name: "organizationName", value: "NginUX" }];
@@ -319,7 +319,7 @@ async function acmeAccountKey(): Promise<Buffer> {
   if (existsSync(ACCOUNT_KEY_PATH)) return readFileSync(ACCOUNT_KEY_PATH);
   const key = await acme.crypto.createPrivateKey();
   mkdirSync(CERT_DIR, { recursive: true });
-  writeFileSync(ACCOUNT_KEY_PATH, key);
+  writeFileSync(ACCOUNT_KEY_PATH, key, { mode: 0o600 }); // ACME account key: owner-only
   return key;
 }
 

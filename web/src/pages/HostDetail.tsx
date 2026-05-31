@@ -339,9 +339,13 @@ function ClientCerts({ hostId }: { hostId: string }) {
         )}
         <div style={{ marginTop: 12 }}>
           {certs.map((c) => (
-            <div key={c.id} className="kv">
+            <div key={c.id} className="kv" style={{ opacity: c.revokedAt ? 0.55 : 1 }}>
               <span className="k">{c.name} <span className="muted mono" style={{ fontSize: 10 }}>{c.fingerprint.slice(0, 17)}…</span></span>
-              <span className="v"><button className="btn btn-ghost btn-sm" onClick={async () => { await api.revokeClientCert(hostId, c.id); load(); }}>Revoke</button></span>
+              <span className="v">
+                {c.revokedAt
+                  ? <span className="pill r">revoked</span>
+                  : <button className="btn btn-ghost btn-sm" onClick={async () => { await api.revokeClientCert(hostId, c.id); load(); }}>Revoke</button>}
+              </span>
             </div>
           ))}
           {certs.length === 0 && <div className="muted" style={{ fontSize: 12.5 }}>No client certs issued yet.</div>}

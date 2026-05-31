@@ -124,10 +124,11 @@ export function generateHostConfig(h: ProxyHost): string {
   const keyPath = haveLive ? liveKey : process.env.NGINX_DEFAULT_KEY ?? "/data/nginx/selfsigned.key";
 
   const clientCa = join(certDir, h.domain, "client-ca.crt");
+  const clientCrl = join(certDir, h.domain, "client-ca.crl");
   const mtlsBlock = h.mtls && h.ssl && existsSync(clientCa)
     ? `
     ssl_verify_client on;
-    ssl_client_certificate ${clientCa};`
+    ssl_client_certificate ${clientCa};${existsSync(clientCrl) ? `\n    ssl_crl ${clientCrl};` : ""}`
     : "";
   const sslBlock = h.ssl
     ? `

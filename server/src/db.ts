@@ -249,6 +249,15 @@ function migrateUsers() {
 }
 migrateUsers();
 
+// client_certs gains a per-CA domain and a soft-delete revocation timestamp so
+// revoked certs can be published in a CRL (and not silently dropped).
+function migrateClientCerts() {
+  const cols = new Set((db.prepare("PRAGMA table_info(client_certs)").all() as Record<string, unknown>[]).map((c) => String(c.name)));
+  if (!cols.has("domain")) db.exec("ALTER TABLE client_certs ADD COLUMN domain TEXT NOT NULL DEFAULT ''");
+  if (!cols.has("revokedAt")) db.exec("ALTER TABLE client_certs ADD COLUMN revokedAt TEXT");
+}
+migrateClientCerts();
+
 // Indexes on hot query paths (filtered/ordered scans that grow over time).
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sessions_userId   ON sessions(userId);

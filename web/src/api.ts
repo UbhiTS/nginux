@@ -250,6 +250,7 @@ export interface ClientCert {
   fingerprint: string;
   notAfter: string;
   createdAt: string;
+  revokedAt: string | null;
 }
 
 export interface Uptime {
