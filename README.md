@@ -13,6 +13,8 @@ It's a friendlier alternative to hand-written nginx, Nginx Proxy Manager, or
 SWAG — with a built-in agent/MCP API on top. One `docker compose up`, no nginx
 config required.
 
+![NginUX dashboard — network topology and live traffic](docs/img/dashboard.png)
+
 > ⚠️ **Keep the control plane (`:4600`) on your LAN — never port-forward it.**
 > Only the data plane (`:80`/`:443`) should face the internet, and set a strong
 > admin password before exposing anything. See [Deploying securely](SECURITY.md#deploying-securely).
@@ -37,6 +39,18 @@ config required.
   exporter for Grafana.
 - **Runs anywhere** — one image (Nginx data plane + Node control plane), state on
   a single mounted volume.
+
+---
+
+## Screenshots
+
+| Security Center | Certificates |
+| --- | --- |
+| [![Security Center](docs/img/security.png)](docs/img/security.png) | [![Certificates](docs/img/certificates.png)](docs/img/certificates.png) |
+| **Services** | **Agents & API** |
+| [![Services](docs/img/services.png)](docs/img/services.png) | [![Agents & API](docs/img/agents.png)](docs/img/agents.png) |
+
+<sub>Regenerate these from a running instance with `node scripts/screenshots.mjs` (uses your installed Chrome/Edge).</sub>
 
 ---
 

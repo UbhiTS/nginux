@@ -16,7 +16,8 @@
     "cli": "node cli/nginux.mjs"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.1.0",
+    "puppeteer-core": "^25.1.0"
   },
   "engines": {
     "node": ">=22.5.0"
