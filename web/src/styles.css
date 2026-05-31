@@ -418,7 +418,10 @@ button { font-family: inherit; cursor: pointer; }
 .svc-stat { flex-shrink: 0; }
 .svc-metrics { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex-shrink: 0; font-family: var(--mono); line-height: 1.3; text-align: right; }
 .svc-metrics .m-req { font-size: 11px; color: var(--text); font-weight: 600; }
-.svc-metrics .m-bw { font-size: 10px; color: var(--text-faint); white-space: nowrap; }
+.svc-metrics .m-bw { font-size: 10px; color: var(--text-faint); white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.svc-metrics .bw-dir { display: inline-flex; align-items: center; gap: 1px; }
+.svc-metrics .bw-arr { width: 9px; height: 9px; flex-shrink: 0; }
+.svc-metrics .bw-unit { opacity: 0.75; }
 
 /* ---------- Traffic graph ---------- */
 .range-tabs { display: flex; gap: 3px; background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
