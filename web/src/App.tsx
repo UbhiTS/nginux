@@ -28,11 +28,29 @@ export interface Route {
   hostId?: string;
 }
 
+const ROUTE_NAMES: RouteName[] = [
+  "dashboard", "services", "host", "wizard", "certs",
+  "logs", "security", "useraccess", "agents", "settings",
+];
+
+// The current screen lives in the URL hash (e.g. #/services, #/host/<id>) so a
+// refresh / back / forward keeps you where you were instead of resetting home.
+function parseHash(): Route {
+  const [name, hostId] = window.location.hash.replace(/^#\/?/, "").split("/");
+  if ((ROUTE_NAMES as string[]).includes(name)) {
+    return name === "host" && hostId ? { name: "host", hostId } : { name: name as RouteName };
+  }
+  return { name: "dashboard" };
+}
+function routeHash(r: Route): string {
+  return `#/${r.name}${r.name === "host" && r.hostId ? `/${r.hostId}` : ""}`;
+}
+
 export function App() {
   const theme = useTheme();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [route, setRoute] = useState<Route>({ name: "dashboard" });
+  const [route, setRoute] = useState<Route>(() => parseHash());
   const [hosts, setHosts] = useState<ProxyHost[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   // Mobile drawer (no effect above the CSS breakpoint, where the sidebar is always shown).
@@ -41,6 +59,13 @@ export function App() {
   // Check session on load.
   useEffect(() => {
     api.me().then(setUser).catch(() => setUser(null)).finally(() => setAuthChecked(true));
+  }, []);
+
+  // Keep the route in sync with the URL hash (browser back/forward, manual edits).
+  useEffect(() => {
+    const onHash = () => setRoute(parseHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
   const reload = useCallback(async () => {
@@ -59,6 +84,7 @@ export function App() {
   }, [user, reload]);
 
   const navigate = useCallback((r: Route) => {
+    window.location.hash = routeHash(r); // persists across refresh; hashchange syncs state too
     setRoute(r);
     setDrawerOpen(false); // close the mobile drawer after picking a destination
     window.scrollTo(0, 0);
@@ -67,6 +93,7 @@ export function App() {
   const logout = useCallback(async () => {
     await api.logout();
     setUser(null);
+    window.location.hash = routeHash({ name: "dashboard" });
     setRoute({ name: "dashboard" });
   }, []);
 

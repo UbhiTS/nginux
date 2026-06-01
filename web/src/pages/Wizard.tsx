@@ -241,9 +241,12 @@ export function Wizard({
                       ))}
                 </div>
                 {preset && (!term || matches.some((m) => m.id === preset.id)) && (
-                  <div className="info-line" style={{ marginTop: 14 }}>
+                  <div className="info-line" style={{ marginTop: 14, alignItems: "flex-start" }}>
                     <Icon.info />
-                    <span><b>{preset.label}</b> — {preset.notes}</span>
+                    <span>
+                      <b>{preset.label}</b> — {preset.notes}
+                      {preset.desc && <span style={{ display: "block", color: "var(--text-dim)", marginTop: 3 }}>{preset.desc}</span>}
+                    </span>
                   </div>
                 )}
                 <div className="wnav">
