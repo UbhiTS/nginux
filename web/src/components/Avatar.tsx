@@ -16,23 +16,29 @@ interface Props {
  *  data URL - keeps uploads tiny so no image library is needed server-side. */
 function fileToAvatar(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const size = 256;
-      const canvas = document.createElement("canvas");
-      canvas.width = canvas.height = size;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return reject(new Error("Canvas unavailable."));
-      const scale = Math.max(size / img.width, size / img.height);
-      const w = img.width * scale;
-      const h = img.height * scale;
-      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
-      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    // Read the file as a data: URL, not a blob: URL: the app's CSP is
+    // `img-src 'self' data:`, which blocks blob: image loads - so a blob URL here
+    // makes the <img> fail to load and every upload silently breaks.
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read that file."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const size = 256;
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("Canvas unavailable."));
+        const scale = Math.max(size / img.width, size / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => reject(new Error("Couldn't read that image."));
+      img.src = reader.result as string;
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't read that image.")); };
-    img.src = url;
+    reader.readAsDataURL(file);
   });
 }
 
