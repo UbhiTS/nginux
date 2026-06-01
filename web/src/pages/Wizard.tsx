@@ -243,8 +243,9 @@ export function Wizard({
                   <div className="info-line" style={{ marginTop: 14, alignItems: "flex-start" }}>
                     <Icon.info />
                     <span>
-                      <b>{preset.label}</b> — {preset.notes}
-                      {preset.desc && <span style={{ display: "block", color: "var(--text-dim)", marginTop: 3 }}>{preset.desc}</span>}
+                      <b>{preset.label}</b>
+                      {preset.desc && <span style={{ display: "block", marginTop: 3 }}>{preset.desc}</span>}
+                      {preset.notes && <span style={{ display: "block", color: "var(--text-dim)", marginTop: 3 }}>{preset.notes}</span>}
                     </span>
                   </div>
                 )}
