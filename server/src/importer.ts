@@ -55,7 +55,7 @@ export function importNginxConf(text: string): { imported: string[]; skipped: st
   const imported: string[] = [];
   const skipped: string[] = [];
   for (const p of parseNginxConf(text)) {
-    // Reject anything that isn't a clean hostname — the domain becomes a config
+    // Reject anything that isn't a clean hostname - the domain becomes a config
     // filename and is interpolated into generated nginx config.
     if (!isHostname(p.domain)) {
       skipped.push(p.domain);

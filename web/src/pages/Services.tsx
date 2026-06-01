@@ -87,14 +87,14 @@ export function Services({
                 </div>
                 <div className="host-meta">
                   <span className="strong">{d !== null ? "Valid" : "No cert"}</span>
-                  {d !== null ? `${d} days left` : "—"}
+                  {d !== null ? `${d} days left` : "-"}
                 </div>
                 <div className="host-meta mono">
                   {h.forwardHost}:{h.forwardPort}
                 </div>
                 <button
                   className={`switch${h.enabled ? " on" : ""}`}
-                  title={h.enabled ? "Serving — click to pause" : "Paused — click to serve"}
+                  title={h.enabled ? "Serving - click to pause" : "Paused - click to serve"}
                   aria-label={h.enabled ? `Pause ${h.name}` : `Serve ${h.name}`}
                   aria-pressed={h.enabled}
                   disabled={toggling === h.id}
@@ -106,7 +106,7 @@ export function Services({
           {hosts.length === 0 && (
             <div className="placeholder">
               <h2>No services yet</h2>
-              <p>Expose your first internal service — it takes about a minute.</p>
+              <p>Expose your first internal service - it takes about a minute.</p>
             </div>
           )}
         </div>

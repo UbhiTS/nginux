@@ -6,7 +6,7 @@ web/dist/
 # logs
 *.log
 
-# secrets / local env — NEVER commit
+# secrets / local env - NEVER commit
 .env
 .env.*
 *.pem

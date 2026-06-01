@@ -15,7 +15,7 @@ const DB_PATH = join(DATA_DIR, "nginux.db");
 export const db = new DatabaseSync(DB_PATH);
 
 // Memoize prepared statements by SQL text. Every db.prepare(sql) in the codebase
-// reuses one compiled statement instead of recompiling on each call — a free win
+// reuses one compiled statement instead of recompiling on each call - a free win
 // on hot paths (session lookup, host list, audit insert, metrics, etc.). Safe
 // because node:sqlite is synchronous: a statement is bound + executed per call
 // with no overlapping iteration. DDL still goes through db.exec, untouched.
@@ -60,7 +60,7 @@ db.exec(`
     securityHeaders INTEGER NOT NULL DEFAULT 1,
     hsts            INTEGER NOT NULL DEFAULT 0,
     rateLimit       INTEGER NOT NULL DEFAULT 0,
-    blockExploits   INTEGER NOT NULL DEFAULT 0,
+    blockExploits   INTEGER NOT NULL DEFAULT 1,
     ipAllow         TEXT NOT NULL DEFAULT '',
     ipDeny          TEXT NOT NULL DEFAULT '',
     customHeaders   TEXT NOT NULL DEFAULT '',
@@ -322,7 +322,7 @@ const DEFAULT_SETTINGS: Settings = {
   ssoForwardSecret: "",
 };
 
-// Settings fields that hold third-party credentials — never expose these to a
+// Settings fields that hold third-party credentials - never expose these to a
 // non-admin, and never include them in an unauthenticated/low-privilege view.
 export const SECRET_SETTING_KEYS = [
   "godaddyApiKey",
@@ -371,7 +371,7 @@ function daysFromNow(days: number): string {
 export function seedIfEmpty(): void {
   // Demo hosts/certs are for local dev & screenshots only. NEVER seed a real
   // deployment (the published image runs with NODE_ENV=production), and never
-  // re-seed once initialized — otherwise deleting every service would bring the
+  // re-seed once initialized - otherwise deleting every service would bring the
   // demo data back on the next restart.
   if (process.env.NODE_ENV === "production") return;
   const already = db.prepare("SELECT 1 FROM settings WHERE key = 'demoSeeded'").get();

@@ -45,7 +45,7 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
   const out: AppNotification[] = [];
   const enabled = listHosts().filter((h) => h.enabled);
 
-  // 1. Is the data plane actually listening? (prod only — dev has no bundled nginx)
+  // 1. Is the data plane actually listening? (prod only - dev has no bundled nginx)
   if (IS_PROD) {
     const [http, https] = await Promise.all([portOpen(80), portOpen(443)]);
     if (!http || !https) {
@@ -56,12 +56,12 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
         title: "The proxy isn't accepting connections",
         message:
           `Nothing is listening on port ${ports} on this machine, so your services aren't being served. ` +
-          `Check the container logs — if you've forwarded these ports on your router, the forwarding is fine; ` +
+          `Check the container logs - if you've forwarded these ports on your router, the forwarding is fine; ` +
           `the proxy itself needs to come back up.`,
         dismissible: false,
       });
     } else if (enabled.length) {
-      // Up locally, but we can't see the internet from in here — remind about forwarding.
+      // Up locally, but we can't see the internet from in here - remind about forwarding.
       out.push({
         id: "port-forward-reminder",
         severity: "info",
@@ -69,7 +69,7 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
         message:
           "The proxy is serving on ports 80 and 443 here. For your services to be reachable from outside your " +
           "network, your router/gateway must forward ports 80 and 443 to this machine. (Keep the control plane " +
-          "on :4600 on your LAN — never forward it.)",
+          "on :4600 on your LAN - never forward it.)",
         dismissible: true,
       });
     }
@@ -114,14 +114,14 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
       severity: "warning",
       title: "Login-gated services can't sign anyone in",
       message:
-        "Some services require NginUX login, but no sign-in URL is configured — so visitors get a blank 401 with " +
+        "Some services require NginUX login, but no sign-in URL is configured - so visitors get a blank 401 with " +
         "no way to log in. Set it in Settings → Login gate (expose NginUX on a subdomain of your base domain).",
       dismissible: true,
     });
   }
 
   // 4b. Login-gated hosts without a forward secret set (auto-seeded on boot, but
-  //     an admin can clear it — warn if they have, since the gate is then weaker).
+  //     an admin can clear it - warn if they have, since the gate is then weaker).
   if (!getSettings().ssoForwardSecret && enabled.some((h) => h.requireLogin)) {
     out.push({
       id: "forward-secret-missing",
@@ -148,7 +148,7 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
         ? `${expired.length} certificate${expired.length > 1 ? "s" : ""} expired`
         : `${expiring.length} certificate${expiring.length > 1 ? "s" : ""} expiring soon`,
       message:
-        `${list(expiring.map((h) => h.name))} — renew from the Certificates page. ` +
+        `${list(expiring.map((h) => h.name))} - renew from the Certificates page. ` +
         "(Let's Encrypt certificates auto-renew; self-signed ones don't.)",
       dismissible: true,
     });

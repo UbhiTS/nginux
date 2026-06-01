@@ -45,7 +45,7 @@ export function HostDetail({
     api.uptime(hostId).then(setUptime).catch(() => setUptime(null));
     api.certificates().then(setCerts).catch(() => {});
   };
-  // Switching services must reset transient view state — otherwise clicking a
+  // Switching services must reset transient view state - otherwise clicking a
   // different service in the sidebar while editing would leave the edit form
   // (and advanced panels) open on top of the new service.
   useEffect(() => {
@@ -73,7 +73,7 @@ export function HostDetail({
     } catch (e) {
       // The change was rejected and reverted server-side; keep the form open and
       // show why so they can fix it.
-      setSaveErr(e instanceof Error ? e.message : "Couldn't save — the change was reverted.");
+      setSaveErr(e instanceof Error ? e.message : "Couldn't save - the change was reverted.");
     } finally {
       setSaving(false);
     }
@@ -96,7 +96,7 @@ export function HostDetail({
 
   const b = banner[host.health];
   // The certificate this host actually serves (its chosen certDomain, or its
-  // own), from the cert store — but only when HTTPS is on. With HTTPS off the
+  // own), from the cert store - but only when HTTPS is on. With HTTPS off the
   // service is plain HTTP, so any cert still sitting in the store isn't in use.
   const cert = host.ssl ? (certs.find((c) => c.domain === (host.certDomain || host.domain)) ?? null) : null;
   const certDays = cert?.daysRemaining ?? null;
@@ -185,11 +185,11 @@ export function HostDetail({
         <div className={`summary-banner ${host.enabled ? b.cls : "warn"}`}>
           <div className="big-check">{host.enabled ? b.icon : <Icon.alert />}</div>
           <div>
-            <div className="st">{host.enabled ? b.title : "Paused — this service isn't being served."}</div>
+            <div className="st">{host.enabled ? b.title : "Paused - this service isn't being served."}</div>
             <div className="sd">
               {host.enabled ? (
                 <>
-                  {!host.ssl ? "Served over HTTP — not encrypted" : certDays !== null ? `Certificate valid for ${certDays} days` : "No certificate yet"} ·{" "}
+                  {!host.ssl ? "Served over HTTP - not encrypted" : certDays !== null ? `Certificate valid for ${certDays} days` : "No certificate yet"} ·{" "}
                   {host.require2fa
                     ? "Protected by login + 2FA"
                     : host.requireLogin
@@ -231,7 +231,7 @@ export function HostDetail({
                           <div className="muted" style={{ fontSize: 12, marginBottom: 5 }}>Extra nginx directives applied to this host:</div>
                           {pd && pd.extraDirectives.length
                             ? <div className="code">{pd.extraDirectives.join("\n")}</div>
-                            : <div className="muted" style={{ fontSize: 12.5 }}>None — only the WebSockets / HTTP/2 settings shown below.</div>}
+                            : <div className="muted" style={{ fontSize: 12.5 }}>None - only the WebSockets / HTTP/2 settings shown below.</div>}
                         </div>
                       </>
                     );
@@ -266,14 +266,14 @@ export function HostDetail({
               </div>
               <div className={`adv-toggle${advOpen ? " open" : ""}`} onClick={() => setAdvOpen((o) => !o)}>
                 <Icon.chevron className="chev" />
-                Advanced — view generated Nginx config
+                Advanced - view generated Nginx config
               </div>
               {advOpen && (
                 <div className="adv-body">
                   <div className="code">{config}</div>
                   <div className="info-line" style={{ marginTop: 12 }}>
                     <Icon.info />
-                    This is generated for you — edit only if you know what you're doing.
+                    This is generated for you - edit only if you know what you're doing.
                   </div>
                 </div>
               )}
@@ -295,7 +295,7 @@ export function HostDetail({
                     {uptime.bars.length === 0 && <span className="muted" style={{ fontSize: 12 }}>Collecting checks…</span>}
                   </div>
                   <div className="kv" style={{ marginTop: 10 }}><span className="k">Avg response</span><span className="v">{uptime.avgMs} ms</span></div>
-                  <div className="kv"><span className="k">Last check</span><span className="v muted">{uptime.lastCheck ? new Date(uptime.lastCheck).toLocaleTimeString() : "—"}</span></div>
+                  <div className="kv"><span className="k">Last check</span><span className="v muted">{uptime.lastCheck ? new Date(uptime.lastCheck).toLocaleTimeString() : "-"}</span></div>
                   <div className="kv" style={{ border: "none" }}><span className="k">Downtime incidents</span><span className="v">{uptime.incidents.length}</span></div>
                   {uptime.incidents.filter((i) => !i.endedAt).length > 0 && (
                     <div className="info-line" style={{ marginTop: 8, color: "var(--red)" }}><Icon.alert />Currently down since {new Date(uptime.incidents.find((i) => !i.endedAt)!.startedAt).toLocaleString()}</div>
@@ -319,7 +319,7 @@ export function HostDetail({
                 {!host.ssl ? (
                   <div className="kv" style={{ border: "none" }}>
                     <span className="k">Status</span>
-                    <span className="v muted">Not in use — served over HTTP</span>
+                    <span className="v muted">Not in use - served over HTTP</span>
                   </div>
                 ) : (
                   <>
@@ -329,11 +329,11 @@ export function HostDetail({
                     </div>
                     <div className="kv">
                       <span className="k">Expires in</span>
-                      <span className="v">{certDays !== null ? `${certDays} days` : "—"}</span>
+                      <span className="v">{certDays !== null ? `${certDays} days` : "-"}</span>
                     </div>
                     <div className="kv">
                       <span className="k">Issuer</span>
-                      <span className="v">{cert ? cert.issuer || "—" : "—"}</span>
+                      <span className="v">{cert ? cert.issuer || "-" : "-"}</span>
                     </div>
                     {host.certDomain && (
                       <div className="kv">
@@ -353,6 +353,7 @@ export function HostDetail({
                 <Check ok={host.require2fa} label="2FA enforced" />
                 <Check ok={host.countryLock} label="Country lock (GeoIP)" />
                 <Check ok={host.securityHeaders} label="Security headers" />
+                <Check ok={host.hsts} label="HSTS" />
                 <Check ok={host.rateLimit} label="Rate limiting" />
                 <Check ok={host.blockExploits} label="Exploit/bot blocking" />
                 {host.maintenanceMode && <div className="check-line warn"><Icon.alert />Maintenance mode ON</div>}
@@ -402,7 +403,7 @@ function ClientCerts({ hostId }: { hostId: string }) {
         </div>
         {issued && (
           <div className="test-result ok" style={{ display: "block", marginTop: 12 }}>
-            <div style={{ marginBottom: 6 }}>Issued — download now (key shown once):</div>
+            <div style={{ marginBottom: 6 }}>Issued - download now (key shown once):</div>
             <button className="btn btn-sm" style={{ marginRight: 8 }} onClick={() => download(issued.cert, "client.crt")}>client.crt</button>
             <button className="btn btn-sm" onClick={() => download(issued.key, "client.key")}>client.key</button>
           </div>
@@ -450,14 +451,14 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
   onCertsChanged: () => void;
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
-  // What's configured elsewhere — drives the "needs setup" hints on toggles.
+  // What's configured elsewhere - drives the "needs setup" hints on toggles.
   const hasDnsProvider = (settings?.dnsProvider ?? "none") !== "none";
   const ssoConfigured = !!settings?.ssoLoginUrl;
   const geoipConfigured = !!settings?.maxmindLicenseKey;
 
   // Certificate applies to L7 hosts (HTTP / gRPC). A single dropdown drives the
   // whole thing: no cert (plain HTTP), an existing covering cert, create a new
-  // one, or import — so there's one control, not three.
+  // one, or import - so there's one control, not three.
   const certApplies = draft.protocol === "http" || draft.protocol === "grpc";
   // The cert for this service's own domain (if one exists), plus any OTHER cert
   // that actually covers this domain (wildcard / SAN). A cert that doesn't cover
@@ -481,7 +482,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
     if (value === "none") set({ ssl: false });
     else if (value === "use:self") set({ ssl: true, certDomain: "" });
     else if (value.startsWith("use:")) set({ ssl: true, certDomain: value.slice(4) });
-    else set({ ssl: true }); // new:* / import — HTTPS on; the action runs below
+    else set({ ssl: true }); // new:* / import - HTTPS on; the action runs below
   };
 
   const issue = async (method: CertMethod) => {
@@ -495,7 +496,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       onCertsChanged();
     } catch (e) {
       // A slow ACME attempt can outlast a proxy's read timeout, so the HTTP call
-      // comes back as a 504 (or non-JSON) with no real message — but the server
+      // comes back as a 504 (or non-JSON) with no real message - but the server
       // records the actual reason on the cert. Pull it and surface that instead.
       let detail = e instanceof Error ? e.message : "";
       try {
@@ -503,7 +504,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
         const c = fresh.find((x) => x.domain === draft.domain);
         if (c?.lastError) detail = c.lastError;
       } catch { /* keep whatever message we already have */ }
-      setCertMsg({ ok: false, text: detail || "Couldn't create the certificate — it may still be processing; check the Certificates page in a minute." });
+      setCertMsg({ ok: false, text: detail || "Couldn't create the certificate - it may still be processing; check the Certificates page in a minute." });
       onCertsChanged();
     } finally {
       setCertBusy("");
@@ -526,11 +527,11 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
           set({ ssl: true, certDomain: cd });
           setCertChoice(cd ? `use:${cd}` : "use:self");
         }
-        setCertMsg({ ok: true, text: covers ? `Imported and selected ${dom}.` : `Imported ${dom} — it doesn't cover ${draft.domain}, so it wasn't selected.` });
+        setCertMsg({ ok: true, text: covers ? `Imported and selected ${dom}.` : `Imported ${dom} - it doesn't cover ${draft.domain}, so it wasn't selected.` });
         setImpCert(""); setImpKey("");
         onCertsChanged();
       } else {
-        setCertMsg({ ok: false, text: r.skipped?.[0]?.reason ? `Couldn't import — ${r.skipped[0].reason}.` : "Couldn't import that certificate." });
+        setCertMsg({ ok: false, text: r.skipped?.[0]?.reason ? `Couldn't import - ${r.skipped[0].reason}.` : "Couldn't import that certificate." });
       }
     } catch (e) {
       setCertMsg({ ok: false, text: e instanceof Error ? e.message : "Import failed." });
@@ -540,12 +541,12 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
   };
 
   const certHint =
-    certChoice === "none" ? "Served over plain HTTP — no encryption. Anyone on the network path can read the traffic."
-      : certChoice === "new:dns-01" ? `A free, trusted Let's Encrypt certificate over DNS — no open ports needed${hasDnsProvider ? "" : " (a DNS provider must be connected in Settings — none yet)"}.`
-        : certChoice === "new:http-01" ? `A free, trusted Let's Encrypt certificate over HTTP — needs port 80 reachable from the internet and public DNS for ${draft.domain}.`
-          : certChoice === "new:selfsigned" ? "An instant self-signed certificate — works immediately, but browsers show a warning. Fine for LAN-only or testing."
+    certChoice === "none" ? "Served over plain HTTP - no encryption. Anyone on the network path can read the traffic."
+      : certChoice === "new:dns-01" ? `A free, trusted Let's Encrypt certificate over DNS - no open ports needed${hasDnsProvider ? "" : " (a DNS provider must be connected in Settings - none yet)"}.`
+        : certChoice === "new:http-01" ? `A free, trusted Let's Encrypt certificate over HTTP - needs port 80 reachable from the internet and public DNS for ${draft.domain}.`
+          : certChoice === "new:selfsigned" ? "An instant self-signed certificate - works immediately, but browsers show a warning. Fine for LAN-only or testing."
             : certChoice === "import" ? "Paste the full-chain certificate and its private key for this domain."
-              : certChoice === "use:self" && !ownCert ? `No certificate for ${draft.domain} yet — it'll use the temporary self-signed cert until you create one.`
+              : certChoice === "use:self" && !ownCert ? `No certificate for ${draft.domain} yet - it'll use the temporary self-signed cert until you create one.`
                 : "Serves the selected certificate over HTTPS (and redirects HTTP).";
   // `req` + `met`: a prerequisite this toggle needs before it does anything. When
   // unmet, an amber "setup needed" line tells the user what to configure first.
@@ -582,7 +583,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
           )}
         </div>
         {(draft.protocol === "tcp" || draft.protocol === "udp") && <div className="hint">nginx listens on this port and forwards to the internal target.</div>}
-        {draft.protocol === "sni" && <div className="hint">Routes TLS by SNI ({draft.domain}) without terminating — forwards encrypted to the target.</div>}
+        {draft.protocol === "sni" && <div className="hint">Routes TLS by SNI ({draft.domain}) without terminating - forwards encrypted to the target.</div>}
       </div>
       <div className="field">
         <label>Internal service</label>
@@ -597,7 +598,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
 
       <div className="section-title" style={{ marginTop: 8 }}>Behaviour</div>
       <Toggle k="websockets" label="WebSockets" desc="Support upgrade connections." />
-      <Toggle k="maintenanceMode" label="Maintenance mode" desc="Show visitors a 'be right back' page — the service stays reachable (unlike Disable, which takes it fully offline)." />
+      <Toggle k="maintenanceMode" label="Maintenance mode" desc="Show visitors a 'be right back' page - the service stays reachable (unlike Disable, which takes it fully offline)." />
 
       {certApplies && (
         <>
@@ -605,12 +606,12 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
           <div className="field">
             <label>How {draft.domain} is served</label>
             <select className="input" value={certChoice} onChange={(e) => onCertChoice(e.target.value)} disabled={!!certBusy}>
-              <option value="none">No certificate — serve over HTTP only (no HTTPS)</option>
+              <option value="none">No certificate - serve over HTTP only (no HTTPS)</option>
               <optgroup label="Use a certificate (HTTPS)">
                 <option value="use:self">
                   {ownCert
                     ? `${draft.domain} · ${ownCert.issuer || ownCert.method}${ownCert.daysRemaining != null ? ` · ${ownCert.daysRemaining}d left` : ""}`
-                    : `${draft.domain} — this service's domain`}
+                    : `${draft.domain} - this service's domain`}
                 </option>
                 {otherCerts.map((c) => (
                   <option key={c.domain} value={`use:${c.domain}`}>
@@ -619,9 +620,9 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
                 ))}
               </optgroup>
               <optgroup label="Create a new certificate">
-                {hasDnsProvider && <option value="new:dns-01">Let's Encrypt (DNS) — trusted, no open ports needed</option>}
-                <option value="new:http-01">Let's Encrypt (HTTP) — trusted, needs port 80 + public DNS</option>
-                <option value="new:selfsigned">Self-signed — instant, not browser-trusted</option>
+                {hasDnsProvider && <option value="new:dns-01">Let's Encrypt (DNS) - trusted, no open ports needed</option>}
+                <option value="new:http-01">Let's Encrypt (HTTP) - trusted, needs port 80 + public DNS</option>
+                <option value="new:selfsigned">Self-signed - instant, not browser-trusted</option>
               </optgroup>
               <option value="import">Import your own certificate…</option>
             </select>
@@ -657,28 +658,28 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       <Toggle
         k="requireLogin"
         label="Require login"
-        desc="Gate behind NginUX auth — visitors sign in with their NginUX account."
+        desc="Gate behind NginUX auth - visitors sign in with their NginUX account."
         req="Set the NginUX sign-in URL in Settings → Login gate first, or visitors get a bare 401 with no way to log in."
         met={ssoConfigured}
         onClick={() => set({ requireLogin: !draft.requireLogin, ...(draft.requireLogin ? { require2fa: false } : {}) })}
       />
       {draft.requireLogin && (
-        <Toggle k="require2fa" label="Require 2FA" desc="On top of login — the account must have two-factor set up." nested />
+        <Toggle k="require2fa" label="Require 2FA" desc="On top of login - the account must have two-factor set up." nested />
       )}
       <Toggle
         k="countryLock"
         label="Country lock (GeoIP)"
         desc="Restrict access by country."
-        req="Add a MaxMind license key in Settings → Country lock — this stays open to all countries until then."
+        req="Add a MaxMind license key in Settings → Country lock - this stays open to all countries until then."
         met={geoipConfigured}
       />
       <Toggle k="mtls" label="Require client certificate (mTLS)" desc="Only clients with a cert from this host's managed CA may connect." />
 
       <div className="section-title" style={{ marginTop: 8 }}>Protections</div>
       <Toggle k="securityHeaders" label="Security headers" desc="X-Frame-Options, X-Content-Type-Options, Referrer-Policy." />
-      <Toggle k="hsts" label="HSTS" desc="Strict-Transport-Security — force HTTPS in browsers." req="Turn HTTPS on first (pick a certificate above) — HSTS has no effect over plain HTTP." met={draft.ssl} />
+      <Toggle k="hsts" label="HSTS" desc="Strict-Transport-Security - force HTTPS in browsers." req="Turn HTTPS on first (pick a certificate above) - HSTS has no effect over plain HTTP." met={draft.ssl} />
       <Toggle k="rateLimit" label="Rate limiting" desc="Cap requests per IP." />
-      <Toggle k="blockExploits" label="Block exploits & bad bots" desc="Deny .env/.git/wp-admin and scanner user-agents." />
+      <Toggle k="blockExploits" label="Block exploits & bad bots" desc="Deny probes for .env / .git / admin panels. Scanner bots (sqlmap, nikto…) are always blocked." />
 
       <div className="field" style={{ marginTop: 12 }}><label>Deny IPs / CIDRs (one per line or comma-separated)</label><textarea className="input" rows={2} value={draft.ipDeny} onChange={(e) => set({ ipDeny: e.target.value })} /></div>
       <div className="field"><label>Allow only these IPs / CIDRs (empty = all)</label><textarea className="input" rows={2} value={draft.ipAllow} onChange={(e) => set({ ipAllow: e.target.value })} /></div>
@@ -691,7 +692,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       <div className="field"><label>Max concurrent connections per client IP (0 = unlimited)</label><input className="input" style={{ maxWidth: 200 }} type="number" min={0} value={draft.maxConns || ""} onChange={(e) => set({ maxConns: Number(e.target.value) })} placeholder="0" /></div>
 
       <div className="section-title" style={{ marginTop: 8 }}>Load balancing</div>
-      <div className="field"><label>Extra upstream targets ("host:port" per line — primary is {draft.forwardHost}:{draft.forwardPort})</label><textarea className="input mono" rows={2} value={draft.upstreams} onChange={(e) => set({ upstreams: e.target.value })} placeholder="192.168.1.51:32400" /></div>
+      <div className="field"><label>Extra upstream targets ("host:port" per line - primary is {draft.forwardHost}:{draft.forwardPort})</label><textarea className="input mono" rows={2} value={draft.upstreams} onChange={(e) => set({ upstreams: e.target.value })} placeholder="192.168.1.51:32400" /></div>
       <div className="field" style={{ marginBottom: 0 }}>
         <label>Method</label>
         <select className="input" style={{ maxWidth: 200 }} value={draft.lbMethod} onChange={(e) => set({ lbMethod: e.target.value as ProxyHost["lbMethod"] })}>

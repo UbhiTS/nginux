@@ -186,7 +186,7 @@ function EventTable({ rows, kind }: { rows: AuditEvent[]; kind: "login" | "failu
           <div className="muted mono">{fmt(e.ts)}</div>
           <div>{e.actor}</div>
           <div className="muted">{e.summary}{(e.meta as { location?: string }).location ? ` · ${(e.meta as { location?: string }).location}` : ""}</div>
-          <div className="mono">{e.ip || "—"}</div>
+          <div className="mono">{e.ip || "-"}</div>
         </div>
       ))}
       {rows.length === 0 && (

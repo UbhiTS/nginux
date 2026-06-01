@@ -75,7 +75,7 @@ export function AgentsApi() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700, fontSize: 16 }}>NginUX speaks MCP natively</div>
                   <div className="muted" style={{ fontSize: 13, marginTop: 3 }}>
-                    Point any agent at the endpoint below — it can manage your proxy with scopes, approvals, and a full audit trail.
+                    Point any agent at the endpoint below - it can manage your proxy with scopes, approvals, and a full audit trail.
                   </div>
                 </div>
                 <span className="mono" style={{ fontSize: 12 }}>{origin}/api/mcp</span>
@@ -171,7 +171,7 @@ function McpTab({ tools, tokens, reload, origin }: { tools: ToolDef[]; tokens: A
         <Endpoint tag="HTTP" url={`${origin}/api/mcp`} note="streamable JSON-RPC" />
         <Endpoint tag="SSE" url={`${origin}/api/events/sse`} note="event stream" />
         <div className="info-line" style={{ marginTop: 6 }}>
-          <Icon.lock /> Every endpoint needs a Bearer API token — agents never use 2FA.
+          <Icon.lock /> Every endpoint needs a Bearer API token - agents never use 2FA.
         </div>
       </div>
 
@@ -204,7 +204,7 @@ function McpTab({ tools, tokens, reload, origin }: { tools: ToolDef[]; tokens: A
         {created && (
           <div className="test-result ok" style={{ marginTop: 12 }}>
             <Icon.check />
-            <div>Copy this token now — it won't be shown again: <span className="mono" style={{ wordBreak: "break-all" }}>{created}</span></div>
+            <div>Copy this token now - it won't be shown again: <span className="mono" style={{ wordBreak: "break-all" }}>{created}</span></div>
           </div>
         )}
       </div>

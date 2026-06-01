@@ -105,7 +105,7 @@ function Chart({ data, dataIn, metric }: { data: number[]; dataIn?: number[]; me
   // Requests: next multiple of 10 (min 10). Bandwidth: next 1/2/5×10ⁿ.
   const target = metric === "bandwidth" ? niceCeil(maxData) : Math.max(10, Math.ceil(maxData / 10) * 10);
   // Hysteresis: grow the axis the moment data needs more room, but only shrink
-  // after a big sustained drop — so values hovering near a boundary (e.g. 9–12)
+  // after a big sustained drop - so values hovering near a boundary (e.g. 9-12)
   // don't make the whole chart rescale between 10 and 20 on every refresh.
   const ceilRef = useRef(0);
   const prev = ceilRef.current;

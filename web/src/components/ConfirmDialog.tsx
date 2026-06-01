@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Icon } from "../icons.tsx";
 
-/** A styled in-app replacement for window.confirm — matches the app's modals
+/** A styled in-app replacement for window.confirm - matches the app's modals
  *  (Esc cancels, Enter confirms, click-outside cancels). */
 export function ConfirmDialog({
   title,

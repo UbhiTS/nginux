@@ -48,7 +48,7 @@ export interface Tool {
   description: string;
   scope: Scope;
   tier: Tier;
-  /** Restrict to admin users (and scoped tokens with the scope) — for ops a
+  /** Restrict to admin users (and scoped tokens with the scope) - for ops a
    *  non-admin operator can't do in the REST UI either (settings, bans, users). */
   adminOnly?: boolean;
   inputSchema: Record<string, unknown>;
@@ -77,7 +77,7 @@ function visibleHosts(p: Principal | undefined): ProxyHost[] {
 }
 
 /** Which feature-scopes a logged-in user's role grants when calling tools via
- *  MCP — mirrors the REST RBAC so the agent path can't be a privilege bypass. */
+ *  MCP - mirrors the REST RBAC so the agent path can't be a privilege bypass. */
 export function scopesForRole(role: User["role"]): Scope[] {
   switch (role) {
     case "admin":
@@ -221,7 +221,7 @@ export const TOOLS: Record<string, Tool> = {
   },
   list_users: {
     name: "list_users", title: "List users", scope: "report", tier: "read", adminOnly: true,
-    description: "User accounts (username, role, 2FA, last login) — no secrets.",
+    description: "User accounts (username, role, 2FA, last login) - no secrets.",
     inputSchema: obj({}), summarize: () => "list users",
     handler: () => listUsers(),
   },
@@ -338,7 +338,7 @@ export const TOOLS: Record<string, Tool> = {
   // ---------------- security / destructive ----------------
   disable_login: {
     name: "disable_login", title: "Disable login on a host", scope: "security", tier: "high",
-    description: "Remove the NginUX login gate — makes the host publicly reachable.",
+    description: "Remove the NginUX login gate - makes the host publicly reachable.",
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `disable login on service ${a.id}`,
     handler: async (a) => { const h = updateHost(String(a.id), { requireLogin: false, require2fa: false }); await applyConfig(); return h; },

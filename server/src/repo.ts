@@ -57,7 +57,7 @@ export function createHost(input: NewProxyHost): ProxyHost {
     input.serverIp, b(input.enabled), input.health ?? "unknown", input.certExpiresAt ?? null,
     input.certDomain ?? "",
     b(input.maintenanceMode ?? false), b(input.securityHeaders ?? true), b(input.hsts ?? false),
-    b(input.rateLimit ?? false), b(input.blockExploits ?? false), input.ipAllow ?? "",
+    b(input.rateLimit ?? false), b(input.blockExploits ?? true), input.ipAllow ?? "",
     input.ipDeny ?? "", input.customHeaders ?? "", input.customNginx ?? "",
     input.upstreams ?? "", input.lbMethod ?? "round_robin",
     input.protocol ?? "http", input.listenPort ?? 0, input.pathRules ?? "", b(input.mtls ?? false),
@@ -159,7 +159,7 @@ export function getTopology(gateway: { publicIp: string; gatewayIp: string }): T
     });
   }
 
-  // A server's status is the worst of its *enabled* services' statuses — a paused
+  // A server's status is the worst of its *enabled* services' statuses - a paused
   // service is intentionally offline, so it shouldn't drag the node to degraded.
   const rank: Record<HealthStatus, number> = { online: 0, unknown: 1, degraded: 2, down: 3 };
   for (const server of byServer.values()) {

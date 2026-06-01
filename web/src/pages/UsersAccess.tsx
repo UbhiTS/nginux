@@ -194,7 +194,7 @@ export function UsersAccess({
               <div className="card card-pad" style={{ marginBottom: 18 }}>
                 <div style={{ fontWeight: 650, marginBottom: 8 }}>Set up two-factor authentication</div>
                 <p className="muted" style={{ fontSize: 13 }}>
-                  Scan this QR code with your authenticator app — or enter the key manually — then enter the 6-digit code to confirm.
+                  Scan this QR code with your authenticator app - or enter the key manually - then enter the 6-digit code to confirm.
                 </p>
                 <div style={{ display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap", margin: "14px 0" }}>
                   <div style={{ background: "#fff", padding: 10, borderRadius: 10, flexShrink: 0, lineHeight: 0 }}>
@@ -218,7 +218,7 @@ export function UsersAccess({
 
             {backup && (
               <div className="card card-pad" style={{ marginBottom: 18 }}>
-                <div style={{ fontWeight: 650, marginBottom: 6, color: "var(--green)" }}>2FA enabled ✓ — save your backup codes</div>
+                <div style={{ fontWeight: 650, marginBottom: 6, color: "var(--green)" }}>2FA enabled ✓ - save your backup codes</div>
                 <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>Each code works once if you lose your authenticator.</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {backup.map((c) => (
@@ -248,7 +248,7 @@ export function UsersAccess({
                     </span>
                     <div>
                       {u.username}
-                      <div className="muted" style={{ fontSize: 11 }}>{u.email || "—"}</div>
+                      <div className="muted" style={{ fontSize: 11 }}>{u.email || "-"}</div>
                     </div>
                   </div>
                   <div style={{ textAlign: "center" }}>
@@ -261,7 +261,7 @@ export function UsersAccess({
                   </div>
                   <div className="muted">{u.lastLoginAt ? fmt(u.lastLoginAt) : "never"}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 64px", gap: 10, alignItems: "center" }}>
-                    {/* password action — shares one centred slot so Change/Reset line up across rows */}
+                    {/* password action - shares one centred slot so Change/Reset line up across rows */}
                     <span style={{ justifySelf: "center" }}>
                       {u.id === currentUser.id ? (
                         <button className="btn btn-ghost btn-sm" onClick={openPw}>Change password</button>
@@ -295,7 +295,7 @@ export function UsersAccess({
               <div key={s.token} className="arow" style={{ gridTemplateColumns: "1fr 2fr 1.1fr 1fr" }}>
                 <div>{s.username}</div>
                 <div className="muted">{s.device}</div>
-                <div className="mono">{s.ip || "—"}</div>
+                <div className="mono">{s.ip || "-"}</div>
                 <div className="muted">{fmt(s.lastActive)}</div>
               </div>
             ))}
@@ -362,10 +362,10 @@ export function UsersAccess({
                 <input className="input" type="password" value={auPass} onChange={(e) => setAuPass(e.target.value)} /></div>
               <div className="field"><label>Role</label>
                 <select className="input" value={auRole} onChange={(e) => setAuRole(e.target.value as AuthUser["role"])}>
-                  <option value="readonly">Read-only — can view everything</option>
-                  <option value="editor">Editor — manage services &amp; certs</option>
-                  <option value="scoped">Scoped — only specific services</option>
-                  <option value="admin">Admin — full control</option>
+                  <option value="readonly">Read-only - can view everything</option>
+                  <option value="editor">Editor - manage services &amp; certs</option>
+                  <option value="scoped">Scoped - only specific services</option>
+                  <option value="admin">Admin - full control</option>
                 </select></div>
               {auRole === "scoped" && (
                 <div className="field"><label>Allowed services (comma-separated ids, names, or domains)</label>
@@ -384,7 +384,7 @@ export function UsersAccess({
       {resetUser && (
         <div className="modal-backdrop" onClick={() => setResetUser(null)}>
           <div className="card card-pad modal-card" onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontWeight: 650, marginBottom: 4 }}>Reset password — {resetUser.username}</div>
+            <div style={{ fontWeight: 650, marginBottom: 4 }}>Reset password - {resetUser.username}</div>
             <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
               Set a temporary password. {resetUser.username} will be required to choose a new one at next sign-in, and any active sessions will be signed out.
             </p>

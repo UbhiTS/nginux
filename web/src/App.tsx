@@ -70,7 +70,7 @@ export function App() {
 
   const reload = useCallback(async () => {
     // Don't let a transient backend hiccup throw an unhandled rejection that
-    // leaves the UI on a stale/empty shell — fail soft and keep what we have.
+    // leaves the UI on a stale/empty shell - fail soft and keep what we have.
     try {
       const [h, s] = await Promise.all([api.listHosts(), api.settings()]);
       setHosts(h);

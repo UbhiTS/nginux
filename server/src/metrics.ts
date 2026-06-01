@@ -130,7 +130,7 @@ export function recentLogs(filter?: string, limit = 200): LogEntry[] {
   return out;
 }
 
-// Sort the latency samples ONCE per caller, then read any percentile off it —
+// Sort the latency samples ONCE per caller, then read any percentile off it -
 // summary() and prometheus() each need p50 + p95, so this halves the sorts.
 function sortedMs(): number[] {
   return msSamples.length ? [...msSamples].sort((a, b) => a - b) : [];
@@ -189,7 +189,7 @@ export function hostTraffic(range: string, metric: "requests" | "bandwidth" = "r
   return [...acc.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
 }
 
-/** Per-host requests + in/out bytes over a window — drives the Network Map's
+/** Per-host requests + in/out bytes over a window - drives the Network Map's
  *  dual encoding (dots ∝ requests, line width ∝ bandwidth, per direction). */
 export interface HostStat { key: string; requests: number; bytesIn: number; bytesOut: number; }
 export function hostStats(range: string): HostStat[] {
@@ -319,7 +319,7 @@ export function prometheus(): string {
   for (const [cls, n] of Object.entries(statusClass)) lines.push(`nginux_responses_total{class="${cls}"} ${n}`);
   lines.push("# HELP nginux_requests_by_host_total Requests per host.");
   lines.push("# TYPE nginux_requests_by_host_total counter");
-  // Escape the label value — `host` comes from the client Host header, so it
+  // Escape the label value - `host` comes from the client Host header, so it
   // must not break the Prometheus exposition format.
   const escLabel = (s: string) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
   for (const [host, n] of byHost) lines.push(`nginux_requests_by_host_total{host="${escLabel(host)}"} ${n}`);
@@ -348,7 +348,7 @@ export function startLogTailer(): void {
       let buf = "";
       createReadStream(ACCESS_LOG, { start: offset, end })
         // An unhandled stream 'error' (EBUSY, rotation mid-read) would otherwise
-        // throw and crash the process — swallow it and retry next tick.
+        // throw and crash the process - swallow it and retry next tick.
         .on("error", () => {})
         .on("data", (c) => (buf += c))
         .on("end", () => {
@@ -358,7 +358,7 @@ export function startLogTailer(): void {
           carry = lines.pop() ?? ""; // keep the trailing partial line for next read
           for (const line of lines) parseLine(line);
         });
-    } catch { /* stat/read race — retry on the next watch tick */ }
+    } catch { /* stat/read race - retry on the next watch tick */ }
   };
   watchFile(ACCESS_LOG, { interval: 1000 }, readNew);
 }
@@ -406,7 +406,7 @@ export function startDemoTraffic(): void {
         path: pick(paths),
         status,
         bytes: Math.floor(200 + Math.random() * 80000),   // response (out)
-        bytesIn: Math.floor(120 + Math.random() * 4000),    // request (in) — typically smaller
+        bytesIn: Math.floor(120 + Math.random() * 4000),    // request (in) - typically smaller
         ip,
         country,
         ua: pick(["Chrome", "Safari", "curl", "PlexApp"]),

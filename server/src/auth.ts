@@ -23,10 +23,10 @@ const SESSION_TTL_MS = 7 * 86400_000;
 const IS_PROD = process.env.NODE_ENV === "production";
 // ---------- password hashing (scrypt) ----------
 // Async scrypt so the (deliberately expensive) KDF runs on libuv's threadpool
-// instead of blocking the event loop — keeps the server responsive under a burst
+// instead of blocking the event loop - keeps the server responsive under a burst
 // of logins or password changes.
 interface ScryptParams { N: number; r: number; p: number; }
-// Current cost — stronger than node's default (N=2^14). Params are embedded in
+// Current cost - stronger than node's default (N=2^14). Params are embedded in
 // the stored hash so they can be raised later without breaking old hashes.
 const SCRYPT: ScryptParams = { N: 1 << 15, r: 8, p: 1 };
 const SCRYPT_MAXMEM = 128 * 1024 * 1024; // headroom for N=2^15 (~32 MB)
@@ -51,7 +51,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return hash.length === expected.length && timingSafeEqual(hash, expected);
 }
 
-// A fixed bogus hash so an unknown username still costs one scrypt — closes the
+// A fixed bogus hash so an unknown username still costs one scrypt - closes the
 // timing oracle that would otherwise reveal which usernames exist. Computed once.
 const DUMMY_HASH = hashPassword("nginux-dummy-password-for-constant-time");
 
@@ -135,7 +135,7 @@ export async function createUser(input: {
 
 export function deleteUser(id: string): boolean {
   const removed = db.prepare("DELETE FROM users WHERE id = ?").run(id).changes > 0;
-  // Don't leave the deleted user's sessions behind — a live cookie would
+  // Don't leave the deleted user's sessions behind - a live cookie would
   // otherwise keep resolving until it expired on its own.
   if (removed) destroyUserSessions(id);
   return removed;
@@ -278,7 +278,7 @@ export function parseCookie(header: string | undefined): Record<string, string> 
     const [k, ...v] = part.trim().split("=");
     if (!k) continue;
     // A malformed %-escape in ANY cookie on the domain would otherwise throw and
-    // 500 every authenticated request from that browser — fall back to the raw value.
+    // 500 every authenticated request from that browser - fall back to the raw value.
     const raw = v.join("=");
     try { out[k] = decodeURIComponent(raw); } catch { out[k] = raw; }
   }
@@ -419,7 +419,7 @@ export async function seedAuthIfEmpty(): Promise<{ usingDefault: boolean }> {
     db.prepare("UPDATE users SET mustChangePassword = 1 WHERE id = ?").run(admin.id);
   }
 
-  // Demo accounts + sample history are for dev/screenshots only — never seed
+  // Demo accounts + sample history are for dev/screenshots only - never seed
   // functional extra accounts (with stored TOTP secrets) into a real deployment.
   if (!IS_PROD) {
     const priya = await createUser({ username: "priya", email: "priya@home", password: randomBytes(9).toString("hex"), role: "editor" });
@@ -432,7 +432,7 @@ export async function seedAuthIfEmpty(): Promise<{ usingDefault: boolean }> {
     const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
     logEvent({ type: "login.success", severity: "info", actor: "admin", summary: "Signed in with password", ip: "203.0.113.10", meta: { location: "Home, CA" }, ts: ago(6) });
     logEvent({ type: "login.success", severity: "notice", actor: "priya", summary: "Signed in from a new device", ip: "203.0.113.45", meta: { location: "Pune, IN", newDevice: true }, ts: ago(3) });
-    logEvent({ type: "login.failed", severity: "danger", actor: "unknown", summary: "47 failed logins — IP auto-banned", ip: "198.51.100.211", meta: { location: "Russia", count: 47 }, ts: ago(2) });
+    logEvent({ type: "login.failed", severity: "danger", actor: "unknown", summary: "47 failed logins - IP auto-banned", ip: "198.51.100.211", meta: { location: "Russia", count: 47 }, ts: ago(2) });
     logEvent({ type: "host.updated", severity: "notice", actor: "admin", summary: "Disabled login on cloud.ubhi.io", ip: "203.0.113.10", meta: {}, ts: ago(12) });
   }
   logEvent({ type: "system.seed", severity: "info", actor: "system", summary: "Initial admin account created", ip: "", meta: {} });

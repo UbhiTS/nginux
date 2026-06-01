@@ -34,11 +34,11 @@ export function recordCheck(hostId: string, up: boolean, ms: number) {
   if (!host) return;
   push(hostId, up, ms);
   const next = up ? "online" : "down";
-  if (host.health === next) return; // no change — leave it (and don't re-log)
+  if (host.health === next) return; // no change - leave it (and don't re-log)
   const wasDown = host.health === "down";
   updateHost(hostId, { health: next });
   // Reflect the probe result whatever the previous state (including the initial
-  // "unknown" of a freshly-created host — it must resolve to online/down, not
+  // "unknown" of a freshly-created host - it must resolve to online/down, not
   // stay unknown). Only fire incident/alert events on a real up<->down flip.
   if (!up) {
     openIncident(hostId, host.domain);
@@ -106,7 +106,7 @@ export function startUptimeMonitor() {
     if (running) return; // never overlap sweeps
     running = true;
     try {
-      // Paused (disabled) services aren't served, so don't probe them — that
+      // Paused (disabled) services aren't served, so don't probe them - that
       // would record bogus uptime or fire false "down" alerts for a host the
       // user intentionally took offline.
       const hosts = listHosts().filter((h) => h.enabled);

@@ -25,7 +25,7 @@ interface Flow {
 }
 
 const MAX_DOTS = 6;
-const SPEED = 190; // px/second — identical for every dot
+const SPEED = 190; // px/second - identical for every dot
 const STEP_SEC = 0.09; // seconds between consecutive dots in a batch (controls spacing)
 const HANDOFF_SEC = 0.12; // brief pause between a batch finishing and the next starting
 const MIN_W = 1.4; // thinnest line (idle / tiny bandwidth)
@@ -79,7 +79,7 @@ export function Topology({
 
   useEffect(() => { statsRef.current = stats; }, [stats]);
 
-  // Live gateway reachability — is nginx serving 80/443, and has the public IP drifted?
+  // Live gateway reachability - is nginx serving 80/443, and has the public IP drifted?
   useEffect(() => {
     let alive = true;
     const pull = () => api.reachability().then((x) => { if (alive) setReach(x); }).catch(() => {});
@@ -90,7 +90,7 @@ export function Topology({
 
   // The parent refetches topology on a poll, handing us a new `data` object each
   // time. Read it through a ref so commits don't restart just because the object
-  // identity changed — only when the actual service set/health changes (svcKey).
+  // identity changed - only when the actual service set/health changes (svcKey).
   const dataRef = useRef(data);
   dataRef.current = data;
   const svcKey = data.servers.flatMap((s) => s.services).map((x) => `${x.id}:${x.health}:${x.enabled}`).join("|");
@@ -173,7 +173,7 @@ export function Topology({
 
     // Paused: both internet↔router lines solid (traffic still arrives at the
     // gateway) and both gateway↔service lines dashed (nothing passes to the app),
-    // with no dots — there's no live flow to animate while paused.
+    // with no dots - there's no live flow to animate while paused.
     if (paused) {
       const ps: Stroke[] = [
         { d: segPath(up(a1), up(b1)), color, dashed: false, host: svc.domain, width: MIN_W },
@@ -186,12 +186,12 @@ export function Topology({
       return { strokes: ps, flows: [], gen: 0, cycle: 8 };
     }
 
-    // Request (ingress) line — upper: width ∝ request bandwidth, pulses on the request batch.
+    // Request (ingress) line - upper: width ∝ request bandwidth, pulses on the request batch.
     const fwdBase = live ? MIN_W : inW;
     const fwdPulse: Pulse | undefined = live && reqN > 0
       ? { dur: cycle, begin: "0s", phases: [{ t0: reqStart / cycle, t1: (reqStart + reqBatch) / cycle, width: inW }] }
       : undefined;
-    // Response (egress) line — lower: width ∝ response bandwidth, pulses on the response batch.
+    // Response (egress) line - lower: width ∝ response bandwidth, pulses on the response batch.
     const retBase = live ? MIN_W : outW;
     const retPulse: Pulse | undefined = live && hasResp
       ? { dur: cycle, begin: "0s", phases: [{ t0: respStart / cycle, t1: (respStart + respBatch) / cycle, width: outW }] }
@@ -214,7 +214,7 @@ export function Topology({
 
   // Start one independent commit chain per service. Each renders its generation,
   // then schedules its next swap one cycle later (in its own quiet tail), so its
-  // dots always land first — and other services are untouched (separate keys).
+  // dots always land first - and other services are untouched (separate keys).
   const startChains = useCallback(() => {
     const timers = timersRef.current;
     timers.forEach((id) => clearTimeout(id));
@@ -358,10 +358,10 @@ export function Topology({
               if (r) {
                 if (!r.nginxUp) {
                   cls = "r"; text = "nginx down on 80 / 443";
-                  title = "nginx isn't responding on ports 80/443 — the proxy data plane may be down.";
+                  title = "nginx isn't responding on ports 80/443 - the proxy data plane may be down.";
                 } else if (r.ipMismatch) {
                   cls = "y"; text = "Public IP changed";
-                  title = `Your public IP looks like ${r.detectedPublicIp}, but ${r.configuredPublicIp} is configured. DNS A records may now point to the wrong address — update them (and Settings).`;
+                  title = `Your public IP looks like ${r.detectedPublicIp}, but ${r.configuredPublicIp} is configured. DNS A records may now point to the wrong address - update them (and Settings).`;
                 } else {
                   cls = "g"; text = "Serving 80 / 443";
                   const extOk = r.ext443 === true || r.ext80 === true;

@@ -58,7 +58,7 @@ export function removeBan(ip: string): boolean {
 export function writeBannedConf(): void {
   if (!existsSync(dirname(BANNED_FILE))) mkdirSync(dirname(BANNED_FILE), { recursive: true });
   const lines = listBans().map((b) => `deny ${b.ip};`);
-  writeFileSync(BANNED_FILE, `# Managed by NginUX — auto + manual IP bans\n${lines.join("\n")}\n`);
+  writeFileSync(BANNED_FILE, `# Managed by NginUX - auto + manual IP bans\n${lines.join("\n")}\n`);
 }
 
 // ---- auto-ban engine ----

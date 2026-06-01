@@ -2,13 +2,13 @@ import qrcode from "qrcode-generator";
 
 /**
  * Renders a QR code for `value` as a self-contained SVG, generated entirely in
- * the browser (no external QR service) — so secrets like a TOTP otpauth URI
+ * the browser (no external QR service) - so secrets like a TOTP otpauth URI
  * never leave the device. Black modules on a white field with a quiet-zone
  * border so it scans reliably regardless of the app theme.
  */
 export function QrCode({ value, size = 188 }: { value: string; size?: number }) {
   const qr = qrcode(0, "M"); // auto version, medium error correction
-  qr.addData(value); // Byte mode (default) — otpauth URIs are ASCII
+  qr.addData(value); // Byte mode (default) - otpauth URIs are ASCII
   qr.make();
 
   const count = qr.getModuleCount();

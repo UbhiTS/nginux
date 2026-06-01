@@ -1,4 +1,4 @@
-# NginUX — runs anywhere Docker runs (Windows, Linux, NAS, macOS).
+# NginUX - runs anywhere Docker runs (Windows, Linux, NAS, macOS).
 #   docker compose up -d   →   UI at http://localhost:4600
 services:
   nginux:
@@ -24,13 +24,13 @@ services:
       # - PGID=1000
       # Trust X-Forwarded-For only from loopback (the bundled nginx's auth
       # subrequests), so real client IPs are recorded without letting a direct
-      # :4600 client spoof them. Keep :4600 on the LAN — never port-forward it to
+      # :4600 client spoof them. Keep :4600 on the LAN - never port-forward it to
       # the internet (only 80/443 should face the internet).
       - NGINUX_TRUST_PROXY=true
       # Set a strong admin password on first run (else default is admin/admin):
       # - NGINUX_ADMIN_PASSWORD=change-me-to-something-strong
     # Drop all Linux capabilities, then add back only what's needed to bind
-    # :80/:443 and let nginx manage its workers — big blast-radius reduction.
+    # :80/:443 and let nginx manage its workers - big blast-radius reduction.
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE, CHOWN, SETUID, SETGID, DAC_OVERRIDE, KILL]
     security_opt:

@@ -123,7 +123,7 @@ export const api = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      // HTTP/2 leaves statusText empty, and a gateway timeout body may not be JSON —
+      // HTTP/2 leaves statusText empty, and a gateway timeout body may not be JSON -
       // fall back to the status code so the caller never gets a blank message.
       const fallback = res.statusText || `request failed (HTTP ${res.status})`;
       const err = new Error(body.error ? String(body.error) : fallback) as Error & { kind?: string };

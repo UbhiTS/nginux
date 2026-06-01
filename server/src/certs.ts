@@ -287,7 +287,7 @@ export async function issueSelfSigned(domain: string): Promise<Certificate> {
 }
 
 // How long a single ACME issuance may run before we give up (configurable).
-// Generous on purpose — DNS-01 propagation can legitimately take 60-90s with some
+// Generous on purpose - DNS-01 propagation can legitimately take 60-90s with some
 // providers. We no longer retry timeouts, so this is one bounded attempt, not 3×.
 const ACME_TIMEOUT_MS = Number(process.env.ACME_TIMEOUT_MS ?? 120000);
 const ACCOUNT_KEY_PATH = join(CERT_DIR, "acme-account.key");
@@ -301,20 +301,20 @@ export class AcmeError extends Error {
 
 function classifyAcme(raw: string): { message: string; kind: AcmeErrorKind } {
   if (/rate ?limit|too many|tooManyRequests/i.test(raw))
-    return { kind: "rate_limit", message: "Hit a Let's Encrypt rate limit. These reset after an hour (or longer for duplicate certificates) — wait before retrying, or switch on staging mode in Settings to test freely." };
+    return { kind: "rate_limit", message: "Hit a Let's Encrypt rate limit. These reset after an hour (or longer for duplicate certificates) - wait before retrying, or switch on staging mode in Settings to test freely." };
   if (/timed? ?out|timeout|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(raw))
     return { kind: "timeout", message: "Let's Encrypt didn't respond in time. It may be slow, rate-limiting, or your domain isn't reachable yet." };
   if (/dns|TXT|propagat/i.test(raw))
-    return { kind: "dns", message: "Couldn't verify domain ownership via DNS yet — DNS may not have propagated, or the provider isn't connected in Settings." };
+    return { kind: "dns", message: "Couldn't verify domain ownership via DNS yet - DNS may not have propagated, or the provider isn't connected in Settings." };
   if (/connection|unreachable|http-01|:80|\b404\b|refused/i.test(raw))
-    return { kind: "unreachable", message: "Let's Encrypt couldn't reach this domain on port 80 — it must be publicly reachable (DNS pointed at your IP, port 80 forwarded) for HTTP validation." };
+    return { kind: "unreachable", message: "Let's Encrypt couldn't reach this domain on port 80 - it must be publicly reachable (DNS pointed at your IP, port 80 forwarded) for HTTP validation." };
   if (/email|account|contact/i.test(raw))
     return { kind: "config", message: raw.split("\n")[0] };
   return { kind: "other", message: "Certificate issuance failed: " + raw.split("\n")[0] };
 }
 
 /** Reuse one ACME account key across issuances instead of registering a fresh
- *  account every time — repeated registrations are themselves rate-limited. */
+ *  account every time - repeated registrations are themselves rate-limited. */
 async function acmeAccountKey(): Promise<Buffer> {
   if (existsSync(ACCOUNT_KEY_PATH)) return readFileSync(ACCOUNT_KEY_PATH);
   const key = await acme.crypto.createPrivateKey();
@@ -330,7 +330,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-// ---------- Let's Encrypt (ACME) — runs with a reachable public domain ----------
+// ---------- Let's Encrypt (ACME) - runs with a reachable public domain ----------
 export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-01"): Promise<Certificate> {
   const s = getSettings();
   if (!s.letsEncryptEmail) throw new AcmeError("Set a Let's Encrypt contact email in Settings first.", "config");
@@ -366,7 +366,7 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
     }), ACME_TIMEOUT_MS, "Let's Encrypt issuance");
 
     writeFiles(domain, key.toString(), certPem.toString());
-    // Parse with node:crypto X509Certificate (EC-aware) — node-forge can't read
+    // Parse with node:crypto X509Certificate (EC-aware) - node-forge can't read
     // EC certs and would throw here, marking a SUCCESSFUL issuance as failed and
     // triggering rate-limit-burning retries. The cert is already on disk.
     const info = parseLeaf(certPem.toString());

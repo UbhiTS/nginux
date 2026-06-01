@@ -20,14 +20,14 @@ export function Dashboard({
   useEffect(() => {
     api.topology().then(setTopology).catch(() => setTopology(null));
     // Real traffic numbers; only admin/editor can read metrics, so a readonly
-    // user simply sees "—" rather than a fabricated figure.
+    // user simply sees "-" rather than a fabricated figure.
     api.metricsSummary().then(setSummary).catch(() => setSummary(null));
   }, [hosts]);
 
   const online = hosts.filter((h) => h.enabled && h.health === "online").length;
   const paused = hosts.filter((h) => !h.enabled).length;
   // Paused services are intentionally offline, so they don't count as "needs
-  // attention" — only enabled-but-unhealthy ones do.
+  // attention" - only enabled-but-unhealthy ones do.
   const needsAttention = hosts.filter((h) => h.enabled && h.health !== "online").length;
   const withCert = hosts.filter((h) => h.certExpiresAt);
   const days = (iso: string) => Math.round((Date.parse(iso) - Date.now()) / 86400_000);
@@ -49,7 +49,7 @@ export function Dashboard({
             <h2 style={{ marginTop: 12 }}>Welcome to NginUX</h2>
             <p className="muted" style={{ maxWidth: 460, margin: "10px auto 22px", lineHeight: 1.6 }}>
               Let's get your first service online. Point a domain at an app on your network and
-              NginUX sets up the reverse proxy and a free HTTPS certificate for you — about a minute, no nginx config required.
+              NginUX sets up the reverse proxy and a free HTTPS certificate for you - about a minute, no nginx config required.
             </p>
             <button className="btn btn-primary" onClick={() => navigate({ name: "wizard" })}>
               <Icon.plus />
@@ -102,7 +102,7 @@ export function Dashboard({
               {withCert.length} <small>/ {hosts.length}</small>
             </div>
             <div className="trend" style={{ color: "var(--text-dim)" }}>
-              {nextRenewal !== null ? `Next renewal in ${nextRenewal} days` : "—"}
+              {nextRenewal !== null ? `Next renewal in ${nextRenewal} days` : "-"}
             </div>
           </div>
 
@@ -112,7 +112,7 @@ export function Dashboard({
               Requests
             </div>
             <div className="value">
-              {summary ? fmtCount(summary.totalRequests) : "—"} <small>total</small>
+              {summary ? fmtCount(summary.totalRequests) : "-"} <small>total</small>
             </div>
             <div className="trend" style={{ color: summary && summary.errorRate > 5 ? "var(--yellow)" : "var(--text-dim)" }}>
               {summary ? `${summary.errorRate}% errors · ${summary.p95}ms p95` : "Since the proxy started"}

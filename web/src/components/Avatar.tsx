@@ -13,7 +13,7 @@ interface Props {
 }
 
 /** Load a File into an <img>, cover-crop it to a square, and return a small JPEG
- *  data URL — keeps uploads tiny so no image library is needed server-side. */
+ *  data URL - keeps uploads tiny so no image library is needed server-side. */
 function fileToAvatar(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);

@@ -8,7 +8,7 @@ type CertChoice = "existing" | "dns-01" | "http-01" | "selfsigned";
 const MAX_CERT_ATTEMPTS = 3;
 
 /** A delay that resolves after `ms`, ticks a countdown, and rejects (AbortError)
- *  if the signal fires — lets the user cancel a backoff wait. */
+ *  if the signal fires - lets the user cancel a backoff wait. */
 function cancellableWait(ms: number, signal: AbortSignal, onTick: (secs: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(new DOMException("aborted", "AbortError"));
@@ -106,7 +106,7 @@ export function Wizard({
 
   // Issue a trusted cert with bounded attempts + exponential backoff. Transient
   // failures (timeout/dns) retry; a rate limit or unreachable host stops early.
-  // The whole sequence is cancellable — the service is already live on self-signed.
+  // The whole sequence is cancellable - the service is already live on self-signed.
   const issueWithRetry = async (host: string, method: "http-01" | "dns-01", signal: AbortSignal) => {
     for (let attempt = 1; attempt <= MAX_CERT_ATTEMPTS; attempt++) {
       setCertAttempt(attempt);
@@ -117,13 +117,13 @@ export function Wizard({
         return;
       } catch (e) {
         if (signal.aborted || (e as { name?: string })?.name === "AbortError") {
-          setCertResult({ ok: false, message: "Cancelled — the service is live on a temporary self-signed certificate. Request a trusted one anytime from Certificates." });
+          setCertResult({ ok: false, message: "Cancelled - the service is live on a temporary self-signed certificate. Request a trusted one anytime from Certificates." });
           return;
         }
         const kind = (e as { kind?: string })?.kind ?? "other";
         const message = e instanceof Error ? e.message : "Certificate request failed.";
         // A timeout or unreachable host means a prerequisite is missing (port 80
-        // closed, DNS not pointed/propagated) — a quick retry won't fix that, so
+        // closed, DNS not pointed/propagated) - a quick retry won't fix that, so
         // we stop and let them fix it and retry from Certificates. Only genuinely
         // transient failures retry.
         const retryable = kind === "dns" || kind === "other";
@@ -135,7 +135,7 @@ export function Wizard({
         try {
           await cancellableWait(2000 * 2 ** (attempt - 1), signal, setRetryIn);
         } catch {
-          setCertResult({ ok: false, message: "Cancelled — left on the self-signed certificate. Retry anytime from Certificates." });
+          setCertResult({ ok: false, message: "Cancelled - left on the self-signed certificate. Retry anytime from Certificates." });
           return;
         }
       }
@@ -165,7 +165,7 @@ export function Wizard({
         http2: preset.http2,
         ssl,
         // Access controls (login / 2FA / country lock) are added afterwards from
-        // the service's Protection settings — they can lock you out, so they're
+        // the service's Protection settings - they can lock you out, so they're
         // a deliberate post-launch step, not part of "get it online".
         requireLogin: false,
         require2fa: false,
@@ -176,7 +176,7 @@ export function Wizard({
       });
       setApply(res.apply);
       // Issue a trusted cert only when a Let's Encrypt method is chosen. "existing"
-      // reuses the cert already on disk; "selfsigned" uses the bootstrap cert — both
+      // reuses the cert already on disk; "selfsigned" uses the bootstrap cert - both
       // need no issuance. A Let's Encrypt failure doesn't undo the service (it's live
       // on the self-signed bootstrap cert), so we surface it as a soft warning.
       if (ssl && (certMethod === "http-01" || certMethod === "dns-01")) {
@@ -226,10 +226,10 @@ export function Wizard({
             return (
               <div className="card wcard">
                 <h2>What do you want to expose?</h2>
-                <p className="wsub">Pick the app you're running — we'll apply the right settings. Not listed? Choose <b>Custom</b>.</p>
+                <p className="wsub">Pick the app you're running - we'll apply the right settings. Not listed? Choose <b>Custom</b>.</p>
                 <div className="search" style={{ maxWidth: "none", marginBottom: 14 }}>
                   <Icon.search />
-                  <input placeholder="Search apps — Plex, Immich, Home Assistant…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+                  <input placeholder="Search apps - Plex, Immich, Home Assistant…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
                 </div>
                 {customP && (
                   <div
@@ -291,7 +291,7 @@ export function Wizard({
                   onChange={(e) => setForward(e.target.value)}
                   placeholder="e.g. http://192.168.1.50:32400"
                 />
-                <div className="hint">This stays on your network — only NginUX talks to it directly.</div>
+                <div className="hint">This stays on your network - only NginUX talks to it directly.</div>
               </div>
               <button className="btn" onClick={runTest} disabled={!parsed || testing}>
                 {testing ? <span className="spinner" /> : <Icon.bolt />}
@@ -358,24 +358,24 @@ export function Wizard({
                     {certMethod === "existing"
                       ? `Reuses the certificate already issued for ${domain}.`
                       : certMethod === "dns-01"
-                      ? "We'll request a free, trusted Let's Encrypt certificate over DNS — no open ports needed."
+                      ? "We'll request a free, trusted Let's Encrypt certificate over DNS - no open ports needed."
                       : certMethod === "http-01"
-                      ? `We'll request a trusted Let's Encrypt certificate over HTTP — needs port 80 reachable and public DNS for ${domain}.`
-                      : "We'll start on an instant self-signed certificate (browsers show a warning). Connect a DNS provider in Settings for a trusted one automatically — or upgrade anytime from Certificates."}
+                      ? `We'll request a trusted Let's Encrypt certificate over HTTP - needs port 80 reachable and public DNS for ${domain}.`
+                      : "We'll start on an instant self-signed certificate (browsers show a warning). Connect a DNS provider in Settings for a trusted one automatically - or upgrade anytime from Certificates."}
                   </div>
                   <div className={`adv-toggle${advCert ? " open" : ""}`} style={{ marginTop: 10 }} onClick={() => setAdvCert((o) => !o)}>
                     <Icon.chevron className="chev" />
-                    Advanced — choose certificate method
+                    Advanced - choose certificate method
                   </div>
                   {advCert && (
                     <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
                       <select className="input" value={certMethod} onChange={(e) => setCertMethod(e.target.value as CertChoice)}>
                         {existingCert && (
-                          <option value="existing">Use existing — {existingCert.domain} ({existingCert.method === "selfsigned" ? "self-signed" : existingCert.issuer || "Let's Encrypt"})</option>
+                          <option value="existing">Use existing - {existingCert.domain} ({existingCert.method === "selfsigned" ? "self-signed" : existingCert.issuer || "Let's Encrypt"})</option>
                         )}
-                        {hasDnsProvider && <option value="dns-01">Let's Encrypt (DNS) — trusted, no open ports needed</option>}
-                        <option value="http-01">Let's Encrypt (HTTP) — trusted, needs port 80 + public DNS</option>
-                        <option value="selfsigned">Self-signed — instant, not trusted</option>
+                        {hasDnsProvider && <option value="dns-01">Let's Encrypt (DNS) - trusted, no open ports needed</option>}
+                        <option value="http-01">Let's Encrypt (HTTP) - trusted, needs port 80 + public DNS</option>
+                        <option value="selfsigned">Self-signed - instant, not trusted</option>
                       </select>
                     </div>
                   )}
@@ -383,7 +383,7 @@ export function Wizard({
               )}
               <div className="info-line" style={{ marginTop: 16 }}>
                 <Icon.lock />
-                Login, 2FA and country restrictions live on the service's page — add them once it's running. The dashboard flags anything left unprotected.
+                Login, 2FA and country restrictions live on the service's page - add them once it's running. The dashboard flags anything left unprotected.
               </div>
               {apply && !apply.ok && (
                 <div className="test-result bad" style={{ marginTop: 14 }}>
@@ -412,7 +412,7 @@ export function Wizard({
                     {certPhase === "issuing"
                       ? `Requesting a trusted certificate from Let's Encrypt… (attempt ${certAttempt} of ${MAX_CERT_ATTEMPTS}). Give it up to ~45s, or cancel and keep the self-signed cert.`
                       : certPhase === "backoff"
-                      ? `Let's Encrypt didn't answer — retrying in ${retryIn}s…`
+                      ? `Let's Encrypt didn't answer - retrying in ${retryIn}s…`
                       : "Creating the service and applying the configuration."}
                   </p>
                   {(certPhase === "issuing" || certPhase === "backoff") && (
@@ -434,7 +434,7 @@ export function Wizard({
                       <div>
                         {certResult.ok
                           ? certResult.message
-                          : `Live on a temporary self-signed certificate — couldn't get a trusted one yet: ${certResult.message} Retry from Certificates once the prerequisites are met.`}
+                          : `Live on a temporary self-signed certificate - couldn't get a trusted one yet: ${certResult.message} Retry from Certificates once the prerequisites are met.`}
                       </div>
                     </div>
                   )}

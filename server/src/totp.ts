@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-// RFC 4648 base32 (no padding) — used for TOTP secrets / otpauth URIs.
+// RFC 4648 base32 (no padding) - used for TOTP secrets / otpauth URIs.
 const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 export function base32Encode(buf: Buffer): string {
@@ -83,7 +83,7 @@ export function otpauthURL(secret: string, account: string, issuer = "NginUX"): 
     secret, issuer, algorithm: "SHA1", digits: "6", period: "30",
     // Non-standard `image` param: a few authenticators (2FAS, Ente Auth, …) show
     // this as the entry's icon. The big ones (Microsoft/Google Authenticator)
-    // ignore it and fall back to a generic tile — there's no standard way to set
+    // ignore it and fall back to a generic tile - there's no standard way to set
     // a custom icon for those. Points at the official logo so every deployment
     // resolves the same brand mark.
     image: "https://raw.githubusercontent.com/UbhiTS/nginux/main/web/public/logo.png",

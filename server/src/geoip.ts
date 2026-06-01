@@ -9,7 +9,7 @@ const DATA_DIR = process.env.NGINUX_DATA_DIR ?? join(__dirname, "..", "data");
 const GEOIP_DIR = process.env.GEOIP_DIR ?? join(DATA_DIR, "geoip");
 const DB_PATH = join(GEOIP_DIR, "GeoLite2-Country.mmdb");
 const CONF_DIR = process.env.NGINX_CONF_DIR ?? join(__dirname, "..", "..", "nginx", "conf.d");
-// nginx.conf does `include <this>;` — keep it next to conf.d (i.e. /data/nginx/geoip.conf).
+// nginx.conf does `include <this>;` - keep it next to conf.d (i.e. /data/nginx/geoip.conf).
 const GEOIP_CONF = process.env.NGINX_GEOIP_CONF ?? join(dirname(CONF_DIR), "geoip.conf");
 
 export const geoipConfPath = GEOIP_CONF;
@@ -45,7 +45,7 @@ export function geoipStatus(): GeoipStatus {
 }
 
 /** Minimal tar reader: return the bytes of the first *.mmdb member. Tar uses
- *  512-byte headers (name @0, octal size @124) followed by 512-padded content —
+ *  512-byte headers (name @0, octal size @124) followed by 512-padded content -
  *  enough to pull one file out of MaxMind's archive without a tar dependency. */
 function findMmdbInTar(tar: Buffer): Buffer | null {
   let off = 0;
@@ -82,7 +82,7 @@ export async function downloadGeoipDb(): Promise<{ sizeBytes: number }> {
   const gz = Buffer.from(await res.arrayBuffer());
   // The GeoLite2-Country archive is a few MB; cap the gzip input so a wrong/huge
   // response can't OOM the 512 MB container before we even decompress.
-  if (gz.length > 64 * 1024 * 1024) throw new Error("MaxMind response was unexpectedly large — aborting.");
+  if (gz.length > 64 * 1024 * 1024) throw new Error("MaxMind response was unexpectedly large - aborting.");
   let tar: Buffer;
   try {
     tar = gunzipSync(gz);
@@ -127,7 +127,7 @@ export function writeGeoipConf(): void {
     $geoip2_country_iso_code country iso_code;
 }`);
   } else {
-    parts.push(`# No GeoIP database — country is unknown (empty) for logging.
+    parts.push(`# No GeoIP database - country is unknown (empty) for logging.
 map $remote_addr $geoip2_country_iso_code { default ""; }`);
   }
 
@@ -156,7 +156,7 @@ map "$nginux_is_private$nginux_country_ok" $nginux_allowed_country {
     "~1" 1;
 }`);
   } else {
-    parts.push(`# Country lock inactive — allow all.
+    parts.push(`# Country lock inactive - allow all.
 geo $nginux_allowed_country { default 1; }`);
   }
 

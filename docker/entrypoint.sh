@@ -8,7 +8,7 @@ set -eu
 # file browser / NAS share), like other self-hosted containers. nginx still binds
 # :80/:443 via the NET_BIND_SERVICE ambient capability (setpriv), not as root.
 #
-# By default we adopt the owner of the mounted /data directory — so NginUX runs
+# By default we adopt the owner of the mounted /data directory - so NginUX runs
 # as whoever owns the folder you mounted (the same user you deploy with), with no
 # configuration. Override with the PUID/PGID env vars. A root-owned /data (e.g. a
 # fresh named volume) resolves to uid 0 → runs as root.
@@ -66,7 +66,7 @@ else
   # Own the data volume + nginx's writable runtime dirs.
   chown -R "$PUID:$PGID" /data /var/lib/nginx /var/log/nginx 2>/dev/null || true
   # With a non-root master the 'user' directive is ignored (master + workers run
-  # as our user already) — comment it out so nginx doesn't warn on every reload.
+  # as our user already) - comment it out so nginx doesn't warn on every reload.
   sed -i 's/^user .*/# (user directive omitted: master runs unprivileged)/' /etc/nginx/nginx.conf
 fi
 
@@ -116,6 +116,6 @@ while kill -0 "$NGINX_PID" 2>/dev/null && kill -0 "$APP_PID" 2>/dev/null; do
   sleep 1
 done
 
-echo "[nginux] a process exited — bringing the container down"
+echo "[nginux] a process exited - bringing the container down"
 term
 wait 2>/dev/null || true

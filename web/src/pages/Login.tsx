@@ -4,7 +4,7 @@ import { Icon } from "../icons.tsx";
 import { BrandLogo } from "../components/BrandLogo.tsx";
 
 // A login-gated service redirects unauthenticated visitors here with the original
-// URL as ?rd=. After sign-in we bounce back to it — but only if it's on this same
+// URL as ?rd=. After sign-in we bounce back to it - but only if it's on this same
 // domain family (this host or a sibling subdomain), to avoid an open redirect.
 function safeReturnUrl(): string | null {
   const m = window.location.search.match(/[?&]rd=(.*)$/);
@@ -36,7 +36,7 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
       const res = await api.login(username, password, needs2fa ? token : undefined);
       if (res.twofaRequired) {
         setNeeds2fa(true);
-        setError(needs2fa ? "That 2FA code didn't match — try the current one." : "");
+        setError(needs2fa ? "That 2FA code didn't match - try the current one." : "");
       } else if (res.user) {
         // Bounce back to the gated service that sent us here, else into the app.
         if (returnUrl) { window.location.href = returnUrl; return; }
@@ -51,6 +51,7 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
 
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
       <div className="card" style={{ width: 380, padding: 32 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22 }}>
           <BrandLogo className="brand-logo" />
@@ -108,6 +109,12 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
             {needs2fa ? "Verify" : "Sign in"}
           </button>
         </form>
+      </div>
+      <div className="muted" style={{ fontSize: 12, textAlign: "center" }}>
+        Built with ❤️ by <a href="https://github.com/UbhiTS" target="_blank" rel="noreferrer noopener">Tarunpreet Singh Ubhi</a>
+        {" · "}
+        <a href="https://github.com/UbhiTS/nginux" target="_blank" rel="noreferrer noopener">open source</a>, MIT licensed
+      </div>
       </div>
     </div>
   );

@@ -9,9 +9,9 @@ const methodLabel: Record<Certificate["method"], string> = {
   selfsigned: "Self-signed", "http-01": "Let's Encrypt", "dns-01": "Let's Encrypt",
 };
 const fmtDate = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
+  iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "-";
 
-/** Read-only certificate inspector — the same details popup as the Certificates
+/** Read-only certificate inspector - the same details popup as the Certificates
  *  store, reusable wherever a cert needs to be shown (e.g. the service page). */
 export function CertDetailModal({ cert, onClose, onChanged }: {
   cert: Certificate;
@@ -54,7 +54,7 @@ export function CertDetailModal({ cert, onClose, onChanged }: {
         </div>
         <p className="muted" style={{ fontSize: 12.5, marginBottom: 14 }}>
           {methodLabel[cert.method]}{cert.method !== "selfsigned" ? ` · ${cert.method === "http-01" ? "HTTP validation" : "DNS validation"}` : ""}
-          {/staging/i.test(cert.issuer) && <span className="pill y" style={{ marginLeft: 8 }}>staging — not browser-trusted</span>}
+          {/staging/i.test(cert.issuer) && <span className="pill y" style={{ marginLeft: 8 }}>staging - not browser-trusted</span>}
         </p>
 
         {loading ? (

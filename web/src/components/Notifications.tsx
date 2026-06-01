@@ -59,7 +59,7 @@ export function Notifications() {
             <div className="toast-title">{n.title}</div>
             <div className="toast-msg">{n.message}</div>
             <div className="toast-actions">
-              <button className="toast-btn" title="Hide for now — shows up again next time" onClick={() => dismiss(n.id)}>
+              <button className="toast-btn" title="Hide for now - shows up again next time" onClick={() => dismiss(n.id)}>
                 Dismiss
               </button>
               {n.dismissible && (

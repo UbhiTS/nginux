@@ -42,7 +42,7 @@ export function clientCrlPath(domain: string): string {
 
 /** Build a signed X.509 v2 CRL (node-forge has no CRL builder, so we assemble
  *  the ASN.1 by hand and sign it with the CA key). The output is validated to
- *  parse and verify against the CA by OpenSSL — i.e. nginx's `ssl_crl` accepts it. */
+ *  parse and verify against the CA by OpenSSL - i.e. nginx's `ssl_crl` accepts it. */
 function buildCrlPem(caCertPem: string, caKeyPem: string, revoked: { serial: string; date: Date }[]): string {
   const { asn1 } = forge;
   const { Type, Class } = asn1;

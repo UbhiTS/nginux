@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// NginUX CLI — manage your reverse proxy from the terminal.
+// NginUX CLI - manage your reverse proxy from the terminal.
 // Auth: a scoped API token (create one in the UI under Agents & API).
 //   NGINUX_URL    (default http://localhost:4600)
 //   NGINUX_TOKEN  (required for everything except `health`)
@@ -53,7 +53,7 @@ function table(rows, cols) {
   for (const r of rows) console.log(fmt(r));
 }
 
-const HELP = `nginux — NginUX command-line
+const HELP = `nginux - NginUX command-line
 
   nginux services                       list exposed services
   nginux expose <name> <domain> <host:port>   expose a new service

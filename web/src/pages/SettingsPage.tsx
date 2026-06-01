@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { api, type Channel, type ConfigVersion, type GeoipStatus } from "../api.ts";
 import type { Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { BrandLogo } from "../components/BrandLogo.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
-/** 48 hex chars of CSPRNG output — used for the forward-auth shared secret. */
+/** 48 hex chars of CSPRNG output - used for the forward-auth shared secret. */
 function randomSecret(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
@@ -79,7 +80,7 @@ export function SettingsPage({
             <div className="switch-row" style={{ marginTop: 0, marginBottom: 14 }}>
               <div className="sw-text">
                 <div className="t">Use Let's Encrypt staging</div>
-                <div className="d">Avoid rate limits while testing — certificates won't be browser-trusted.</div>
+                <div className="d">Avoid rate limits while testing - certificates won't be browser-trusted.</div>
               </div>
               <button className={`switch${settings.acmeStaging ? " on" : ""}`} onClick={() => update({ acmeStaging: !settings.acmeStaging })} />
             </div>
@@ -123,7 +124,7 @@ export function SettingsPage({
                   <span>
                     Heads-up: per GoDaddy's developer docs, their Domains API only works on accounts with
                     <b> 10 or more domains</b> (or a Discount Domain Club membership). With fewer, the API returns
-                    <b> ACCESS_DENIED</b> and DNS-01 validation will fail — use <b>HTTP validation</b> or <b>Cloudflare</b> instead.
+                    <b> ACCESS_DENIED</b> and DNS-01 validation will fail - use <b>HTTP validation</b> or <b>Cloudflare</b> instead.
                   </span>
                 </div>
               </>
@@ -157,12 +158,12 @@ export function SettingsPage({
                 <input className="input" type="password" autoComplete="new-password" value={settings.ssoForwardSecret} onChange={(e) => update({ ssoForwardSecret: e.target.value })} placeholder="click Generate →" />
                 <button type="button" className="btn" onClick={() => update({ ssoForwardSecret: randomSecret() })}>Generate</button>
               </div>
-              <div className="hint">A long random value nginx sends with every login check, so it can't be called directly and bypassed. NginUX generates one automatically — you only need this to rotate it: click <b>Generate</b>, then <b>Save</b>, and the protected sites are rewritten for you.</div>
+              <div className="hint">A long random value nginx sends with every login check, so it can't be called directly and bypassed. NginUX generates one automatically - you only need this to rotate it: click <b>Generate</b>, then <b>Save</b>, and the protected sites are rewritten for you.</div>
             </div>
             {settings.ssoLoginUrl && (
               <div className="info-line" style={{ marginTop: 12, alignItems: "flex-start" }}>
                 <Icon.alert />
-                <span>The NginUX service at your sign-in URL must <b>not</b> have "Require login" enabled — that would lock you out of the login page itself.</span>
+                <span>The NginUX service at your sign-in URL must <b>not</b> have "Require login" enabled - that would lock you out of the login page itself.</span>
               </div>
             )}
           </div>
@@ -170,6 +171,52 @@ export function SettingsPage({
           <CountryLock settings={settings} update={update} onSave={save} />
           <Notifications />
           <BackupsGitOps settings={settings} update={update} />
+          <About />
+        </div>
+      </div>
+    </>
+  );
+}
+
+const REPO_URL = "https://github.com/UbhiTS/nginux";
+const AUTHOR_URL = "https://github.com/UbhiTS";
+
+function About() {
+  const [version, setVersion] = useState("");
+  useEffect(() => { api.health().then((h) => setVersion(h.version)).catch(() => {}); }, []);
+  return (
+    <>
+      <div className="section-title" style={{ marginTop: 20 }}>About</div>
+      <div className="card card-pad">
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+          <BrandLogo size={40} className="brand-logo" />
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>
+              NginUX {version && <span className="muted" style={{ fontWeight: 500, fontSize: 13 }}>v{version}</span>}
+            </div>
+            <div className="muted" style={{ fontSize: 13 }}>your homelab's front door</div>
+          </div>
+        </div>
+        <div className="kv">
+          <span className="k">Built with ❤️ by</span>
+          <span className="v"><a href={AUTHOR_URL} target="_blank" rel="noreferrer noopener">Tarunpreet Singh Ubhi</a></span>
+        </div>
+        <div className="kv">
+          <span className="k">License</span>
+          <span className="v">
+            MIT - free to use, modify, and distribute; just keep the attribution.{" "}
+            <a href={`${REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer noopener">View license</a>
+          </span>
+        </div>
+        <div className="kv" style={{ border: "none" }}>
+          <span className="k">Source</span>
+          <span className="v" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Icon.github className="about-gh" />
+            <a href={REPO_URL} target="_blank" rel="noreferrer noopener">github.com/UbhiTS/nginux</a>
+          </span>
+        </div>
+        <div className="hint" style={{ marginTop: 14 }}>
+          © 2026 Tarunpreet Singh Ubhi · Built for self-hosters. If NginUX is useful to you, a ⭐ on GitHub means a lot.
         </div>
       </div>
     </>
@@ -191,7 +238,7 @@ function CountryLock({ settings, update, onSave }: { settings: Settings; update:
       await onSave(); // persist the license key + country before downloading
       const r = await api.downloadGeoip();
       setStatus(r.status);
-      setMsg(r.status.active ? `Database installed — country lock active for ${r.status.countries.join(", ")}.` : "Database installed. Set a home country above to start filtering.");
+      setMsg(r.status.active ? `Database installed - country lock active for ${r.status.countries.join(", ")}.` : "Database installed. Set a home country above to start filtering.");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Download failed.");
     } finally {
@@ -209,7 +256,7 @@ function CountryLock({ settings, update, onSave }: { settings: Settings; update:
       <div className="section-title" style={{ marginTop: 20 }}>Country lock (GeoIP)</div>
       <div className="card card-pad">
         <p className="muted" style={{ fontSize: 12.5, marginTop: 0, marginBottom: 14 }}>
-          Powers the "Only allow my country" toggle on services. Needs the free MaxMind GeoLite2 database — sign up at maxmind.com and create a license key (Account → Manage License Keys). Your own LAN is always allowed.
+          Powers the "Only allow my country" toggle on services. Needs the free MaxMind GeoLite2 database - sign up at maxmind.com and create a license key (Account → Manage License Keys). Your own LAN is always allowed.
         </p>
         <div className="field" style={{ marginBottom: 14 }}>
           <label>MaxMind license key</label>
@@ -221,7 +268,7 @@ function CountryLock({ settings, update, onSave }: { settings: Settings; update:
             : <span className="pill n">Not installed</span>}</span>
         </div>
         <div className="kv"><span className="k">Lock status</span>
-          <span className="v">{status?.active ? `Active — allowing ${status.countries.join(", ")}` : status?.present ? "Installed (set a home country to enable)" : "Inactive — services stay open"}</span>
+          <span className="v">{status?.active ? `Active - allowing ${status.countries.join(", ")}` : status?.present ? "Installed (set a home country to enable)" : "Inactive - services stay open"}</span>
         </div>
         {status?.updatedAt && <div className="kv" style={{ border: "none" }}><span className="k">Last updated</span><span className="v muted">{new Date(status.updatedAt).toLocaleString()}</span></div>}
         {err && <div className="test-result bad" style={{ marginTop: 12, marginBottom: 0 }}><Icon.x /><div>{err}</div></div>}
@@ -293,7 +340,7 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
       <div className="switch-row">
         <div className="sw-icon"><Icon.logs /></div>
         <div className="sw-text">
-          <div className="t">GitOps — commit config to git on every change</div>
+          <div className="t">GitOps - commit config to git on every change</div>
           <div className="d">Keeps a version-controlled, reviewable history of the generated config in a local repo.</div>
         </div>
         <button className={`switch${settings.gitOpsEnabled ? " on" : ""}`} onClick={() => update({ gitOpsEnabled: !settings.gitOpsEnabled })} />
@@ -311,7 +358,7 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
             <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={() => setRestoreId(v.id)}>Restore</button>
           </div>
         ))}
-        {versions.length === 0 && <div className="placeholder"><p>No restore points yet — they're captured automatically before each change.</p></div>}
+        {versions.length === 0 && <div className="placeholder"><p>No restore points yet - they're captured automatically before each change.</p></div>}
       </div>
       {msg && <div className="info-line" style={{ marginBottom: 12 }}><Icon.check />{msg}</div>}
 
@@ -326,7 +373,7 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
 
       <div className="card card-pad">
         <div style={{ fontWeight: 650, marginBottom: 6, fontSize: 13 }}>Import an existing nginx.conf</div>
-        <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>Paste a config — NginUX parses each proxy <span className="mono">server</span> block into a managed host (duplicates skipped).</div>
+        <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>Paste a config - NginUX parses each proxy <span className="mono">server</span> block into a managed host (duplicates skipped).</div>
         <textarea className="input mono" rows={4} value={importConf} onChange={(e) => setImportConf(e.target.value)} placeholder={"server {\n  server_name app.example.com;\n  location / { proxy_pass http://192.168.1.10:8080; }\n}"} />
         <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
           <button className="btn btn-primary btn-sm" onClick={doImport}>Import</button>

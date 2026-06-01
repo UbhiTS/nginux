@@ -18,7 +18,7 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-// Read-only resource views. Each carries the feature-scope a caller needs — the
+// Read-only resource views. Each carries the feature-scope a caller needs - the
 // same gating as the equivalent read tool, so resources can't be a bypass.
 interface ResourceDef {
   uri: string;
@@ -49,7 +49,7 @@ const RESOURCES: ResourceDef[] = [
   { uri: "metrics://overview", name: "Security overview", description: "Posture score + counts", scope: "report", read: () => ({ overview: securityOverview(), exposure: securityExposure() }) },
   { uri: "metrics://traffic", name: "Traffic metrics", description: "Requests, bandwidth, top talkers", scope: "report", read: () => metricsSummary() },
   { uri: "bans://list", name: "IP bans", description: "Active IP bans", scope: "report", read: () => listBans() },
-  { uri: "users://list", name: "Users", description: "Accounts (no secrets) — admin only", scope: "report", read: () => listUsers() },
+  { uri: "users://list", name: "Users", description: "Accounts (no secrets) - admin only", scope: "report", read: () => listUsers() },
 ];
 
 const PROMPTS = [

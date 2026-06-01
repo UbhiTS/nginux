@@ -6,16 +6,16 @@ NginUX puts a beginner-friendly web UI in front of Nginx so you can expose your
 self-hosted services (Plex, Immich, Nextcloud, Home Assistant, Vaultwarden,
 Grafana, …) without hand-editing config files. It generates and reloads real
 Nginx config, manages TLS certificates, gates services behind login/2FA, watches
-traffic, and exposes a first-class agent/automation API — all from a single
+traffic, and exposes a first-class agent/automation API - all from a single
 Docker image that runs anywhere Docker runs (Windows, Linux, NAS, macOS).
 
 It's a friendlier alternative to hand-written nginx, Nginx Proxy Manager, or
-SWAG — with a built-in agent/MCP API on top. One `docker compose up`, no nginx
+SWAG - with a built-in agent/MCP API on top. One `docker compose up`, no nginx
 config required.
 
-![NginUX dashboard — network topology and live traffic](docs/img/dashboard.png)
+![NginUX dashboard - network topology and live traffic](docs/img/dashboard.png)
 
-> ⚠️ **Keep the control plane (`:4600`) on your LAN — never port-forward it.**
+> ⚠️ **Keep the control plane (`:4600`) on your LAN - never port-forward it.**
 > Only the data plane (`:80`/`:443`) should face the internet, and set a strong
 > admin password before exposing anything. See [Deploying securely](SECURITY.md#deploying-securely).
 
@@ -23,21 +23,21 @@ config required.
 
 ## Highlights
 
-- **Zero-edit reverse proxy** — describe a service in the UI; NginUX writes the
+- **Zero-edit reverse proxy** - describe a service in the UI; NginUX writes the
   Nginx `server` / `stream` blocks and test-and-reloads safely.
-- **Network topology dashboard** — Internet → gateway (public/LAN IP) → servers →
+- **Network topology dashboard** - Internet → gateway (public/LAN IP) → servers →
   services tree, plus a multi-range traffic graph (1h / 4h / 1d / 7d / 30d).
-- **TLS done for you** — self-signed / internal CA out of the box, or Let's
+- **TLS done for you** - self-signed / internal CA out of the box, or Let's
   Encrypt via HTTP-01 / DNS-01 with auto-renewal.
-- **Security-first** — login + RFC-6238 TOTP 2FA, forward-auth gate, per-host
+- **Security-first** - login + RFC-6238 TOTP 2FA, forward-auth gate, per-host
   protections, GeoIP country lock, fail2ban-style auto-banning, audit log, and a
   Security Center that scores your exposure.
-- **First-party agent integration** — MCP server (JSON-RPC over HTTP), SSE event
+- **First-party agent integration** - MCP server (JSON-RPC over HTTP), SSE event
   stream, signed webhooks, and scoped API tokens with risk-tiered approvals.
-- **Observability** — JSON access-log pipeline → live tail, status/latency
+- **Observability** - JSON access-log pipeline → live tail, status/latency
   aggregates, top IPs/paths/countries, a traffic world map, and a Prometheus
   exporter for Grafana.
-- **Runs anywhere** — one image (Nginx data plane + Node control plane), state on
+- **Runs anywhere** - one image (Nginx data plane + Node control plane), state on
   a single mounted volume.
 
 ---
@@ -65,7 +65,7 @@ docker compose up -d          # pulls ghcr.io/ubhits/nginux:latest
 
 The image is published publicly to GitHub Container Registry, so no login is
 needed. To pull it directly (e.g. to add NginUX as a service in an existing
-compose stack), reference the **fully-qualified** name — a bare `nginux` resolves
+compose stack), reference the **fully-qualified** name - a bare `nginux` resolves
 to Docker Hub and will fail with "pull access denied":
 
 ```bash
@@ -90,7 +90,7 @@ npm run build        # builds the web bundle (+ server check)
 npm start            # serves API + built UI on http://localhost:4600
 ```
 
-**Default admin login:** `admin` / `admin` — you'll be required to set a new password on first sign-in. (Set `NGINUX_ADMIN_PASSWORD` to skip the default.)
+**Default admin login:** `admin` / `admin` - you'll be required to set a new password on first sign-in. (Set `NGINUX_ADMIN_PASSWORD` to skip the default.)
 
 The CLI talks to the control plane over MCP/REST:
 
@@ -107,8 +107,8 @@ npm run cli -- <command>
 - **Multi-protocol:** TCP & UDP streams (L4), gRPC (`grpc_pass`), and
   **SNI / TLS passthrough** (`ssl_preread`, no termination).
 - **Load balancing** across multiple upstreams (round-robin / least-conn / ip-hash).
-- **Per-path routing** — send specific paths to different backends.
-- **Per-host limits & quotas** — download speed cap (`limit_rate`) and max
+- **Per-path routing** - send specific paths to different backends.
+- **Per-host limits & quotas** - download speed cap (`limit_rate`) and max
   concurrent connections per IP (`limit_conn`).
 - Service presets (Plex, Immich, Nextcloud, Home Assistant, Vaultwarden, Grafana…),
   maintenance mode, custom headers, and raw custom-Nginx escape hatch.
@@ -119,7 +119,7 @@ npm run cli -- <command>
 - Self-signed / internal CA via `node-forge` so Nginx always boots.
 - Let's Encrypt issuance over **HTTP-01** and **DNS-01** (`acme-client`).
 - Auto-renewal scheduler with expiry tracking and a Certificates dashboard.
-- **mTLS** — per-host managed client CA; issue/revoke client certs and require
+- **mTLS** - per-host managed client CA; issue/revoke client certs and require
   them with `ssl_verify_client`.
 
 ### DNS automation
@@ -130,13 +130,13 @@ npm run cli -- <command>
 ### Auth & security
 - Password auth (scrypt) with DB-backed sessions + httpOnly cookies.
 - **2FA (TOTP)** with backup codes (dependency-free implementation).
-- **Forward-auth SSO** — put any service behind a NginUX sign-in (see below).
+- **Forward-auth SSO** - put any service behind a NginUX sign-in (see below).
 - Per-host **require login / require 2FA / GeoIP country lock**.
 - Per-host protections: security headers, HSTS, IP allow/deny, exploit & bad-bot
   blocking, request rate limiting.
 - **fail2ban-style auto-banning** (auto-ban after repeated auth failures) plus
   manual bans, written to a shared `banned.conf`.
-- **Security Center** — exposure map, posture score, login/failure audits.
+- **Security Center** - exposure map, posture score, login/failure audits.
 - Full **audit log** of every change.
 
 #### Protect a service with login (SSO)
@@ -146,8 +146,8 @@ it that checks for a valid NginUX session. For an unauthenticated visitor to be
 able to *sign in*, do a one-time setup so the session is shared across your
 domains:
 
-1. **Expose NginUX itself** as a service on a subdomain of your domain — e.g.
-   `nginux.yourdomain.com → 127.0.0.1:4600` — with HTTPS, and **leave that one
+1. **Expose NginUX itself** as a service on a subdomain of your domain - e.g.
+   `nginux.yourdomain.com → 127.0.0.1:4600` - with HTTPS, and **leave that one
    un-gated** (don't tick Require login on it, or you'll lock yourself out of the
    login page).
 2. In **Settings → Login gate**, set **NginUX sign-in URL** to that address
@@ -156,21 +156,21 @@ domains:
 3. Tick **Require login** (and optionally **Require 2FA**) on any service.
 
 Now an unauthenticated visitor to a protected service is redirected to the NginUX
-sign-in, and after logging in once is sent back — and stays signed in across every
+sign-in, and after logging in once is sent back - and stays signed in across every
 `*.yourdomain.com` service. NginUX auto-generates a forward-auth secret so the auth
 endpoint can't be called directly; you can rotate it under **Settings → Login gate**.
 
 ### Agents & automation (first-class)
 - **MCP server** over HTTP JSON-RPC (`/api/mcp`): initialize, tools list/call,
   resources, prompts.
-- **Scoped, hashed API tokens** (Bearer) with trusted/untrusted trust levels —
+- **Scoped, hashed API tokens** (Bearer) with trusted/untrusted trust levels -
   no 2FA required for agents.
 - **Risk-tiered tools** (read / low / medium / high) with optional auto-approval
   for trusted agents and a human **approval queue** for the rest.
 - **SSE event stream** (`/api/events/sse`) and **HMAC-signed outbound webhooks**.
 - **30+ built-in tools** spanning services (list/create/update/enable/delete),
   certificates (issue/renew/autorenew/client-certs), GeoIP, bans, metrics, logs,
-  topology, presets, users, and settings — each scope- and risk-tiered, and only
+  topology, presets, users, and settings - each scope- and risk-tiered, and only
   ever exposed to a caller that holds the matching scope.
 
 ### Observability
@@ -267,7 +267,7 @@ Set via environment variables (the Docker image ships sensible defaults):
 
 | Variable | Purpose | Docker default |
 |----------|---------|----------------|
-| `PUID` / `PGID` | User/group NginUX runs as, so data on the volume is owned by *your* host user (manageable over SMB / a NAS file browser, like other self-hosted containers). **Defaults to the owner of the mounted data directory** — so with a bind-mounted folder NginUX simply runs as whoever owns it, no config needed. nginx still binds `:80`/`:443` via the `NET_BIND_SERVICE` ambient capability. Set both to `0` to run as root. | owner of `/data` |
+| `PUID` / `PGID` | User/group NginUX runs as, so data on the volume is owned by *your* host user (manageable over SMB / a NAS file browser, like other self-hosted containers). **Defaults to the owner of the mounted data directory** - so with a bind-mounted folder NginUX simply runs as whoever owns it, no config needed. nginx still binds `:80`/`:443` via the `NET_BIND_SERVICE` ambient capability. Set both to `0` to run as root. | owner of `/data` |
 | `PORT` / `HOST` | Control-plane bind | `4600` / `0.0.0.0` |
 | `NGINUX_DATA_DIR` | SQLite + state root | `/data` |
 | `NGINX_CONF_DIR` | Generated HTTP server blocks | `/data/nginx/conf.d` |
@@ -277,28 +277,28 @@ Set via environment variables (the Docker image ships sensible defaults):
 | `NGINX_DEFAULT_CERT` / `NGINX_DEFAULT_KEY` | Bootstrap self-signed cert | `/data/nginx/selfsigned.*` |
 | `CERT_DIR` | Per-host certs & client CAs | `/data/certs` |
 | `NGINX_BIN` | Nginx binary for test/reload | `nginx` |
-| `NGINUX_ADMIN_PASSWORD` | First-run admin password. If unset, the account is seeded as `admin`/`admin` and must be changed on first login. | — |
+| `NGINUX_ADMIN_PASSWORD` | First-run admin password. If unset, the account is seeded as `admin`/`admin` and must be changed on first login. | - |
 | `NGINUX_TRUST_PROXY` | Trust `X-Forwarded-For` from the proxy in front (set `true` in the container). Off by default to prevent IP spoofing. | `true` (compose) |
 | `NGINUX_SECURE_COOKIES` | Force the `Secure` cookie flag. Defaults on in production. | (prod on) |
 | `NGINUX_CONTROL_URL` | Where nginx reaches the control plane for forward-auth. | `http://127.0.0.1:4600` |
 | `NGINUX_AUDIT_RETAIN_DAYS` | Audit-log retention before pruning. | `90` |
 | `NGINUX_SSE_MAX` | Max concurrent SSE connections. | `200` |
-| `NGINUX_DEMO_TRAFFIC` | Set `1` to feed synthetic traffic (never auto-on in prod). | — |
+| `NGINUX_DEMO_TRAFFIC` | Set `1` to feed synthetic traffic (never auto-on in prod). | - |
 
 Credentials (GoDaddy, Cloudflare, Let's Encrypt email, notification tokens) are
-entered in **Settings** at runtime — never baked into the image.
+entered in **Settings** at runtime - never baked into the image.
 
 ---
 
 ## Security model
 
 NginUX is built defense-in-depth. The control plane is meant to live on your LAN
-(see the warning at the top) — these are the protections it ships with:
+(see the warning at the top) - these are the protections it ships with:
 
 - **Authentication:** scrypt password hashing with per-user salt and constant-time
   comparison; CSPRNG session tokens (256-bit) in `HttpOnly`/`SameSite=Lax`/`Secure`
   cookies; RFC-6238 TOTP 2FA with single-use, hashed-at-rest backup codes.
-- **Authorization (RBAC):** every mutating route is role-gated server-side —
+- **Authorization (RBAC):** every mutating route is role-gated server-side -
   `admin` (full), `editor` (host + cert management), `scoped` (only hosts in its
   scope), `readonly` (GET only). Agent tokens are scope-checked per tool.
 - **Brute-force defense:** per-IP+username login rate limiting on the control
@@ -320,16 +320,16 @@ NginUX is built defense-in-depth. The control plane is meant to live on your LAN
 
 Built and verified locally. Remaining items are gated on external infrastructure:
 
-- **SSO (OIDC/SAML) + LDAP/AD** — needs a live identity provider/directory.
-- **Multi-node / HA** — needs more than one node.
+- **SSO (OIDC/SAML) + LDAP/AD** - needs a live identity provider/directory.
+- **Multi-node / HA** - needs more than one node.
 - **Live ACME / DNS issuance, Docker-label service discovery, Terraform provider**
-  — require real credentials / a running container / a Go toolchain.
+  - require real credentials / a running container / a Go toolchain.
 
 ---
 
 ## Contributing & security
 
-Issues and PRs welcome. For security reports, please use private disclosure —
+Issues and PRs welcome. For security reports, please use private disclosure -
 see [SECURITY.md](SECURITY.md).
 
 ## License

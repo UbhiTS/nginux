@@ -32,7 +32,7 @@ const CANDIDATES = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ];
 const bin = process.env.NGINUX_SHOT_BIN ?? CANDIDATES.find((p) => existsSync(p));
-if (!bin) throw new Error("No Edge/Chrome found — set NGINUX_SHOT_BIN to a browser executable.");
+if (!bin) throw new Error("No Edge/Chrome found - set NGINUX_SHOT_BIN to a browser executable.");
 
 // The pages to capture: [filename, nav-item label shown in the sidebar].
 // "" label = the default dashboard (no click needed).

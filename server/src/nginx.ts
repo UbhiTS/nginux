@@ -31,7 +31,7 @@ export function generateStreamConfig(h: ProxyHost): string {
     pool = `upstream ${name} {\n${method}${targets.map((t) => `    server ${t};`).join("\n")}\n}\n\n`;
     pass = name;
   }
-  return `# Managed by NginUX — ${h.name} (${h.protocol.toUpperCase()} :${h.listenPort})
+  return `# Managed by NginUX - ${h.name} (${h.protocol.toUpperCase()} :${h.listenPort})
 ${pool}server {
     listen ${h.listenPort}${udp ? " udp" : ""};
     proxy_pass ${pass};${udp ? "\n    proxy_responses 1;" : ""}
@@ -63,7 +63,7 @@ export function generateSniPassthrough(hosts: ProxyHost[]): string {
     if (!byPort.has(port)) byPort.set(port, []);
     byPort.get(port)!.push(h);
   }
-  const blocks: string[] = ["# Managed by NginUX — SNI / TLS passthrough (no termination)"];
+  const blocks: string[] = ["# Managed by NginUX - SNI / TLS passthrough (no termination)"];
   for (const [port, list] of byPort) {
     const v = `sni_pass_${port}`;
     const entries = list.map((h) => `    ${h.domain} ${h.forwardHost}:${h.forwardPort};`).join("\n");
@@ -87,7 +87,7 @@ export function generateHostConfig(h: ProxyHost): string {
   const upstream = `${h.forwardScheme}://${h.forwardHost}:${h.forwardPort}`;
   const lines: string[] = [];
 
-  lines.push(`# Managed by NginUX — ${h.name} (${h.domain})`);
+  lines.push(`# Managed by NginUX - ${h.name} (${h.domain})`);
   lines.push(`# Do not edit by hand; changes are regenerated on apply.`);
 
   // Load balancing: emit an upstream block when extra targets are configured.
@@ -204,9 +204,17 @@ export function generateHostConfig(h: ProxyHost): string {
   for (const ip of splitList(h.ipAllow)) protections.push(`    allow ${ip};`);
   if (h.ipAllow.trim()) protections.push(`    deny all;`);
   for (const ip of splitList(h.ipDeny)) protections.push(`    deny ${ip};`);
+  // Scanner / attack-tool user agents are never a real browser - block them on
+  // every service, regardless of the per-host exploit toggle.
+  protections.push(`    if ($http_user_agent ~* (sqlmap|nikto|masscan|nmap|fimap)) { return 403; }`);
   if (h.blockExploits) {
-    protections.push(`    location ~* (\\.env|\\.git|/\\.aws|/wp-admin|/wp-login|/phpmyadmin|/xmlrpc\\.php) { return 403; }`);
-    protections.push(`    if ($http_user_agent ~* (sqlmap|nikto|masscan|nmap|fimap)) { return 403; }`);
+    // Probes for sensitive dotfiles + common attack paths. `/\.git(/|$)` matches
+    // only a literal `.git` path segment, NOT `repo.git` clone URLs - so Gitea /
+    // Forgejo / GitLab git-over-HTTP keeps working with this on.
+    const blockedPaths = [`\\.env`, `/\\.git(/|$)`, `/\\.aws`, `/phpmyadmin`];
+    // WordPress legitimately serves these - don't 403 its own admin / API.
+    if (h.preset !== "wordpress") blockedPaths.push(`/wp-admin`, `/wp-login`, `/xmlrpc\\.php`);
+    protections.push(`    location ~* (${blockedPaths.join("|")}) { return 403; }`);
   }
   // custom response headers ("Name: value" per line)
   for (const line of splitLines(h.customHeaders)) {
@@ -271,7 +279,7 @@ ${locationBody}    }
  *  Reconciles desired-vs-on-disk: writes only files whose content changed and
  *  removes only files no longer wanted. The old "delete every .conf then rewrite
  *  all" churned the disk on every apply and briefly unlinked configs nginx may
- *  still be reading mid-reload — this leaves untouched files in place. */
+ *  still be reading mid-reload - this leaves untouched files in place. */
 export function writeAllConfigs(): string[] {
   if (!existsSync(CONF_DIR)) mkdirSync(CONF_DIR, { recursive: true });
   if (!existsSync(STREAM_DIR)) mkdirSync(STREAM_DIR, { recursive: true });
@@ -320,7 +328,7 @@ async function nginxInstalled(): Promise<boolean> {
 }
 
 // Single-flight serialization: writeAllConfigs() rewrites the whole conf.d and
-// then `nginx -t`/reload run — two of these overlapping would let one request's
+// then `nginx -t`/reload run - two of these overlapping would let one request's
 // test run against another's half-written files and break create/update rollback
 // (which assumes it's the only writer). Every applyConfig() waits for the prior
 // one to finish, so writes/tests/reloads never interleave. Also coalesces bursts.
@@ -334,7 +342,7 @@ export function applyConfig(): Promise<ApplyResult> {
 /**
  * Test-and-reload: write configs, validate with `nginx -t`, then reload.
  * When nginx isn't present (dev box), we still write configs and report clearly
- * rather than failing — the real validation happens in the container.
+ * rather than failing - the real validation happens in the container.
  */
 async function applyConfigInner(): Promise<ApplyResult> {
   writeAllConfigs();
@@ -346,14 +354,14 @@ async function applyConfigInner(): Promise<ApplyResult> {
       return {
         ok: false,
         nginxAvailable: false,
-        message: "nginx binary not found — configuration was written but could not be validated or reloaded.",
+        message: "nginx binary not found - configuration was written but could not be validated or reloaded.",
       };
     }
     return {
       ok: true,
       nginxAvailable: false,
       message:
-        "Config generated. Nginx isn't installed in this environment, so validation/reload was skipped — this runs for real inside the container.",
+        "Config generated. Nginx isn't installed in this environment, so validation/reload was skipped - this runs for real inside the container.",
     };
   }
 
@@ -381,7 +389,7 @@ async function applyConfigInner(): Promise<ApplyResult> {
 /** Turn raw nginx errors into plain-language guidance (PRD: errors that teach). */
 function humanizeNginxError(raw: string): string {
   if (/host not found in upstream/i.test(raw)) {
-    return "NginUX can't reach one of your internal services — it might be offline or the port may be wrong.";
+    return "NginUX can't reach one of your internal services - it might be offline or the port may be wrong.";
   }
   if (/cannot load certificate|no such file.*\.pem/i.test(raw)) {
     return "A certificate isn't ready yet. The change was held back so nothing went down.";
@@ -399,7 +407,7 @@ function humanizeNginxError(raw: string): string {
 
 /** Pull the meaningful line out of `nginx -t` output. nginx prints the real
  *  reason on an `[emerg]`/`[error]` line and a useless "test failed" summary
- *  last — and the stderr has a trailing newline, so a naive tail drops the
+ *  last - and the stderr has a trailing newline, so a naive tail drops the
  *  reason. Prefer the emerg/error line; strip the noisy "nginx:" prefix. */
 function nginxErrorDetail(raw: string): string {
   const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);

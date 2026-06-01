@@ -127,7 +127,7 @@ const HOST = process.env.HOST ?? "0.0.0.0";
 seedIfEmpty();
 // The forward-auth shared secret is managed entirely in the DB now (no env var).
 // Generate one automatically if it's unset so the login gate is protected by
-// default — admins can rotate it anytime from Settings → Login gate.
+// default - admins can rotate it anytime from Settings → Login gate.
 if (!getSettings().ssoForwardSecret) {
   saveSettings({ ssoForwardSecret: randomBytes(24).toString("hex") });
 }
@@ -137,12 +137,12 @@ writeGeoipConf(); // keep the country-lock include in sync with settings on boot
 reconcileImportedCerts(); // pick up any cert files dropped into /data/certs (migrations)
 
 // Profile avatars live as raw image files under the data volume, keyed by user id
-// (no DB column — keeps the schema migration-free). The image type is sniffed on
+// (no DB column - keeps the schema migration-free). The image type is sniffed on
 // read so the upload can be PNG/JPEG/WebP without tracking the extension.
 const AVATAR_DIR = join(process.env.NGINUX_DATA_DIR ?? join(__dirname, "..", "data"), "avatars");
 const AVATAR_MAX_BYTES = 700 * 1024;
 function avatarPath(id: string): string {
-  // Defend the path join against traversal — ids are uuids, but never trust input.
+  // Defend the path join against traversal - ids are uuids, but never trust input.
   return join(AVATAR_DIR, id.replace(/[^a-zA-Z0-9_-]/g, ""));
 }
 function sniffImageType(buf: Buffer): string | null {
@@ -163,7 +163,7 @@ const principal = (req: FastifyRequest): Principal | null => {
   return resolveToken(bearerFrom(req.headers.authorization));
 };
 // Only believe X-Forwarded-For from a trusted hop. NGINUX_TRUST_PROXY=true trusts
-// XFF *only from loopback* — the bundled nginx forwards auth subrequests from
+// XFF *only from loopback* - the bundled nginx forwards auth subrequests from
 // 127.0.0.1, so we get real client IPs there, while a browser hitting :4600
 // directly (a non-loopback peer) can't spoof XFF to forge audit IPs / dodge bans.
 // Set NGINUX_TRUST_PROXY to a specific IP/CIDR when fronting :4600 with your own
@@ -178,7 +178,7 @@ const device = (req: FastifyRequest) => (req.headers["user-agent"] as string)?.s
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? "info" },
   trustProxy: TRUST_PROXY,
-  bodyLimit: 2 * 1024 * 1024, // 2 MB — generous for config import, bounded for safety
+  bodyLimit: 2 * 1024 * 1024, // 2 MB - generous for config import, bounded for safety
   requestTimeout: 30_000,
 });
 
@@ -217,7 +217,7 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   if (!req.url.startsWith("/api")) return;
   const path = req.url.split("?")[0];
   if (OPEN_PATHS.has(path)) return;
-  // CSRF applies to EVERY mutating cookie request, including /api/mcp — a malicious
+  // CSRF applies to EVERY mutating cookie request, including /api/mcp - a malicious
   // page must not be able to drive state-changing MCP tools as the logged-in user.
   // Bearer-token agents send no Origin, so they're unaffected.
   if (crossOriginBlocked(req)) return reply.code(403).send({ error: "Cross-origin request blocked." });
@@ -234,7 +234,7 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   const u = currentUser(req);
   if (!u) return reply.code(401).send({ error: "Authentication required" });
   // A temporary-password account is confined to the change-password flow until it
-  // sets a real password — enforced here, not just in the SPA.
+  // sets a real password - enforced here, not just in the SPA.
   if (u.mustChangePassword && !PW_CHANGE_ALLOWED.has(path)) {
     return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
   }
@@ -295,7 +295,7 @@ function requireHostAccess(
   return null;
 }
 
-/** customNginx is a raw-directive escape hatch — only admins may set it. */
+/** customNginx is a raw-directive escape hatch - only admins may set it. */
 // Fields a `scoped` user must not set: they manage a service but may not change
 // its security posture or routing (which could expose it or repoint it).
 const SCOPED_FORBIDDEN_FIELDS = [
@@ -358,7 +358,7 @@ const customHeadersField = z.string().default("").refine(
   }),
   'Custom headers must be "Header-Name: value" per line (no quotes).',
 );
-// "/path host:port" per line — both parts strictly validated (config injection sink).
+// "/path host:port" per line - both parts strictly validated (config injection sink).
 const pathRulesField = z.string().default("").refine(
   (s) => splitLines(s).every((line) => {
     const [p, t, ...rest] = line.split(/\s+/);
@@ -405,7 +405,7 @@ const hostInput = z.object({
   securityHeaders: z.boolean().default(true),
   hsts: z.boolean().default(false),
   rateLimit: z.boolean().default(false),
-  blockExploits: z.boolean().default(false),
+  blockExploits: z.boolean().default(true), // secure-by-default for new services
   ipAllow: ipListField,
   ipDeny: ipListField,
   customHeaders: customHeadersField,
@@ -482,7 +482,7 @@ app.put("/api/settings", async (req, reply) => {
   // Changing the allowed country re-derives the geo config.
   if (parsed.data.homeCountry !== undefined) writeGeoipConf();
   // Several settings are baked into generated nginx config (the geo include, the
-  // login-gate 401→login redirect, and the forward-auth secret header) — re-apply
+  // login-gate 401→login redirect, and the forward-auth secret header) - re-apply
   // so a change here takes effect immediately instead of on the next host edit.
   if (parsed.data.homeCountry !== undefined || parsed.data.ssoLoginUrl !== undefined || parsed.data.ssoForwardSecret !== undefined) {
     await applyConfig();
@@ -492,7 +492,7 @@ app.put("/api/settings", async (req, reply) => {
 
 // ---------- hosts ----------
 const STREAM_PROTOS = new Set(["tcp", "udp", "sni"]);
-/** Stream/SNI hosts need a real listen port, and tcp/udp ports must be unique —
+/** Stream/SNI hosts need a real listen port, and tcp/udp ports must be unique -
  *  a `listen 0;` or a duplicate listen breaks the whole `stream {}` block (and
  *  can wedge nginx on the next restart, where there's no rollback). SNI hosts may
  *  share a port (they're multiplexed by server name). Returns an error or null. */
@@ -511,7 +511,7 @@ function streamPortError(h: { protocol: string; listenPort: number; name?: strin
 /** A host must not claim the control plane's own public hostname (self-hijack). */
 // True when exposing `domain` would hijack the domain NginUX itself runs on
 // (Settings → public URL) away from the control plane. Forwarding that domain TO
-// the control plane (port 4600) is allowed — that's the recommended SSO portal
+// the control plane (port 4600) is allowed - that's the recommended SSO portal
 // setup (expose NginUX on its own subdomain so login-gated services can sign in).
 function isControlPlaneDomain(domain: string, forwardPort?: number): boolean {
   const raw = getSettings().publicUrl?.trim();
@@ -560,14 +560,14 @@ app.post("/api/hosts", async (req, reply) => {
     try { await ensureCert(host.domain); } catch { /* non-fatal */ }
   }
   const apply = await applyConfig();
-  // If nginx rejected the new config, roll the host back out — keeping it would
+  // If nginx rejected the new config, roll the host back out - keeping it would
   // leave a service that breaks nginx on the next restart. Re-apply to restore
   // the last-good state. (nginxAvailable=false means we couldn't validate, so we
   // don't punish the host for a missing nginx binary.)
   if (!apply.ok && apply.nginxAvailable) {
     deleteHost(host.id);
     await applyConfig();
-    logEvent({ type: "host.create_failed", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Couldn't expose ${host.name} (${host.domain}) — config rejected`, ip: clientIp(req), meta: { error: apply.message } });
+    logEvent({ type: "host.create_failed", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Couldn't expose ${host.name} (${host.domain}) - config rejected`, ip: clientIp(req), meta: { error: apply.message } });
     return reply.code(422).send({ error: apply.message, apply });
   }
   void syncGitOps(`Expose ${host.name} (${host.domain})`);
@@ -600,7 +600,7 @@ app.put("/api/hosts/:id", async (req, reply) => {
   if (!apply.ok && apply.nginxAvailable) {
     updateHost(id, existing);
     await applyConfig();
-    logEvent({ type: "host.update_failed", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Reverted ${existing.name} (${existing.domain}) — config rejected`, ip: clientIp(req), meta: { id, error: apply.message } });
+    logEvent({ type: "host.update_failed", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Reverted ${existing.name} (${existing.domain}) - config rejected`, ip: clientIp(req), meta: { id, error: apply.message } });
     return reply.code(422).send({ error: apply.message, apply });
   }
   void syncGitOps(`Update ${host.name} (${host.domain})`);
@@ -616,7 +616,7 @@ app.delete("/api/hosts/:id", async (req, reply) => {
   if (!deleteHost(id)) return reply.code(404).send({ error: "Service not found" });
   // deleteHost() already cascaded the host's client_certs + incidents rows. The
   // domain is unique to this host, so its managed cert (DB row + on-disk dir) is
-  // now unreferenced — remove it too. Best-effort: don't fail the delete on it.
+  // now unreferenced - remove it too. Best-effort: don't fail the delete on it.
   if (existing) { try { deleteCert(existing.domain); } catch { /* ignore */ } }
   const apply = await applyConfig();
   void syncGitOps(`Remove a service`);
@@ -780,7 +780,7 @@ app.get("/api/network/reachability", async (req, reply) => {
   try {
     const r = await fetch("https://api.ipify.org", { signal: AbortSignal.timeout(3000) });
     if (r.ok) { const ip = (await r.text()).trim(); if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) detectedPublicIp = ip; }
-  } catch { /* offline or blocked — fine */ }
+  } catch { /* offline or blocked - fine */ }
 
   // Probe the public IP back through the router (works only if NAT loopback /
   // hairpin is on, so a failure is inconclusive, not necessarily a broken forward).
@@ -850,7 +850,7 @@ function rateLimited(key: string, max: number, windowMs: number): boolean {
   return hits.length > max;
 }
 
-/** Cookie Domain for the session cookie — the configured ssoCookieDomain, or
+/** Cookie Domain for the session cookie - the configured ssoCookieDomain, or
  *  derived from ssoLoginUrl's host (strip the leftmost label), or "" (host-only).
  *  Lets one sign-in cover every subdomain so login-gated services work. */
 function authCookieDomain(): string {
@@ -872,7 +872,7 @@ app.post("/api/auth/login", async (req, reply) => {
   const ip = clientIp(req);
 
   if (rateLimited(`${ip}:${username}`.toLowerCase(), LOGIN_MAX, LOGIN_WINDOW_MS)) {
-    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts — throttled", ip, meta: {} });
+    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts - throttled", ip, meta: {} });
     return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
   }
 
@@ -889,7 +889,7 @@ app.post("/api/auth/login", async (req, reply) => {
     // multiply guesses against one account).
     const lock = twofaFails.get(uid);
     if (lock && lock.until > Date.now()) {
-      logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "2FA locked — too many wrong codes", ip, meta: {} });
+      logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "2FA locked - too many wrong codes", ip, meta: {} });
       return reply.code(429).send({ error: "Too many 2FA attempts. Wait a few minutes.", twofaRequired: true });
     }
     const secret = getTwofaSecret(uid);
@@ -950,7 +950,7 @@ app.get("/api/auth/forward", async (req, reply) => {
     if (host) {
       if (host.require2fa && !u.twofaEnabled) return reply.code(401).send({ ok: false });
       // A scoped user only passes the per-host login gate for hosts in their
-      // scope — otherwise one NginUX login would unlock every protected app.
+      // scope - otherwise one NginUX login would unlock every protected app.
       if (u.role === "scoped" && !scopedAllows(u, host)) return reply.code(403).send({ ok: false });
     }
   }
@@ -996,7 +996,7 @@ app.post("/api/auth/2fa/verify", async (req, reply) => {
   const { token } = z.object({ token: z.string() }).parse(req.body);
   const secret = getTwofaSecret(u.id);
   if (!secret || !verifyTotp(token, secret)) {
-    return reply.code(400).send({ error: "That code didn't match — try the current one." });
+    return reply.code(400).send({ error: "That code didn't match - try the current one." });
   }
   const backupCodes = enableTwofa(u.id);
   logEvent({ type: "security.2fa_enabled", severity: "info", actor: u.username, summary: "Enabled two-factor authentication", ip: clientIp(req), meta: {} });
@@ -1051,24 +1051,24 @@ app.post("/api/users/:id/password", async (req, reply) => {
 
 // ---------- profile avatar ----------
 // The client sends a small, already-resized data URL, so we never need an image
-// library server-side — just validate, sniff, and write the bytes to the volume.
+// library server-side - just validate, sniff, and write the bytes to the volume.
 app.post("/api/users/me/avatar", async (req, reply) => {
   const me = currentUser(req);
   if (!me) return reply.code(401).send({ error: "Not signed in" });
   const parsed = z.object({ image: z.string().min(1).max(1_600_000) }).safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: "Missing image data." });
   const m = /^data:image\/(?:png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/.exec(parsed.data.image.trim());
-  if (!m) return reply.code(415).send({ error: "Unsupported image — use a PNG, JPEG, or WebP file." });
+  if (!m) return reply.code(415).send({ error: "Unsupported image - use a PNG, JPEG, or WebP file." });
   let buf: Buffer;
   try { buf = Buffer.from(m[1], "base64"); } catch { return reply.code(400).send({ error: "Couldn't decode the image." }); }
   if (!buf.length || !sniffImageType(buf)) return reply.code(415).send({ error: "That doesn't look like a valid image." });
-  if (buf.length > AVATAR_MAX_BYTES) return reply.code(413).send({ error: "Image is too large — keep it under 700 KB." });
+  if (buf.length > AVATAR_MAX_BYTES) return reply.code(413).send({ error: "Image is too large - keep it under 700 KB." });
   mkdirSync(AVATAR_DIR, { recursive: true });
   writeFileSync(avatarPath(me.id), buf);
   return { ok: true };
 });
 
-// Serve a user's avatar (any signed-in user — avatars show next to names).
+// Serve a user's avatar (any signed-in user - avatars show next to names).
 app.get("/api/users/:id/avatar", async (req, reply) => {
   if (!currentUser(req)) return reply.code(401).send({ error: "Not signed in" });
   const { id } = req.params as { id: string };
@@ -1089,7 +1089,7 @@ app.delete("/api/users/me/avatar", async (req, reply) => {
 
 app.get("/api/sessions", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
-  // Never return the raw session token to the client — mask to a short id.
+  // Never return the raw session token to the client - mask to a short id.
   return listSessions().map((s) => ({ ...s, token: "…" + s.token.slice(-6) }));
 });
 
@@ -1404,10 +1404,10 @@ if (existsSync(webDist)) {
 app.listen({ port: PORT, host: HOST }).then(async () => {
   app.log.info(`NginUX control plane on http://${HOST}:${PORT}`);
   if (seeded.usingDefault) {
-    app.log.warn(`First run — default login is "admin" / "admin". You'll be required to set a new password on first sign-in.`);
+    app.log.warn(`First run - default login is "admin" / "admin". You'll be required to set a new password on first sign-in.`);
   }
   if (process.env.NODE_ENV === "production" && !forwardSecret()) {
-    app.log.warn("No forward-auth secret set — generate one in Settings → Login gate so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
+    app.log.warn("No forward-auth secret set - generate one in Settings → Login gate so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
   }
   // Render the data plane on boot so nginx serves the managed hosts.
   const result = await applyConfig();
@@ -1415,12 +1415,12 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   // Daily auto-renewal + cert status refresh.
   startRenewalScheduler();
   // Metrics: tail nginx access logs; only feed synthetic traffic when explicitly
-  // asked (NGINUX_DEMO_TRAFFIC=1) or in an explicit dev run — never silently in prod.
+  // asked (NGINUX_DEMO_TRAFFIC=1) or in an explicit dev run - never silently in prod.
   startLogTailer();
   const devRun = process.execArgv.includes("--watch"); // `npm run dev`, never `start`
   if (process.env.NGINUX_DEMO_TRAFFIC === "1" || devRun) {
     startDemoTraffic();
-    app.log.info("demo traffic generator on — feeding the metrics pipeline");
+    app.log.info("demo traffic generator on - feeding the metrics pipeline");
   }
   // Uptime monitoring + alert routing + brute-force auto-ban.
   startUptimeMonitor();
@@ -1436,7 +1436,7 @@ let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  app.log.info(`${signal} received — shutting down gracefully`);
+  app.log.info(`${signal} received - shutting down gracefully`);
   const hardExit = setTimeout(() => process.exit(1), 10_000);
   hardExit.unref?.();
   try { await app.close(); } catch (e) { app.log.error({ e }, "error closing server"); }

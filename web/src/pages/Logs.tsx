@@ -109,10 +109,10 @@ export function Logs() {
   // Country needs the GeoIP database (nginx resolves the source IP → country only
   // when it's installed). Tailor the empty state to the actual cause.
   const countryHint = geoip && !geoip.present
-    ? "No country data yet — add the free GeoIP database under Settings → Country lock to map visitors by source country."
+    ? "No country data yet - add the free GeoIP database under Settings → Country lock to map visitors by source country."
     : summary && summary.totalRequests === 0
       ? "No traffic yet."
-      : "No located visitors yet — requests from your LAN / private IPs don't carry a country.";
+      : "No located visitors yet - requests from your LAN / private IPs don't carry a country.";
 
   return (
     <>

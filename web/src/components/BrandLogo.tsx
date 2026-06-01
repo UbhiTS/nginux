@@ -1,6 +1,6 @@
 // Inline, animated version of /favicon.svg (the static file stays the browser
 // favicon). The orbit ring + network nodes rotate slowly and the sparkle
-// twinkles — see .logo-* rules in styles.css, which honour prefers-reduced-motion.
+// twinkles - see .logo-* rules in styles.css, which honour prefers-reduced-motion.
 export function BrandLogo({ className, size = 32 }: { className?: string; size?: number }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 64 64" role="img" aria-label="NginUX">

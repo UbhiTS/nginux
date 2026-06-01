@@ -20,7 +20,7 @@ const CANDIDATES = [
   "/usr/bin/chromium",
 ];
 const bin = process.env.NGINUX_SHOT_BIN ?? CANDIDATES.find((p) => existsSync(p));
-if (!bin) throw new Error("No Chrome/Edge found — set NGINUX_SHOT_BIN.");
+if (!bin) throw new Error("No Chrome/Edge found - set NGINUX_SHOT_BIN.");
 
 const profileDir = mkdtempSync(join(tmpdir(), "nginux-logo-"));
 const browser = await puppeteer.launch({

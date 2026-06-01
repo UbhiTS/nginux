@@ -19,7 +19,7 @@ const methodLabel: Record<Certificate["method"], string> = {
 };
 
 const fmtDate = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
+  iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "-";
 
 const GRID = "1.4fr 0.8fr 0.9fr 1.1fr 80px 150px";
 
@@ -55,7 +55,7 @@ export function Certificates() {
     if (!list) return;
     const pems = [...list].filter((f) => f.name.toLowerCase().endsWith(".pem"));
     if (!pems.length) { setError("No .pem files selected. Pick a certificate (fullchain.pem) and its key (privkey.pem)."); return; }
-    if (pems.length > 200) { setError("Too many files — point at a single domain folder or a certs/ root."); return; }
+    if (pems.length > 200) { setError("Too many files - point at a single domain folder or a certs/ root."); return; }
     setImporting(true);
     setError("");
     setImportResult(null);
@@ -104,7 +104,7 @@ export function Certificates() {
       await load();
     } catch (e) {
       // A slow ACME attempt can outlast a proxy's read timeout, so the HTTP call
-      // returns a 504 (or a non-JSON body) with no real message — but the server
+      // returns a 504 (or a non-JSON body) with no real message - but the server
       // records the actual reason on the cert. Pull the fresh list and surface that.
       let detail = e instanceof Error ? e.message : "";
       try {
@@ -113,7 +113,7 @@ export function Certificates() {
         const c = fresh.find((x) => x.domain === domain);
         if (c?.lastError) detail = c.lastError;
       } catch { /* keep whatever message we already have */ }
-      setError(`${domain}: ${detail || "couldn't get a certificate — it may still be processing; check back in a minute."}`);
+      setError(`${domain}: ${detail || "couldn't get a certificate - it may still be processing; check back in a minute."}`);
       setIssueFor(null);
     } finally {
       setIssuing(false);
@@ -213,7 +213,7 @@ export function Certificates() {
                 )}
               </div>
               <div style={{ textAlign: "center", color: c.autoRenew ? "var(--green)" : "var(--text-faint)" }}>
-                {c.autoRenew ? "✓" : "—"}
+                {c.autoRenew ? "✓" : "-"}
               </div>
               <div className="cert-actions" onClick={(e) => e.stopPropagation()}>
                 {c.method === "selfsigned" ? (
@@ -240,7 +240,7 @@ export function Certificates() {
 
         <div className="info-line" style={{ marginTop: 16 }}>
           <Icon.info />
-          Click a row to see the full certificate. New HTTPS hosts get a self-signed certificate instantly (browsers show a warning) — use "Get trusted cert" to upgrade to a free Let's Encrypt certificate.
+          Click a row to see the full certificate. New HTTPS hosts get a self-signed certificate instantly (browsers show a warning) - use "Get trusted cert" to upgrade to a free Let's Encrypt certificate.
         </div>
       </div>
 
@@ -254,7 +254,7 @@ export function Certificates() {
             </div>
             <p className="muted" style={{ fontSize: 12.5, marginBottom: 14 }}>
               {methodLabel[detail.method]}{detail.method !== "selfsigned" ? ` · ${detail.method === "http-01" ? "HTTP validation" : "DNS validation"}` : ""}
-              {/staging/i.test(detail.issuer) && <span className="pill y" style={{ marginLeft: 8 }}>staging — not browser-trusted</span>}
+              {/staging/i.test(detail.issuer) && <span className="pill y" style={{ marginLeft: 8 }}>staging - not browser-trusted</span>}
             </p>
 
             {infoLoading ? (
@@ -310,7 +310,7 @@ export function Certificates() {
             {hasDnsProvider ? (
               <label className={`radio-card${method === "dns-01" ? " sel" : ""}`} onClick={() => setMethod("dns-01")}>
                 <div className="rc-top"><input type="radio" checked={method === "dns-01"} readOnly /> DNS validation</div>
-                <div className="rc-desc">No open ports needed — works even for LAN-only domains. NginUX adds the verification record through your connected DNS provider.</div>
+                <div className="rc-desc">No open ports needed - works even for LAN-only domains. NginUX adds the verification record through your connected DNS provider.</div>
               </label>
             ) : (
               <div className="info-line" style={{ marginTop: 10 }}>
@@ -347,7 +347,7 @@ export function Certificates() {
             <div style={{ fontWeight: 650, marginBottom: 4 }}>Import certificates</div>
             <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
               Bring in existing certs (e.g. from Nginx Proxy Manager or certbot). NginUX reads the domain from each
-              certificate and matches its key automatically — pick a single domain's folder, or a folder of many.
+              certificate and matches its key automatically - pick a single domain's folder, or a folder of many.
             </p>
 
             <input ref={fileRef} type="file" hidden multiple accept=".pem" onChange={(e) => onImportFiles(e.target.files)} />
@@ -366,7 +366,7 @@ export function Certificates() {
                 {importResult.skipped.length > 0 && (
                   <div className="test-result bad" style={{ display: "block" }}>
                     <div style={{ fontWeight: 600, marginBottom: 4 }}>Skipped {importResult.skipped.length}:</div>
-                    {importResult.skipped.map((s, i) => <div key={i} style={{ fontSize: 12.5 }}>✕ {s.name} — {s.reason}</div>)}
+                    {importResult.skipped.map((s, i) => <div key={i} style={{ fontSize: 12.5 }}>✕ {s.name} - {s.reason}</div>)}
                   </div>
                 )}
                 {importResult.imported.length === 0 && importResult.skipped.length === 0 && (
