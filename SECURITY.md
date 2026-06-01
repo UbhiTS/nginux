@@ -17,7 +17,7 @@ NginUX is built defense-in-depth, but a few operator choices matter — especial
 
 1. **Keep the control plane on your LAN.** Only the data plane (`:80`/`:443`) should ever face the internet. **Do not port-forward `:4600`** (the admin UI/API). If you must reach it remotely, use a VPN/Tailscale or an authenticated reverse proxy in front of it — never a raw port-forward.
 2. **Set a strong admin password immediately.** The first run seeds `admin`/`admin` and forces a change on first login. On an internet-reachable host, set `NGINUX_ADMIN_PASSWORD` (or change it before exposing anything) so there's no default-credential window.
-3. **Set `NGINUX_FORWARD_SECRET`** to a long random value. It's the shared secret nginx sends to the forward-auth endpoint so it can't be invoked directly.
+3. **Forward-auth secret (automatic).** NginUX generates a random shared secret on first boot — the value nginx sends to the forward-auth endpoint so it can't be invoked directly. No setup needed; rotate it anytime from **Settings → Login gate**.
 4. **Only trust `X-Forwarded-For` from your real proxy.** `NGINUX_TRUST_PROXY=true` trusts XFF only from loopback (the bundled nginx). If you front `:4600` with your own proxy, set it to that proxy's IP/CIDR instead.
 
 ## What's already hardened

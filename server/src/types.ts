@@ -112,8 +112,8 @@ export interface Settings {
    *  Empty = derived from ssoLoginUrl, or a host-only cookie if that's unset. */
   ssoCookieDomain: string;
   /** Shared secret nginx sends with each forward-auth subrequest so the login
-   *  check can't be called directly and bypassed. Empty = fall back to the
-   *  NGINUX_FORWARD_SECRET env var (or unprotected if neither is set). */
+   *  check can't be called directly and bypassed. Auto-generated on first boot;
+   *  rotatable from Settings → Login gate. Empty only if an admin cleared it. */
   ssoForwardSecret: string;
 }
 

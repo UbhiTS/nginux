@@ -157,7 +157,7 @@ export function SettingsPage({
                 <input className="input" type="password" autoComplete="new-password" value={settings.ssoForwardSecret} onChange={(e) => update({ ssoForwardSecret: e.target.value })} placeholder="click Generate →" />
                 <button type="button" className="btn" onClick={() => update({ ssoForwardSecret: randomSecret() })}>Generate</button>
               </div>
-              <div className="hint">A long random value nginx sends with every login check, so it can't be called directly and bypassed. Click <b>Generate</b>, then <b>Save</b> — NginUX rewrites the protected sites for you. (Takes precedence over the <span className="mono">NGINUX_FORWARD_SECRET</span> env var.)</div>
+              <div className="hint">A long random value nginx sends with every login check, so it can't be called directly and bypassed. NginUX generates one automatically — you only need this to rotate it: click <b>Generate</b>, then <b>Save</b>, and the protected sites are rewritten for you.</div>
             </div>
             {settings.ssoLoginUrl && (
               <div className="info-line" style={{ marginTop: 12, alignItems: "flex-start" }}>

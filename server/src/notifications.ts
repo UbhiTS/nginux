@@ -120,8 +120,9 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
     });
   }
 
-  // 4b. Login-gated hosts without a forward secret set (Settings value or env var).
-  if (!getSettings().ssoForwardSecret && !process.env.NGINUX_FORWARD_SECRET && enabled.some((h) => h.requireLogin)) {
+  // 4b. Login-gated hosts without a forward secret set (auto-seeded on boot, but
+  //     an admin can clear it — warn if they have, since the gate is then weaker).
+  if (!getSettings().ssoForwardSecret && enabled.some((h) => h.requireLogin)) {
     out.push({
       id: "forward-secret-missing",
       severity: "warning",

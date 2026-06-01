@@ -18,7 +18,6 @@ const STREAM_DIR = process.env.NGINX_STREAM_DIR ?? join(__dirname, "..", "..", "
 const NGINX_BIN = process.env.NGINX_BIN ?? "nginx";
 // Where nginx reaches the control plane for forward-auth (same container).
 const CONTROL_URL = process.env.NGINUX_CONTROL_URL ?? "http://127.0.0.1:4600";
-const FORWARD_SECRET = process.env.NGINUX_FORWARD_SECRET ?? "";
 
 /** Generate a stream (TCP/UDP) server block. Lives in the nginx `stream {}` context. */
 export function generateStreamConfig(h: ProxyHost): string {
@@ -158,8 +157,8 @@ export function generateHostConfig(h: ProxyHost): string {
     : "";
   // The internal location auth_request calls; passes the original host so the
   // control plane can enforce per-host policy, plus an optional shared secret.
-  // Settings wins over the env var so it can be changed without a container restart.
-  const fwdSecret = getSettings().ssoForwardSecret || FORWARD_SECRET;
+  // Managed in the DB (Settings → Login gate); auto-generated on boot if unset.
+  const fwdSecret = getSettings().ssoForwardSecret;
   const authLocation = h.requireLogin
     ? `    location = /__nginux_auth {
         internal;

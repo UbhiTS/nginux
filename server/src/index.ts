@@ -1,4 +1,5 @@
 import { connect } from "node:net";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,6 +125,12 @@ const PORT = Number(process.env.PORT ?? 4600);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
 seedIfEmpty();
+// The forward-auth shared secret is managed entirely in the DB now (no env var).
+// Generate one automatically if it's unset so the login gate is protected by
+// default — admins can rotate it anytime from Settings → Login gate.
+if (!getSettings().ssoForwardSecret) {
+  saveSettings({ ssoForwardSecret: randomBytes(24).toString("hex") });
+}
 const seeded = await seedAuthIfEmpty();
 seedTokensIfEmpty();
 writeGeoipConf(); // keep the country-lock include in sync with settings on boot
@@ -925,10 +932,10 @@ app.get("/api/auth/me", async (req, reply) => {
 // auth_request target for nginx forward-auth: 200 = allowed, 401 = block.
 // nginx passes the original host so we can enforce that host's policy, and an
 // optional shared secret so the endpoint can't be usefully called directly.
-// The shared secret can be set in Settings (preferred — no container restart) or
-// via the env var; the setting wins. nginx.ts reads the same effective value when
-// it stamps the header onto each forward-auth subrequest.
-const forwardSecret = (): string => getSettings().ssoForwardSecret || process.env.NGINUX_FORWARD_SECRET || "";
+// The shared secret lives in the DB (Settings → Login gate) and is auto-generated
+// on boot if unset. nginx.ts reads the same value when it stamps the header onto
+// each forward-auth subrequest.
+const forwardSecret = (): string => getSettings().ssoForwardSecret;
 app.get("/api/auth/forward", async (req, reply) => {
   const secret = forwardSecret();
   if (secret && req.headers["x-nginux-forward-secret"] !== secret) {
@@ -1400,7 +1407,7 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
     app.log.warn(`First run — default login is "admin" / "admin". You'll be required to set a new password on first sign-in.`);
   }
   if (process.env.NODE_ENV === "production" && !forwardSecret()) {
-    app.log.warn("No forward-auth secret set (Settings → Login gate, or NGINUX_FORWARD_SECRET) — set one so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
+    app.log.warn("No forward-auth secret set — generate one in Settings → Login gate so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
   }
   // Render the data plane on boot so nginx serves the managed hosts.
   const result = await applyConfig();

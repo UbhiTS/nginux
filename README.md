@@ -157,8 +157,8 @@ domains:
 
 Now an unauthenticated visitor to a protected service is redirected to the NginUX
 sign-in, and after logging in once is sent back — and stays signed in across every
-`*.yourdomain.com` service. Set `NGINUX_FORWARD_SECRET` too so the auth endpoint
-can't be called directly.
+`*.yourdomain.com` service. NginUX auto-generates a forward-auth secret so the auth
+endpoint can't be called directly; you can rotate it under **Settings → Login gate**.
 
 ### Agents & automation (first-class)
 - **MCP server** over HTTP JSON-RPC (`/api/mcp`): initialize, tools list/call,
@@ -280,7 +280,6 @@ Set via environment variables (the Docker image ships sensible defaults):
 | `NGINUX_ADMIN_PASSWORD` | First-run admin password. If unset, the account is seeded as `admin`/`admin` and must be changed on first login. | — |
 | `NGINUX_TRUST_PROXY` | Trust `X-Forwarded-For` from the proxy in front (set `true` in the container). Off by default to prevent IP spoofing. | `true` (compose) |
 | `NGINUX_SECURE_COOKIES` | Force the `Secure` cookie flag. Defaults on in production. | (prod on) |
-| `NGINUX_FORWARD_SECRET` | Shared secret nginx sends to the forward-auth endpoint so it can't be called directly. | — |
 | `NGINUX_CONTROL_URL` | Where nginx reaches the control plane for forward-auth. | `http://127.0.0.1:4600` |
 | `NGINUX_AUDIT_RETAIN_DAYS` | Audit-log retention before pruning. | `90` |
 | `NGINUX_SSE_MAX` | Max concurrent SSE connections. | `200` |

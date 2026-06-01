@@ -29,8 +29,6 @@ services:
       - NGINUX_TRUST_PROXY=true
       # Set a strong admin password on first run (else default is admin/admin):
       # - NGINUX_ADMIN_PASSWORD=change-me-to-something-strong
-      # Set a random secret so the per-host login gate can't be called directly:
-      # - NGINUX_FORWARD_SECRET=change-me-to-a-long-random-string
     # Drop all Linux capabilities, then add back only what's needed to bind
     # :80/:443 and let nginx manage its workers — big blast-radius reduction.
     cap_drop: [ALL]
