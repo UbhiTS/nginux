@@ -48,8 +48,8 @@ export function createHost(input: NewProxyHost): ProxyHost {
       websockets, http2, ssl, requireLogin, require2fa, countryLock, serverGroup, serverIp,
       enabled, health, certExpiresAt, certDomain, maintenanceMode, securityHeaders, hsts, rateLimit,
       blockExploits, ipAllow, ipDeny, customHeaders, customNginx, upstreams, lbMethod,
-      protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, createdAt, updatedAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, rateLimitRps, rateLimitBurst, createdAt, updatedAt)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     id, input.name, input.emoji, input.domain, input.forwardScheme, input.forwardHost,
     input.forwardPort, input.preset, b(input.websockets), b(input.http2), b(input.ssl),
@@ -61,7 +61,7 @@ export function createHost(input: NewProxyHost): ProxyHost {
     input.ipDeny ?? "", input.customHeaders ?? "", input.customNginx ?? "",
     input.upstreams ?? "", input.lbMethod ?? "round_robin",
     input.protocol ?? "http", input.listenPort ?? 0, input.pathRules ?? "", b(input.mtls ?? false),
-    input.rateLimitKbps ?? 0, input.maxConns ?? 0, now, now,
+    input.rateLimitKbps ?? 0, input.maxConns ?? 0, input.rateLimitRps ?? 10, input.rateLimitBurst ?? 20, now, now,
   );
   invalidateHostCache();
   return getHost(id)!;
@@ -77,7 +77,7 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
       serverGroup=?, serverIp=?, enabled=?, health=?, certExpiresAt=?, certDomain=?,
       maintenanceMode=?, securityHeaders=?, hsts=?, rateLimit=?, blockExploits=?,
       ipAllow=?, ipDeny=?, customHeaders=?, customNginx=?, upstreams=?, lbMethod=?,
-      protocol=?, listenPort=?, pathRules=?, mtls=?, rateLimitKbps=?, maxConns=?, updatedAt=?
+      protocol=?, listenPort=?, pathRules=?, mtls=?, rateLimitKbps=?, maxConns=?, rateLimitRps=?, rateLimitBurst=?, updatedAt=?
     WHERE id=?
   `).run(
     merged.name, merged.emoji, merged.domain, merged.forwardScheme, merged.forwardHost,
@@ -88,7 +88,7 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
     b(merged.blockExploits), merged.ipAllow, merged.ipDeny, merged.customHeaders, merged.customNginx,
     merged.upstreams ?? "", merged.lbMethod ?? "round_robin",
     merged.protocol ?? "http", merged.listenPort ?? 0, merged.pathRules ?? "", b(merged.mtls),
-    merged.rateLimitKbps ?? 0, merged.maxConns ?? 0, merged.updatedAt, id,
+    merged.rateLimitKbps ?? 0, merged.maxConns ?? 0, merged.rateLimitRps ?? 10, merged.rateLimitBurst ?? 20, merged.updatedAt, id,
   );
   invalidateHostCache();
   return getHost(id);
@@ -111,8 +111,8 @@ export function replaceAllHosts(hosts: ProxyHost[]): void {
       websockets, http2, ssl, requireLogin, require2fa, countryLock, serverGroup, serverIp,
       enabled, health, certExpiresAt, certDomain, maintenanceMode, securityHeaders, hsts, rateLimit,
       blockExploits, ipAllow, ipDeny, customHeaders, customNginx, upstreams, lbMethod,
-      protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, createdAt, updatedAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, rateLimitRps, rateLimitBurst, createdAt, updatedAt)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   db.exec("BEGIN");
   try {
@@ -125,7 +125,8 @@ export function replaceAllHosts(hosts: ProxyHost[]): void {
         b(h.maintenanceMode), b(h.securityHeaders), b(h.hsts), b(h.rateLimit), b(h.blockExploits),
         h.ipAllow ?? "", h.ipDeny ?? "", h.customHeaders ?? "", h.customNginx ?? "",
         h.upstreams ?? "", h.lbMethod ?? "round_robin", h.protocol ?? "http", h.listenPort ?? 0,
-        h.pathRules ?? "", b(h.mtls), h.rateLimitKbps ?? 0, h.maxConns ?? 0, h.createdAt, h.updatedAt,
+        h.pathRules ?? "", b(h.mtls), h.rateLimitKbps ?? 0, h.maxConns ?? 0,
+        h.rateLimitRps ?? 10, h.rateLimitBurst ?? 20, h.createdAt, h.updatedAt,
       );
     }
     db.exec("COMMIT");

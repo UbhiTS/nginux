@@ -41,6 +41,10 @@ export interface ProxyHost {
   hsts: boolean;
   /** Per-IP request rate limiting. */
   rateLimit: boolean;
+  /** Requests/sec per client IP when rateLimit is on (the limit_req zone rate). */
+  rateLimitRps: number;
+  /** Burst allowance above the rate, served immediately (limit_req burst). */
+  rateLimitBurst: number;
   /** Block common exploit paths / patterns (.env, .git, sqlmap, etc.). */
   blockExploits: boolean;
   /** Newline/comma-separated IPs or CIDRs to allow (empty = all). */
@@ -75,7 +79,7 @@ type OptionalOnCreate =
   | "health" | "certExpiresAt" | "certDomain" | "maintenanceMode" | "securityHeaders" | "hsts"
   | "rateLimit" | "blockExploits" | "ipAllow" | "ipDeny" | "customHeaders" | "customNginx"
   | "upstreams" | "lbMethod" | "protocol" | "listenPort" | "pathRules" | "mtls"
-  | "rateLimitKbps" | "maxConns";
+  | "rateLimitKbps" | "maxConns" | "rateLimitRps" | "rateLimitBurst";
 
 export type NewProxyHost = Omit<ProxyHost, ManagedFields | OptionalOnCreate> &
   Partial<Pick<ProxyHost, OptionalOnCreate>>;

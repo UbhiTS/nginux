@@ -29,6 +29,8 @@ export interface ProxyHost {
   securityHeaders: boolean;
   hsts: boolean;
   rateLimit: boolean;
+  rateLimitRps: number;
+  rateLimitBurst: number;
   blockExploits: boolean;
   ipAllow: string;
   ipDeny: string;

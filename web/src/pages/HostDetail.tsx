@@ -678,7 +678,22 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       <div className="section-title" style={{ marginTop: 8 }}>Protections</div>
       <Toggle k="securityHeaders" label="Security headers" desc="X-Frame-Options, X-Content-Type-Options, Referrer-Policy." />
       <Toggle k="hsts" label="HSTS" desc="Strict-Transport-Security - force HTTPS in browsers." req="Turn HTTPS on first (pick a certificate above) - HSTS has no effect over plain HTTP." met={draft.ssl} />
-      <Toggle k="rateLimit" label="Rate limiting" desc="Cap requests per IP." />
+      <Toggle k="rateLimit" label="Rate limiting" desc="Cap requests per second per IP (HTTP 429 over the limit)." />
+      {draft.rateLimit && (
+        <div style={{ padding: "0 0 10px 14px" }}>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div className="field" style={{ marginBottom: 0, maxWidth: 160 }}>
+              <label>Requests / sec per IP</label>
+              <input className="input" type="number" min={1} value={draft.rateLimitRps} onChange={(e) => set({ rateLimitRps: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
+            </div>
+            <div className="field" style={{ marginBottom: 0, maxWidth: 160 }}>
+              <label>Burst allowance</label>
+              <input className="input" type="number" min={0} value={draft.rateLimitBurst} onChange={(e) => set({ rateLimitBurst: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+            </div>
+          </div>
+          <div className="hint" style={{ marginTop: 6 }}>Burst = extra requests allowed in a short spike, served immediately (e.g. {draft.rateLimitRps}/s sustained, up to {draft.rateLimitBurst} in a burst).</div>
+        </div>
+      )}
       <Toggle k="blockExploits" label="Block exploits & bad bots" desc="Deny probes for .env / .git / admin panels. Scanner bots (sqlmap, nikto…) are always blocked." />
 
       <div className="field" style={{ marginTop: 12 }}><label>Deny IPs / CIDRs (one per line or comma-separated)</label><textarea className="input" rows={2} value={draft.ipDeny} onChange={(e) => set({ ipDeny: e.target.value })} /></div>

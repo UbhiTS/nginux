@@ -406,6 +406,8 @@ const hostInput = z.object({
   securityHeaders: z.boolean().default(true),
   hsts: z.boolean().default(false),
   rateLimit: z.boolean().default(false),
+  rateLimitRps: z.number().int().min(1).max(10000).default(10),
+  rateLimitBurst: z.number().int().min(0).max(100000).default(20),
   blockExploits: z.boolean().default(true), // secure-by-default for new services
   ipAllow: ipListField,
   ipDeny: ipListField,

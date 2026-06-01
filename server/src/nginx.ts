@@ -90,6 +90,14 @@ export function generateHostConfig(h: ProxyHost): string {
   lines.push(`# Managed by NginUX - ${h.name} (${h.domain})`);
   lines.push(`# Do not edit by hand; changes are regenerated on apply.`);
 
+  // Per-host request-rate zone. nginx sets the rate on the zone (so it must be its
+  // own zone per host) and the burst on the limit_req directive in the location.
+  // Only emitted when rate limiting is on, so unused zones cost nothing.
+  const rlZone = "req_" + h.id.replace(/[^a-zA-Z0-9]/g, "_");
+  if (h.rateLimit) {
+    lines.push(`limit_req_zone $binary_remote_addr zone=${rlZone}:1m rate=${Math.max(1, h.rateLimitRps)}r/s;`);
+  }
+
   // Load balancing: emit an upstream block when extra targets are configured.
   const extraTargets = splitLines(h.upstreams);
   let proxyPass = upstream;
@@ -222,7 +230,7 @@ export function generateHostConfig(h: ProxyHost): string {
     if (idx > 0) protections.push(`    add_header ${line.slice(0, idx).trim()} "${line.slice(idx + 1).trim()}" always;`);
   }
 
-  const rateLimitDirective = h.rateLimit ? `\n        limit_req zone=nginux_per_ip burst=20 nodelay;` : "";
+  const rateLimitDirective = h.rateLimit ? `\n        limit_req zone=${rlZone} burst=${Math.max(0, h.rateLimitBurst)} nodelay;` : "";
   const bwParts: string[] = [];
   if (h.maxConns > 0) bwParts.push(`\n        limit_conn nginux_conn ${h.maxConns};`);
   if (h.rateLimitKbps > 0) bwParts.push(`\n        limit_rate ${h.rateLimitKbps}k;`);
