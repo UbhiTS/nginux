@@ -245,6 +245,8 @@ button { font-family: inherit; cursor: pointer; }
 .preset.selected { border-color: var(--accent); background: var(--accent-soft); }
 .preset .emoji { font-size: 26px; }
 .preset .pname { font-weight: 600; font-size: 12.5px; margin-top: 7px; }
+.preset .pdesc { font-size: 11px; line-height: 1.35; color: var(--text-dim); margin-top: 4px; }
+.preset.selected .pdesc { color: var(--text); }
 /* Scrollable, category-grouped app picker (scales past a single screenful). */
 .preset-scroll { max-height: 360px; overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }
 .preset-cat { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); font-weight: 600; margin: 14px 2px 8px; }

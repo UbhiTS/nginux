@@ -214,6 +214,7 @@ export function Wizard({
               <div key={p.id} className={`preset${preset?.id === p.id ? " selected" : ""}`} onClick={() => setPreset(p)}>
                 <div className="emoji">{p.emoji}</div>
                 <div className="pname">{p.label}</div>
+                <div className="pdesc">{p.desc}</div>
               </div>
             );
             const term = q.trim().toLowerCase();

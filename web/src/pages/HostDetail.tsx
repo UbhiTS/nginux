@@ -587,7 +587,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
 
       <div className="section-title" style={{ marginTop: 8 }}>Behaviour</div>
       <Toggle k="websockets" label="WebSockets" desc="Support upgrade connections." />
-      <Toggle k="maintenanceMode" label="Maintenance mode" desc="Serve a 'be right back' page instead of proxying." />
+      <Toggle k="maintenanceMode" label="Maintenance mode" desc="Show visitors a 'be right back' page — the service stays reachable (unlike Disable, which takes it fully offline)." />
 
       {certApplies && (
         <>

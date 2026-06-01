@@ -72,6 +72,8 @@ export interface Preset {
   label: string;
   emoji: string;
   category: string;
+  /** Plain-language one-liner: what the app is. */
+  desc: string;
   /** The app's usual internal port, prefilled on the wizard's "Where" step. */
   defaultPort: number;
   /** Scheme to reach the backend (https for appliances like Proxmox/UniFi). */
