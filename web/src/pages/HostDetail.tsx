@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Route } from "../App.tsx";
 import { api, type Certificate, type Uptime } from "../api.ts";
-import type { Preset, ProxyHost } from "../types.ts";
+import type { Preset, ProxyHost, Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 import { CertDetailModal } from "../components/CertDetailModal.tsx";
@@ -37,7 +37,7 @@ export function HostDetail({
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetOpen, setPresetOpen] = useState(false);
   const [certDetail, setCertDetail] = useState(false);
-  const [hasDnsProvider, setHasDnsProvider] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
 
   const refetch = () => {
     api.getHost(hostId).then(setHost).catch(() => setHost(null));
@@ -58,7 +58,7 @@ export function HostDetail({
     refetch();
   }, [hostId]);
   useEffect(() => { api.presets().then(setPresets).catch(() => {}); }, []);
-  useEffect(() => { api.settings().then((s) => setHasDnsProvider(s.dnsProvider !== "none")).catch(() => {}); }, []);
+  useEffect(() => { api.settings().then(setSettings).catch(() => {}); }, []);
 
   const startEdit = () => { setDraft(host); setSaveErr(""); setEditing(true); };
   const saveEdit = async () => {
@@ -204,7 +204,7 @@ export function HostDetail({
         </div>
 
         {editing && draft ? (
-          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} error={saveErr} certs={certs} hasDnsProvider={hasDnsProvider} onCertsChanged={() => api.certificates().then(setCerts).catch(() => {})} />
+          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} error={saveErr} certs={certs} settings={settings} onCertsChanged={() => api.certificates().then(setCerts).catch(() => {})} />
         ) : (
         <div className="detail-grid">
           <div>
@@ -438,7 +438,7 @@ function certCovers(c: Certificate, domain: string): boolean {
   );
 }
 
-function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, hasDnsProvider, onCertsChanged }: {
+function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, settings, onCertsChanged }: {
   draft: ProxyHost;
   setDraft: (d: ProxyHost) => void;
   onSave: () => void;
@@ -446,10 +446,14 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
   saving: boolean;
   error?: string;
   certs: Certificate[];
-  hasDnsProvider: boolean;
+  settings: Settings | null;
   onCertsChanged: () => void;
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
+  // What's configured elsewhere — drives the "needs setup" hints on toggles.
+  const hasDnsProvider = (settings?.dnsProvider ?? "none") !== "none";
+  const ssoConfigured = !!settings?.ssoLoginUrl;
+  const geoipConfigured = !!settings?.maxmindLicenseKey;
 
   // Certificate applies to L7 hosts (HTTP / gRPC). A single dropdown drives the
   // whole thing: no cert (plain HTTP), an existing covering cert, create a new
@@ -533,10 +537,19 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
             : certChoice === "import" ? "Paste the full-chain certificate and its private key for this domain."
               : certChoice === "use:self" && !ownCert ? `No certificate for ${draft.domain} yet — it'll use the temporary self-signed cert until you create one.`
                 : "Serves the selected certificate over HTTPS (and redirects HTTP).";
-  const Toggle = ({ k, label, desc }: { k: keyof ProxyHost; label: string; desc: string }) => (
-    <div className="switch-row">
-      <div className="sw-text"><div className="t">{label}</div><div className="d">{desc}</div></div>
-      <button className={`switch${draft[k] ? " on" : ""}`} onClick={() => set({ [k]: !draft[k] } as Partial<ProxyHost>)} />
+  // `req` + `met`: a prerequisite this toggle needs before it does anything. When
+  // unmet, an amber "setup needed" line tells the user what to configure first.
+  const Toggle = ({ k, label, desc, req, met = true, onClick, nested }: {
+    k: keyof ProxyHost; label: string; desc: string;
+    req?: string; met?: boolean; onClick?: () => void; nested?: boolean;
+  }) => (
+    <div className={`switch-row${nested ? " switch-nested" : ""}`}>
+      <div className="sw-text">
+        <div className="t">{label}</div>
+        <div className="d">{desc}</div>
+        {req && !met && <div className="sw-req"><Icon.alert />{req}</div>}
+      </div>
+      <button className={`switch${draft[k] ? " on" : ""}`} onClick={onClick ?? (() => set({ [k]: !draft[k] } as Partial<ProxyHost>))} />
     </div>
   );
   return (
@@ -631,14 +644,29 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, has
       )}
 
       <div className="section-title" style={{ marginTop: 8 }}>Access</div>
-      <Toggle k="requireLogin" label="Require login" desc="Gate behind NginUX auth." />
-      <Toggle k="require2fa" label="Require 2FA" desc="Demand a second factor." />
-      <Toggle k="countryLock" label="Country lock (GeoIP)" desc="Restrict access by country once a GeoIP database is connected (open until then)." />
+      <Toggle
+        k="requireLogin"
+        label="Require login"
+        desc="Gate behind NginUX auth — visitors sign in with their NginUX account."
+        req="Set the NginUX sign-in URL in Settings → Login gate first, or visitors get a bare 401 with no way to log in."
+        met={ssoConfigured}
+        onClick={() => set({ requireLogin: !draft.requireLogin, ...(draft.requireLogin ? { require2fa: false } : {}) })}
+      />
+      {draft.requireLogin && (
+        <Toggle k="require2fa" label="Require 2FA" desc="On top of login — the account must have two-factor set up." nested />
+      )}
+      <Toggle
+        k="countryLock"
+        label="Country lock (GeoIP)"
+        desc="Restrict access by country."
+        req="Add a MaxMind license key in Settings → Country lock — this stays open to all countries until then."
+        met={geoipConfigured}
+      />
       <Toggle k="mtls" label="Require client certificate (mTLS)" desc="Only clients with a cert from this host's managed CA may connect." />
 
       <div className="section-title" style={{ marginTop: 8 }}>Protections</div>
       <Toggle k="securityHeaders" label="Security headers" desc="X-Frame-Options, X-Content-Type-Options, Referrer-Policy." />
-      <Toggle k="hsts" label="HSTS" desc="Strict-Transport-Security (enable once HTTPS works)." />
+      <Toggle k="hsts" label="HSTS" desc="Strict-Transport-Security — force HTTPS in browsers." req="Turn HTTPS on first (pick a certificate above) — HSTS has no effect over plain HTTP." met={draft.ssl} />
       <Toggle k="rateLimit" label="Rate limiting" desc="Cap requests per IP." />
       <Toggle k="blockExploits" label="Block exploits & bad bots" desc="Deny .env/.git/wp-admin and scanner user-agents." />
 
