@@ -43,6 +43,10 @@ const byHostStat = new Map<string, Stat>();
 const byIp = new Map<string, number>();
 const byPath = new Map<string, number>();
 const byCountry = new Map<string, number>();
+// Last-seen GeoIP country per source IP (populated only when the MaxMind DB is
+// installed — nginx logs $geoip2_country_iso_code). Lets us flag the top IPs and
+// list a country's top IPs. FIFO-bounded; it only drives labels, not counts.
+const ipCountry = new Map<string, string>();
 let totalRequests = 0;
 let totalBytes = 0;
 const msSamples: number[] = [];
@@ -103,7 +107,11 @@ export function ingest(e: LogEntry): void {
   bump(byHost, e.host);
   bump(byIp, e.ip);
   bump(byPath, e.path);
-  if (e.country) bump(byCountry, e.country);
+  if (e.country) {
+    bump(byCountry, e.country);
+    ipCountry.set(e.ip, e.country);
+    if (ipCountry.size > MAX_KEYS) ipCountry.delete(ipCountry.keys().next().value as string);
+  }
   totalRequests++;
   totalBytes += e.bytes;
   msSamples.push(e.ms);
@@ -144,6 +152,14 @@ function topN(map: Map<string, number>, n: number) {
   return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([key, count]) => ({ key, count }));
 }
 
+/** Top source IPs whose GeoIP country is `country` (busiest first). Derived from
+ *  byIp + ipCountry so it costs nothing extra to maintain. */
+function topIpsForCountry(country: string, n: number): { ip: string; count: number }[] {
+  const out: { ip: string; count: number }[] = [];
+  for (const [ip, count] of byIp) if (ipCountry.get(ip) === country) out.push({ ip, count });
+  return out.sort((a, b) => b.count - a.count).slice(0, n);
+}
+
 export function summary() {
   const errors = statusClass["4xx"] + statusClass["5xx"];
   const sorted = sortedMs();
@@ -155,9 +171,9 @@ export function summary() {
     p50: percentileOf(sorted, 50),
     p95: percentileOf(sorted, 95),
     topHosts: topN(byHost, 6),
-    topIps: topN(byIp, 6),
+    topIps: topN(byIp, 6).map((t) => ({ ...t, country: ipCountry.get(t.key) ?? "" })),
     topPaths: topN(byPath, 6),
-    topCountries: topN(byCountry, 8),
+    topCountries: topN(byCountry, 8).map((c) => ({ ...c, topIps: topIpsForCountry(c.key, 5) })),
   };
 }
 

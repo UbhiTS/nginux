@@ -9,6 +9,11 @@ const statusColor = (s: number) =>
 const flag = (cc: string) =>
   cc.length === 2 ? String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 127397 + c.charCodeAt(0))) : "🌐";
 
+// ISO 3166 code -> full name via the browser (no data file); falls back to the code.
+const regionNames = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
+const countryName = (cc: string) =>
+  cc && cc.length === 2 && regionNames ? (regionNames.of(cc.toUpperCase()) ?? cc) : cc || "";
+
 // Rough country centroids [lat, lon] for the traffic bubble map.
 const CENTROIDS: Record<string, [number, number]> = {
   CA: [56, -106], US: [38, -97], MX: [23, -102], BR: [-10, -55], AR: [-38, -63],
@@ -32,33 +37,59 @@ const landPath = (ring: number[]) => {
   return d + "Z";
 };
 
-function TrafficMap({ countries, emptyHint }: { countries: { key: string; count: number }[]; emptyHint?: string }) {
+function TrafficMap({ countries, emptyHint }: { countries: MetricsSummary["topCountries"]; emptyHint?: string }) {
   const max = Math.max(1, ...countries.map((c) => c.count));
+  const [hover, setHover] = useState<{ c: MetricsSummary["topCountries"][number]; x: number; y: number } | null>(null);
   return (
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-head">Traffic map <span className="pill n">by source country</span></div>
       <div className="card-pad">
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: "var(--bg)", borderRadius: 8 }}>
-          <g>
-            {WORLD_LAND.map((ring, i) => (
-              <path key={i} d={landPath(ring)} fill="var(--bg-elev2)" stroke="var(--border)" strokeWidth={0.4} />
-            ))}
-          </g>
-          {countries.map((c) => {
-            const ctr = CENTROIDS[c.key.toUpperCase()];
-            if (!ctr) return null;
-            const [x, y] = proj(ctr[0], ctr[1]);
-            const r = 4 + (c.count / max) * 14;
-            return (
-              <g key={c.key}>
-                <circle cx={x} cy={y} r={r} fill="var(--accent)" fillOpacity={0.45} stroke="var(--accent)" strokeWidth={1}>
-                  <title>{flag(c.key)} {c.key}: {c.count} requests</title>
-                </circle>
-                <text x={x} y={y + 3} textAnchor="middle" fontSize={9} fill="var(--text)" style={{ pointerEvents: "none", fontWeight: 600 }}>{c.key}</text>
-              </g>
-            );
-          })}
-        </svg>
+        <div style={{ position: "relative" }}>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: "var(--bg)", borderRadius: 8 }}>
+            <g>
+              {WORLD_LAND.map((ring, i) => (
+                <path key={i} d={landPath(ring)} fill="var(--bg-elev2)" stroke="var(--border)" strokeWidth={0.4} />
+              ))}
+            </g>
+            {countries.map((c) => {
+              const ctr = CENTROIDS[c.key.toUpperCase()];
+              if (!ctr) return null;
+              const [x, y] = proj(ctr[0], ctr[1]);
+              const r = 4 + (c.count / max) * 14;
+              const on = hover?.c.key === c.key;
+              return (
+                <g key={c.key} style={{ cursor: "pointer" }} onMouseEnter={() => setHover({ c, x, y })} onMouseLeave={() => setHover(null)}>
+                  <circle cx={x} cy={y} r={r} fill="var(--accent)" fillOpacity={on ? 0.75 : 0.45} stroke="var(--accent)" strokeWidth={on ? 1.8 : 1} />
+                  <text x={x} y={y + 3} textAnchor="middle" fontSize={9} fill="var(--text)" style={{ pointerEvents: "none", fontWeight: 600 }}>{c.key}</text>
+                </g>
+              );
+            })}
+          </svg>
+          {hover && (
+            <div style={{
+              position: "absolute",
+              left: `${(hover.x / W) * 100}%`,
+              top: `${(hover.y / H) * 100}%`,
+              transform: `translate(${hover.x < W * 0.25 ? "0%" : hover.x > W * 0.75 ? "-100%" : "-50%"}, ${hover.y < H * 0.4 ? "16px" : "calc(-100% - 16px)"})`,
+              background: "var(--bg-elev)", border: "1px solid var(--border)", borderRadius: 8,
+              padding: "8px 10px", boxShadow: "var(--shadow)", minWidth: 160, pointerEvents: "none", zIndex: 5,
+            }}>
+              <div style={{ fontWeight: 600, fontSize: 12.5, marginBottom: hover.c.topIps.length ? 6 : 0 }}>
+                {flag(hover.c.key)} {countryName(hover.c.key)} <span className="muted" style={{ fontWeight: 400 }}>· {hover.c.count} req</span>
+              </div>
+              {hover.c.topIps.length > 0 && (
+                <div style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 5 }}>
+                  <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 3 }}>Top IPs</div>
+                  {hover.c.topIps.map((t) => (
+                    <div key={t.ip} style={{ display: "flex", justifyContent: "space-between", gap: 14, fontSize: 11.5 }}>
+                      <span className="mono">{t.ip}</span><span className="muted">{t.count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         {countries.length === 0 && emptyHint && (
           <div className="muted" style={{ fontSize: 12.5, textAlign: "center", marginTop: 10 }}>{emptyHint}</div>
         )}
@@ -160,7 +191,13 @@ export function Logs() {
               <div className="card-head">Top source IPs</div>
               <div className="card-pad">
                 {summary.topIps.map((t) => (
-                  <div key={t.key} className="kv"><span className="k mono">{t.key}</span><span className="v">{t.count}</span></div>
+                  <div key={t.key} className="kv">
+                    <span className="k" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <span className="mono">{t.key}</span>
+                      {t.country && <span className="muted" style={{ fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{flag(t.country)} {countryName(t.country)}</span>}
+                    </span>
+                    <span className="v">{t.count}</span>
+                  </div>
                 ))}
                 {summary.topIps.length === 0 && <div className="muted">No traffic yet.</div>}
               </div>
@@ -182,7 +219,7 @@ export function Logs() {
                 return (
                   <div key={c.key} style={{ marginBottom: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}>
-                      <span>{flag(c.key)} {c.key}</span>
+                      <span>{flag(c.key)} {countryName(c.key)}</span>
                       <span className="muted">{c.count}</span>
                     </div>
                     <div style={{ height: 6, background: "var(--bg-elev2)", borderRadius: 4, overflow: "hidden" }}>

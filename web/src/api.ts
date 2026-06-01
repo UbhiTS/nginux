@@ -310,9 +310,9 @@ export interface MetricsSummary {
   p50: number;
   p95: number;
   topHosts: { key: string; count: number }[];
-  topIps: { key: string; count: number }[];
+  topIps: { key: string; count: number; country: string }[];
   topPaths: { key: string; count: number }[];
-  topCountries: { key: string; count: number }[];
+  topCountries: { key: string; count: number; topIps: { ip: string; count: number }[] }[];
 }
 
 export interface AgentsOverview {
