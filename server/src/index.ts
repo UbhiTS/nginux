@@ -92,6 +92,7 @@ import {
   trafficSeries,
 } from "./metrics.ts";
 import { getUptime, startUptimeMonitor } from "./uptime.ts";
+import { rotateLogsNow, startLogRotation } from "./logrotate.ts";
 import { diffVersion, listVersions, restoreVersion, snapshot } from "./versioning.ts";
 import { gitLog, syncGitOps } from "./gitops.ts";
 import { importNginxConf } from "./importer.ts";
@@ -467,6 +468,8 @@ const settingsInput = z.object({
   ssoLoginUrl: z.string().max(512).refine((s) => s === "" || /^https?:\/\/[^\s/]+/i.test(s), "Must be a full URL like https://nginux.example.com."),
   ssoCookieDomain: z.string().max(253).refine((s) => s === "" || /^\.?[a-z0-9.-]+$/i.test(s), "Invalid cookie domain."),
   ssoForwardSecret: z.string().max(256),
+  logMaxMb: z.number().int().min(0).max(100000),
+  logKeepFiles: z.number().int().min(0).max(50),
 }).partial();
 
 app.get("/api/settings", async (req) => {
@@ -481,6 +484,10 @@ app.put("/api/settings", async (req, reply) => {
   const saved = saveSettings(parsed.data);
   // Changing the allowed country re-derives the geo config.
   if (parsed.data.homeCountry !== undefined) writeGeoipConf();
+  // Apply new log-rotation limits right away instead of waiting for the timer.
+  if (parsed.data.logMaxMb !== undefined || parsed.data.logKeepFiles !== undefined) {
+    try { rotateLogsNow(); } catch { /* best-effort */ }
+  }
   // Several settings are baked into generated nginx config (the geo include, the
   // login-gate 401→login redirect, and the forward-auth secret header) - re-apply
   // so a change here takes effect immediately instead of on the next host edit.
@@ -1429,6 +1436,8 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   // Keep the audit log bounded.
   pruneAuditLog();
   setInterval(() => { try { pruneAuditLog(); } catch { /* ignore */ } }, 24 * 3600_000).unref?.();
+  // Keep the on-disk nginx logs bounded (size-based rotation per Settings -> Logs).
+  startLogRotation();
 });
 
 // ---------- graceful shutdown ----------

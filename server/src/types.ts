@@ -115,6 +115,10 @@ export interface Settings {
    *  check can't be called directly and bypassed. Auto-generated on first boot;
    *  rotatable from Settings → Login gate. Empty only if an admin cleared it. */
   ssoForwardSecret: string;
+  /** Rotate an on-disk nginx log once it exceeds this many MB (0 = never). */
+  logMaxMb: number;
+  /** How many rotated log copies to keep before deleting the oldest (0 = none). */
+  logKeepFiles: number;
 }
 
 /** A server node grouping its services, for the dashboard topology tree. */

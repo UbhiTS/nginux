@@ -168,6 +168,30 @@ export function SettingsPage({
             )}
           </div>
 
+          <div className="section-title" style={{ marginTop: 20 }}>Log rotation</div>
+          <div className="card card-pad">
+            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Max log size (MB)</label>
+                <input className="input" type="number" min={0} value={settings.logMaxMb} onChange={(e) => update({ logMaxMb: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+                <div className="hint">Rotate an nginx log once it passes this size. <b>0</b> disables rotation.</div>
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Rotated copies to keep</label>
+                <input className="input" type="number" min={0} value={settings.logKeepFiles} onChange={(e) => update({ logKeepFiles: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+                <div className="hint">Older copies beyond this are deleted. <b>0</b> just truncates.</div>
+              </div>
+            </div>
+            <div className="info-line" style={{ marginTop: 12, alignItems: "flex-start" }}>
+              <Icon.info />
+              <span>
+                {settings.logMaxMb > 0
+                  ? <>Caps each on-disk log at about <b>{settings.logMaxMb * (settings.logKeepFiles + 1)} MB</b> (access, stream, error). The live traffic dashboards are in-memory, so rotation never affects them.</>
+                  : <>Rotation is <b>off</b> - the nginx access/error logs will grow unbounded on the data volume.</>}
+              </span>
+            </div>
+          </div>
+
           <CountryLock settings={settings} update={update} onSave={save} />
           <Notifications />
           <BackupsGitOps settings={settings} update={update} />

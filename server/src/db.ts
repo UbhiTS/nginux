@@ -320,6 +320,8 @@ const DEFAULT_SETTINGS: Settings = {
   ssoLoginUrl: "",
   ssoCookieDomain: "",
   ssoForwardSecret: "",
+  logMaxMb: 50,
+  logKeepFiles: 2,
 };
 
 // Settings fields that hold third-party credentials - never expose these to a
@@ -342,6 +344,8 @@ export function getSettings(): Settings {
   merged.acmeStaging = String(merged.acmeStaging) === "true"; // stored as string
   merged.agentAutoApprove = String(merged.agentAutoApprove) === "true";
   merged.gitOpsEnabled = String(merged.gitOpsEnabled) === "true";
+  merged.logMaxMb = Number(merged.logMaxMb) || 0; // stored as string
+  merged.logKeepFiles = Number(merged.logKeepFiles) || 0;
   return merged as unknown as Settings;
 }
 

@@ -66,6 +66,8 @@ export interface Settings {
   ssoLoginUrl: string;
   ssoCookieDomain: string;
   ssoForwardSecret: string;
+  logMaxMb: number;
+  logKeepFiles: number;
 }
 
 export interface Preset {
