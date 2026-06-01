@@ -4,6 +4,7 @@ import type { ProxyHost } from "../types.ts";
 import type { AuthUser } from "../api.ts";
 import { healthClass } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { Avatar } from "./Avatar.tsx";
 import { BrandLogo } from "./BrandLogo.tsx";
 import type { Theme } from "../theme.ts";
 
@@ -110,7 +111,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
       </nav>
 
       <div className="sidebar-footer">
-        <div className="avatar">{user.username[0].toUpperCase()}</div>
+        <Avatar userId={user.id} name={user.username} editable />
         <div style={{ fontSize: 12.5, minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{user.username}</div>
           <div style={{ color: "var(--text-faint)", fontSize: 11, textTransform: "capitalize" }}>{user.role}</div>
@@ -119,7 +120,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
           <ThemeIcon />
         </button>
         <button className="theme-toggle" title="Sign out" aria-label="Sign out" onClick={onLogout}>
-          <Icon.arrowRight />
+          <Icon.logout />
         </button>
       </div>
     </aside>

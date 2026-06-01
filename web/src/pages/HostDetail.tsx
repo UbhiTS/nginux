@@ -494,7 +494,17 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       setCertMsg({ ok: true, text: method === "selfsigned" ? "Self-signed certificate created." : `Let's Encrypt certificate issued for ${draft.domain}.` });
       onCertsChanged();
     } catch (e) {
-      setCertMsg({ ok: false, text: e instanceof Error ? e.message : "Couldn't create the certificate." });
+      // A slow ACME attempt can outlast a proxy's read timeout, so the HTTP call
+      // comes back as a 504 (or non-JSON) with no real message — but the server
+      // records the actual reason on the cert. Pull it and surface that instead.
+      let detail = e instanceof Error ? e.message : "";
+      try {
+        const fresh = await api.certificates();
+        const c = fresh.find((x) => x.domain === draft.domain);
+        if (c?.lastError) detail = c.lastError;
+      } catch { /* keep whatever message we already have */ }
+      setCertMsg({ ok: false, text: detail || "Couldn't create the certificate — it may still be processing; check the Certificates page in a minute." });
+      onCertsChanged();
     } finally {
       setCertBusy("");
     }

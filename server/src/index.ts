@@ -1,5 +1,5 @@
 import { connect } from "node:net";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
@@ -128,6 +128,22 @@ const seeded = await seedAuthIfEmpty();
 seedTokensIfEmpty();
 writeGeoipConf(); // keep the country-lock include in sync with settings on boot
 reconcileImportedCerts(); // pick up any cert files dropped into /data/certs (migrations)
+
+// Profile avatars live as raw image files under the data volume, keyed by user id
+// (no DB column — keeps the schema migration-free). The image type is sniffed on
+// read so the upload can be PNG/JPEG/WebP without tracking the extension.
+const AVATAR_DIR = join(process.env.NGINUX_DATA_DIR ?? join(__dirname, "..", "data"), "avatars");
+const AVATAR_MAX_BYTES = 700 * 1024;
+function avatarPath(id: string): string {
+  // Defend the path join against traversal — ids are uuids, but never trust input.
+  return join(AVATAR_DIR, id.replace(/[^a-zA-Z0-9_-]/g, ""));
+}
+function sniffImageType(buf: Buffer): string | null {
+  if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return null;
+}
 
 const currentUser = (req: FastifyRequest): User | null =>
   userForSession(parseCookie(req.headers.cookie)[SESSION_COOKIE]);
@@ -443,6 +459,7 @@ const settingsInput = z.object({
   gitOpsEnabled: z.boolean(),
   ssoLoginUrl: z.string().max(512).refine((s) => s === "" || /^https?:\/\/[^\s/]+/i.test(s), "Must be a full URL like https://nginux.example.com."),
   ssoCookieDomain: z.string().max(253).refine((s) => s === "" || /^\.?[a-z0-9.-]+$/i.test(s), "Invalid cookie domain."),
+  ssoForwardSecret: z.string().max(256),
 }).partial();
 
 app.get("/api/settings", async (req) => {
@@ -455,8 +472,14 @@ app.put("/api/settings", async (req, reply) => {
   const parsed = settingsInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   const saved = saveSettings(parsed.data);
-  // Changing the allowed country re-derives the geo config; reload to apply it.
-  if (parsed.data.homeCountry !== undefined) { writeGeoipConf(); await applyConfig(); }
+  // Changing the allowed country re-derives the geo config.
+  if (parsed.data.homeCountry !== undefined) writeGeoipConf();
+  // Several settings are baked into generated nginx config (the geo include, the
+  // login-gate 401→login redirect, and the forward-auth secret header) — re-apply
+  // so a change here takes effect immediately instead of on the next host edit.
+  if (parsed.data.homeCountry !== undefined || parsed.data.ssoLoginUrl !== undefined || parsed.data.ssoForwardSecret !== undefined) {
+    await applyConfig();
+  }
   return saved;
 });
 
@@ -902,9 +925,13 @@ app.get("/api/auth/me", async (req, reply) => {
 // auth_request target for nginx forward-auth: 200 = allowed, 401 = block.
 // nginx passes the original host so we can enforce that host's policy, and an
 // optional shared secret so the endpoint can't be usefully called directly.
-const FORWARD_SECRET = process.env.NGINUX_FORWARD_SECRET || "";
+// The shared secret can be set in Settings (preferred — no container restart) or
+// via the env var; the setting wins. nginx.ts reads the same effective value when
+// it stamps the header onto each forward-auth subrequest.
+const forwardSecret = (): string => getSettings().ssoForwardSecret || process.env.NGINUX_FORWARD_SECRET || "";
 app.get("/api/auth/forward", async (req, reply) => {
-  if (FORWARD_SECRET && req.headers["x-nginux-forward-secret"] !== FORWARD_SECRET) {
+  const secret = forwardSecret();
+  if (secret && req.headers["x-nginux-forward-secret"] !== secret) {
     return reply.code(401).send({ ok: false });
   }
   const u = currentUser(req);
@@ -1012,6 +1039,44 @@ app.post("/api/users/:id/password", async (req, reply) => {
   if (!(await adminSetPassword(id, parsed.data.newPassword))) return reply.code(404).send({ error: "User not found" });
   const target = getUserById(id);
   logEvent({ type: "user.password_reset", severity: "warn", actor: admin.username, summary: `Reset password for ${target?.username ?? id}`, ip: clientIp(req), meta: { id } });
+  return { ok: true };
+});
+
+// ---------- profile avatar ----------
+// The client sends a small, already-resized data URL, so we never need an image
+// library server-side — just validate, sniff, and write the bytes to the volume.
+app.post("/api/users/me/avatar", async (req, reply) => {
+  const me = currentUser(req);
+  if (!me) return reply.code(401).send({ error: "Not signed in" });
+  const parsed = z.object({ image: z.string().min(1).max(1_600_000) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "Missing image data." });
+  const m = /^data:image\/(?:png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/.exec(parsed.data.image.trim());
+  if (!m) return reply.code(415).send({ error: "Unsupported image — use a PNG, JPEG, or WebP file." });
+  let buf: Buffer;
+  try { buf = Buffer.from(m[1], "base64"); } catch { return reply.code(400).send({ error: "Couldn't decode the image." }); }
+  if (!buf.length || !sniffImageType(buf)) return reply.code(415).send({ error: "That doesn't look like a valid image." });
+  if (buf.length > AVATAR_MAX_BYTES) return reply.code(413).send({ error: "Image is too large — keep it under 700 KB." });
+  mkdirSync(AVATAR_DIR, { recursive: true });
+  writeFileSync(avatarPath(me.id), buf);
+  return { ok: true };
+});
+
+// Serve a user's avatar (any signed-in user — avatars show next to names).
+app.get("/api/users/:id/avatar", async (req, reply) => {
+  if (!currentUser(req)) return reply.code(401).send({ error: "Not signed in" });
+  const { id } = req.params as { id: string };
+  const p = avatarPath(id);
+  if (!existsSync(p)) return reply.code(404).send({ error: "No avatar." });
+  const buf = readFileSync(p);
+  // Private to the session and short-lived; the client cache-busts with ?v= on change.
+  return reply.header("Content-Type", sniffImageType(buf) ?? "application/octet-stream").header("Cache-Control", "private, max-age=60").send(buf);
+});
+
+// Remove the signed-in user's avatar (revert to the initial).
+app.delete("/api/users/me/avatar", async (req, reply) => {
+  const me = currentUser(req);
+  if (!me) return reply.code(401).send({ error: "Not signed in" });
+  rmSync(avatarPath(me.id), { force: true });
   return { ok: true };
 });
 
@@ -1334,8 +1399,8 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   if (seeded.usingDefault) {
     app.log.warn(`First run — default login is "admin" / "admin". You'll be required to set a new password on first sign-in.`);
   }
-  if (process.env.NODE_ENV === "production" && !FORWARD_SECRET) {
-    app.log.warn("NGINUX_FORWARD_SECRET is not set — set it so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
+  if (process.env.NODE_ENV === "production" && !forwardSecret()) {
+    app.log.warn("No forward-auth secret set (Settings → Login gate, or NGINUX_FORWARD_SECRET) — set one so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
   }
   // Render the data plane on boot so nginx serves the managed hosts.
   const result = await applyConfig();

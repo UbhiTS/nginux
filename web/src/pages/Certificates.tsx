@@ -29,6 +29,7 @@ export function Certificates() {
   const [error, setError] = useState("");
   const [issueFor, setIssueFor] = useState<string | null>(null);
   const [method, setMethod] = useState<"http-01" | "dns-01">("http-01");
+  const [hasDnsProvider, setHasDnsProvider] = useState(false);
   const [issuing, setIssuing] = useState(false);
   const [detail, setDetail] = useState<Certificate | null>(null);
   const [info, setInfo] = useState<CertDetails | null>(null);
@@ -45,6 +46,10 @@ export function Certificates() {
     api.certificates().then(setCerts).catch(() => {});
   };
   useEffect(load, []);
+  // DNS-01 is only usable with a provider connected, so don't offer it otherwise.
+  useEffect(() => {
+    api.settings().then((s) => setHasDnsProvider(s.dnsProvider !== "none")).catch(() => {});
+  }, []);
 
   const onImportFiles = async (list: FileList | null) => {
     if (!list) return;
@@ -90,14 +95,25 @@ export function Certificates() {
 
   const issueTrusted = async () => {
     if (!issueFor) return;
+    const domain = issueFor;
     setIssuing(true);
     setError("");
     try {
-      await api.issueCert(issueFor, method);
+      await api.issueCert(domain, method);
       setIssueFor(null);
       await load();
     } catch (e) {
-      setError(`${issueFor}: ${e instanceof Error ? e.message : "couldn't get a certificate"}`);
+      // A slow ACME attempt can outlast a proxy's read timeout, so the HTTP call
+      // returns a 504 (or a non-JSON body) with no real message — but the server
+      // records the actual reason on the cert. Pull the fresh list and surface that.
+      let detail = e instanceof Error ? e.message : "";
+      try {
+        const fresh = await api.certificates();
+        setCerts(fresh);
+        const c = fresh.find((x) => x.domain === domain);
+        if (c?.lastError) detail = c.lastError;
+      } catch { /* keep whatever message we already have */ }
+      setError(`${domain}: ${detail || "couldn't get a certificate — it may still be processing; check back in a minute."}`);
       setIssueFor(null);
     } finally {
       setIssuing(false);
@@ -288,13 +304,20 @@ export function Certificates() {
 
             <label className={`radio-card${method === "http-01" ? " sel" : ""}`} onClick={() => setMethod("http-01")}>
               <div className="rc-top"><input type="radio" checked={method === "http-01"} readOnly /> HTTP validation</div>
-              <div className="rc-desc">Simplest. Requires port <b>80</b> on this server to be reachable from the internet (forward TCP 80 → this NAS on your router), and public DNS for {issueFor} pointing at your home IP.</div>
+              <div className="rc-desc">Simplest. Requires port <b>80</b> on this server to be reachable from the internet (forward TCP 80 → the NginUX host on your router), and public DNS for {issueFor} pointing at your home IP.</div>
             </label>
 
-            <label className={`radio-card${method === "dns-01" ? " sel" : ""}`} onClick={() => setMethod("dns-01")}>
-              <div className="rc-top"><input type="radio" checked={method === "dns-01"} readOnly /> DNS validation</div>
-              <div className="rc-desc">No open ports needed — works even for LAN-only domains. Requires a DNS provider (GoDaddy / Cloudflare) connected in <b>Settings</b> so NginUX can add the verification record for you.</div>
-            </label>
+            {hasDnsProvider ? (
+              <label className={`radio-card${method === "dns-01" ? " sel" : ""}`} onClick={() => setMethod("dns-01")}>
+                <div className="rc-top"><input type="radio" checked={method === "dns-01"} readOnly /> DNS validation</div>
+                <div className="rc-desc">No open ports needed — works even for LAN-only domains. NginUX adds the verification record through your connected DNS provider.</div>
+              </label>
+            ) : (
+              <div className="info-line" style={{ marginTop: 10 }}>
+                <Icon.info />
+                DNS validation (no open ports, works for LAN-only domains) needs a DNS provider connected in <b>Settings</b> first.
+              </div>
+            )}
 
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18 }}>
               <button className="btn btn-ghost" onClick={() => setIssueFor(null)} disabled={issuing}>Cancel</button>

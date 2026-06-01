@@ -158,6 +158,8 @@ export function generateHostConfig(h: ProxyHost): string {
     : "";
   // The internal location auth_request calls; passes the original host so the
   // control plane can enforce per-host policy, plus an optional shared secret.
+  // Settings wins over the env var so it can be changed without a container restart.
+  const fwdSecret = getSettings().ssoForwardSecret || FORWARD_SECRET;
   const authLocation = h.requireLogin
     ? `    location = /__nginux_auth {
         internal;
@@ -165,7 +167,7 @@ export function generateHostConfig(h: ProxyHost): string {
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-Host $host;
-        proxy_set_header X-Original-URI $request_uri;${FORWARD_SECRET ? `\n        proxy_set_header X-NginUX-Forward-Secret "${FORWARD_SECRET}";` : ""}
+        proxy_set_header X-Original-URI $request_uri;${fwdSecret ? `\n        proxy_set_header X-NginUX-Forward-Secret "${fwdSecret}";` : ""}
     }
 `
     : "";

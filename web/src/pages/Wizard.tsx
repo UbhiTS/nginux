@@ -217,8 +217,12 @@ export function Wizard({
               </div>
             );
             const term = q.trim().toLowerCase();
-            const matches = presets.filter((p) => `${p.label} ${p.id} ${p.category} ${p.notes}`.toLowerCase().includes(term));
-            const cats = [...new Set(presets.map((p) => p.category))]; // preset order is already category-grouped
+            // Custom is pinned at the top as a distinct "start blank" row, so keep it
+            // out of the app grid/search to avoid showing it twice.
+            const customP = presets.find((p) => p.id === "custom");
+            const apps = presets.filter((p) => p.id !== "custom");
+            const matches = apps.filter((p) => `${p.label} ${p.id} ${p.category} ${p.notes}`.toLowerCase().includes(term));
+            const cats = [...new Set(apps.map((p) => p.category))]; // preset order is already category-grouped
             return (
               <div className="card wcard">
                 <h2>What do you want to expose?</h2>
@@ -227,6 +231,22 @@ export function Wizard({
                   <Icon.search />
                   <input placeholder="Search apps — Plex, Immich, Home Assistant…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
                 </div>
+                {customP && (
+                  <div
+                    className={`preset-pick${preset?.id === "custom" ? " selected" : ""}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setPreset(customP)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPreset(customP); } }}
+                  >
+                    <div className="pp-emoji">{customP.emoji}</div>
+                    <div className="pp-text">
+                      <div className="pp-name">Custom / Generic</div>
+                      <div className="pp-sub">Not in the list? Start from a blank service with sensible defaults.</div>
+                    </div>
+                    <Icon.arrowRight className="pp-arrow" />
+                  </div>
+                )}
                 <div className="preset-scroll">
                   {term
                     ? matches.length
@@ -235,11 +255,11 @@ export function Wizard({
                     : cats.map((cat) => (
                         <div key={cat}>
                           <div className="preset-cat">{cat}</div>
-                          <div className="preset-grid">{presets.filter((p) => p.category === cat).map(card)}</div>
+                          <div className="preset-grid">{apps.filter((p) => p.category === cat).map(card)}</div>
                         </div>
                       ))}
                 </div>
-                {preset && (!term || matches.some((m) => m.id === preset.id)) && (
+                {preset && (preset.id === "custom" || !term || matches.some((m) => m.id === preset.id)) && (
                   <div className="info-line" style={{ marginTop: 14, alignItems: "flex-start" }}>
                     <Icon.info />
                     <span>

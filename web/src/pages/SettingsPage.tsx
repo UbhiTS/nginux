@@ -4,6 +4,13 @@ import type { Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
+/** 48 hex chars of CSPRNG output — used for the forward-auth shared secret. */
+function randomSecret(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function SettingsPage({
   reload,
 }: {
@@ -139,10 +146,18 @@ export function SettingsPage({
               <input className="input" value={settings.ssoLoginUrl} onChange={(e) => update({ ssoLoginUrl: e.target.value })} placeholder="https://nginux.yourdomain.com" />
               <div className="hint">Where NginUX's own login page is reachable over HTTPS. Services with <b>Require login</b> send unauthenticated visitors here, then back. Expose NginUX itself as a service on a subdomain of your base domain (e.g. <span className="mono">nginux.yourdomain.com → 127.0.0.1:4600</span>) and leave that one <b>un-gated</b>.</div>
             </div>
-            <div className="field" style={{ marginBottom: 0 }}>
+            <div className="field">
               <label>Shared cookie domain</label>
               <input className="input" value={settings.ssoCookieDomain} onChange={(e) => update({ ssoCookieDomain: e.target.value })} placeholder=".yourdomain.com (auto from sign-in URL if blank)" />
               <div className="hint">So one sign-in covers every subdomain. Leave blank to derive it from the sign-in URL.</div>
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Forward-auth secret</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input className="input" type="password" autoComplete="new-password" value={settings.ssoForwardSecret} onChange={(e) => update({ ssoForwardSecret: e.target.value })} placeholder="click Generate →" />
+                <button type="button" className="btn" onClick={() => update({ ssoForwardSecret: randomSecret() })}>Generate</button>
+              </div>
+              <div className="hint">A long random value nginx sends with every login check, so it can't be called directly and bypassed. Click <b>Generate</b>, then <b>Save</b> — NginUX rewrites the protected sites for you. (Takes precedence over the <span className="mono">NGINUX_FORWARD_SECRET</span> env var.)</div>
             </div>
             {settings.ssoLoginUrl && (
               <div className="info-line" style={{ marginTop: 12, alignItems: "flex-start" }}>

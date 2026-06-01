@@ -111,6 +111,10 @@ export interface Settings {
   /** Cookie Domain so one sign-in covers every subdomain (e.g. .example.com).
    *  Empty = derived from ssoLoginUrl, or a host-only cookie if that's unset. */
   ssoCookieDomain: string;
+  /** Shared secret nginx sends with each forward-auth subrequest so the login
+   *  check can't be called directly and bypassed. Empty = fall back to the
+   *  NGINUX_FORWARD_SECRET env var (or unprotected if neither is set). */
+  ssoForwardSecret: string;
 }
 
 /** A server node grouping its services, for the dashboard topology tree. */

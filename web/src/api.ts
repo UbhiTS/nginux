@@ -97,6 +97,10 @@ export const api = {
   deleteUser: (id: string) => req<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
   adminSetUserPassword: (id: string, newPassword: string) =>
     req<{ ok: boolean }>(`/users/${id}/password`, { method: "POST", body: JSON.stringify({ newPassword }) }),
+  // Profile avatar: `image` is a resized data URL; the server stores the bytes.
+  uploadAvatar: (image: string) => req<{ ok: boolean }>("/users/me/avatar", { method: "POST", body: JSON.stringify({ image }) }),
+  removeAvatar: () => req<{ ok: boolean }>("/users/me/avatar", { method: "DELETE" }),
+  avatarUrl: (id: string, v = 0) => `/api/users/${encodeURIComponent(id)}/avatar${v ? `?v=${v}` : ""}`,
   sessions: () => req<Session[]>("/sessions"),
   audit: (type?: string, limit = 50) =>
     req<AuditEvent[]>(`/audit?${type ? `type=${type}&` : ""}limit=${limit}`),
@@ -119,7 +123,10 @@ export const api = {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const err = new Error(body.error ? String(body.error) : res.statusText) as Error & { kind?: string };
+      // HTTP/2 leaves statusText empty, and a gateway timeout body may not be JSON —
+      // fall back to the status code so the caller never gets a blank message.
+      const fallback = res.statusText || `request failed (HTTP ${res.status})`;
+      const err = new Error(body.error ? String(body.error) : fallback) as Error & { kind?: string };
       err.kind = body.kind ?? "other";
       throw err;
     }

@@ -120,15 +120,15 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
     });
   }
 
-  // 4b. Login-gated hosts without a forward secret set.
-  if (!process.env.NGINUX_FORWARD_SECRET && enabled.some((h) => h.requireLogin)) {
+  // 4b. Login-gated hosts without a forward secret set (Settings value or env var).
+  if (!getSettings().ssoForwardSecret && !process.env.NGINUX_FORWARD_SECRET && enabled.some((h) => h.requireLogin)) {
     out.push({
       id: "forward-secret-missing",
       severity: "warning",
       title: "Login gate isn't fully secured",
       message:
-        "Some services require login, but NGINUX_FORWARD_SECRET isn't set. Set it to a long random value so the " +
-        "login check can't be called directly and bypassed.",
+        "Some services require login, but no forward-auth secret is set. Add one under Settings → Login gate " +
+        "(click Generate) so the login check can't be called directly and bypassed.",
       dismissible: true,
     });
   }

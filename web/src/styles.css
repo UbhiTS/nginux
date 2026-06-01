@@ -150,7 +150,13 @@ button { font-family: inherit; cursor: pointer; }
 .nav-add { color: var(--accent); font-weight: 600; }
 .nav-add .ce { font-weight: 700; }
 .sidebar-footer { padding: 12px; border-top: 1px solid var(--border-soft); display: flex; align-items: center; gap: 10px; }
-.avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--purple); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12px; }
+.avatar { position: relative; flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--purple); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12px; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar-edit { cursor: pointer; }
+.avatar-cam { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.5); color: #fff; opacity: 0; transition: opacity .15s; }
+.avatar-edit:hover .avatar-cam, .avatar-edit:focus-visible .avatar-cam { opacity: 1; }
+.avatar-cam svg { width: 14px; height: 14px; }
+.avatar-cam .spinner { width: 13px; height: 13px; border-width: 2px; }
 .theme-toggle { margin-left: auto; background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; color: var(--text-dim); display:flex; }
 .theme-toggle svg { width: 15px; height: 15px; }
 
@@ -246,6 +252,15 @@ button { font-family: inherit; cursor: pointer; }
 .preset .emoji { font-size: 26px; }
 .preset .pname { font-weight: 600; font-size: 12.5px; margin-top: 7px; }
 /* Scrollable, category-grouped app picker (scales past a single screenful). */
+/* Pinned "Custom / Generic" escape hatch above the app grid — dashed border sets
+   it apart from the solid app tiles so it reads as "start blank", not as an app. */
+.preset-pick { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 14px; border: 1px dashed var(--border); border-radius: 10px; background: var(--bg-elev); cursor: pointer; transition: border-color .12s, background .12s; }
+.preset-pick:hover { border-color: var(--accent); }
+.preset-pick.selected { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+.preset-pick .pp-emoji { font-size: 22px; line-height: 1; flex: none; }
+.preset-pick .pp-name { font-weight: 600; font-size: 13px; }
+.preset-pick .pp-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.preset-pick .pp-arrow { width: 16px; height: 16px; margin-left: auto; color: var(--text-faint); flex: none; }
 .preset-scroll { max-height: 360px; overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }
 .preset-cat { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); font-weight: 600; margin: 14px 2px 8px; }
 .preset-cat:first-child { margin-top: 2px; }

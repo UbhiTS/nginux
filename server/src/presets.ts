@@ -148,6 +148,64 @@ export const PRESETS: Record<string, Preset> = {
   // ---------------- Other ----------------
   bookstack: { id: "bookstack", label: "BookStack", emoji: "📚", category: "Other", desc: "Wiki & documentation platform", defaultPort: 80, websockets: false, http2: true, extraDirectives: ["client_max_body_size 1G;"], notes: "Larger body limit for image/attachment uploads." },
   wikijs: { id: "wikijs", label: "Wiki.js", emoji: "📖", category: "Other", desc: "Modern wiki platform", defaultPort: 3000, websockets: ws, http2: true, extraDirectives: ["client_max_body_size 500M;"], notes: "WebSocket on; larger body for asset uploads." },
+  // ---------------- Expanded library (more popular self-hosted apps) ----------------
+  // Media / Downloads
+  prowlarr: { id: "prowlarr", label: "Prowlarr", emoji: "🔍", category: "Downloads", desc: "Indexer manager for the *arr apps", defaultPort: 9696, websockets: false, http2: true, extraDirectives: [], notes: "Indexer manager — standard HTTP. Set a base URL to share a domain." },
+  bazarr: { id: "bazarr", label: "Bazarr", emoji: "🈂️", category: "Media", desc: "Subtitle downloader for Radarr & Sonarr", defaultPort: 6767, websockets: false, http2: true, extraDirectives: [], notes: "Subtitle manager — standard HTTP." },
+  ombi: { id: "ombi", label: "Ombi", emoji: "🎫", category: "Media", desc: "Media request portal for Plex/Emby/Jellyfin", defaultPort: 3579, websockets: false, http2: true, extraDirectives: [], notes: "Media requests — standard HTTP." },
+  kavita: { id: "kavita", label: "Kavita", emoji: "📗", category: "Media", desc: "Reader for comics, manga & ebooks", defaultPort: 5000, websockets: ws, http2: true, extraDirectives: ["client_max_body_size 1G;"], notes: "WebSocket on (SignalR) for live progress; ebook uploads." },
+  komga: { id: "komga", label: "Komga", emoji: "📘", category: "Media", desc: "Comics & manga server with a web reader", defaultPort: 25600, websockets: false, http2: true, extraDirectives: ["client_max_body_size 1G;"], notes: "Larger body for comic uploads." },
+  tdarr: { id: "tdarr", label: "Tdarr", emoji: "🎞️", category: "Media", desc: "Distributed media transcoding", defaultPort: 8265, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on for live jobs (UI 8265; node/server 8266 is separate)." },
+
+  // Photos & Files
+  duplicati: { id: "duplicati", label: "Duplicati", emoji: "💾", category: "Photos & Files", desc: "Encrypted, scheduled backups", defaultPort: 8200, websockets: false, http2: true, extraDirectives: [], notes: "Backup UI — standard HTTP." },
+  backrest: { id: "backrest", label: "Backrest", emoji: "🗃️", category: "Photos & Files", desc: "Web UI & scheduler for restic backups", defaultPort: 9898, websockets: false, http2: true, extraDirectives: [], notes: "Backup UI — standard HTTP." },
+
+  // Network & Admin
+  guacamole: { id: "guacamole", label: "Apache Guacamole", emoji: "🖱️", category: "Network & Admin", desc: "Remote desktop (RDP/VNC/SSH) in your browser", defaultPort: 8080, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on (required) for the remote-desktop stream. The Tomcat image serves under /guacamole/ — set that path, or use the ROOT-deployed image." },
+  dockge: { id: "dockge", label: "Dockge", emoji: "🐳", category: "Network & Admin", desc: "Manage Docker Compose stacks", defaultPort: 5001, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on for the live terminal & reactive UI." },
+  komodo: { id: "komodo", label: "Komodo", emoji: "🛠️", category: "Network & Admin", desc: "Build & deploy containers across servers", defaultPort: 9120, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on for live logs / terminals." },
+  pterodactyl: { id: "pterodactyl", label: "Pterodactyl", emoji: "🦖", category: "Network & Admin", desc: "Game-server management panel", defaultPort: 80, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on for the live game console (Wings daemon runs separately)." },
+  headscale: { id: "headscale", label: "Headscale", emoji: "🛰️", category: "Network & Admin", desc: "Self-hosted Tailscale control server", defaultPort: 8080, websockets: ws, http2: false, extraDirectives: [], notes: "WebSocket on; HTTP/2 OFF on purpose — it can break the long-poll control channel." },
+  netbird: { id: "netbird", label: "NetBird", emoji: "🌐", category: "Network & Admin", desc: "Mesh VPN with SSO & a web dashboard", defaultPort: 80, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on; the management/signal gRPC services need their own proxying." },
+  ztnet: { id: "ztnet", label: "ZTnet (ZeroTier)", emoji: "🔗", category: "Network & Admin", desc: "Web controller for ZeroTier networks", defaultPort: 3000, websockets: false, http2: true, extraDirectives: [], notes: "Set NEXTAUTH_URL to the public address." },
+  technitium: { id: "technitium", label: "Technitium DNS", emoji: "🧬", category: "Network & Admin", desc: "DNS server with ad-blocking & web UI", defaultPort: 5380, websockets: false, http2: true, extraDirectives: [], notes: "Web console on 5380; DNS itself serves on 53." },
+  netbox: { id: "netbox", label: "NetBox", emoji: "🗺️", category: "Network & Admin", desc: "IP address & infrastructure source of truth", defaultPort: 8080, websockets: false, http2: true, extraDirectives: [], notes: "Set ALLOWED_HOSTS / CSRF_TRUSTED_ORIGINS for the proxied domain." },
+  phpipam: { id: "phpipam", label: "phpIPAM", emoji: "📇", category: "Network & Admin", desc: "Web IP address management", defaultPort: 80, websockets: false, http2: true, extraDirectives: [], notes: "IPAM — standard HTTP." },
+
+  // Monitoring
+  prometheus: { id: "prometheus", label: "Prometheus", emoji: "🔥", category: "Monitoring", desc: "Time-series metrics database & scraper", defaultPort: 9090, websockets: false, http2: true, extraDirectives: [], notes: "No auth by default — gate it behind login / access control." },
+  zabbix: { id: "zabbix", label: "Zabbix", emoji: "📟", category: "Monitoring", desc: "Network & server monitoring", defaultPort: 8080, websockets: false, http2: true, extraDirectives: [], notes: "Web frontend on 8080; server 10051 / agents 10050 are separate." },
+  librenms: { id: "librenms", label: "LibreNMS", emoji: "📶", category: "Monitoring", desc: "Auto-discovering SNMP network monitoring", defaultPort: 8000, websockets: false, http2: true, extraDirectives: [], notes: "Network monitoring — standard HTTP." },
+  beszel: { id: "beszel", label: "Beszel", emoji: "🐿️", category: "Monitoring", desc: "Lightweight server resource monitor", defaultPort: 8090, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on for realtime updates (PocketBase hub)." },
+  scrutiny: { id: "scrutiny", label: "Scrutiny", emoji: "💽", category: "Monitoring", desc: "S.M.A.R.T. drive-health dashboard", defaultPort: 8080, websockets: false, http2: true, extraDirectives: [], notes: "Drive-health dashboard — standard HTTP." },
+  speedtest: { id: "speedtest", label: "Speedtest Tracker", emoji: "🚄", category: "Monitoring", desc: "Tracks internet speed over time", defaultPort: 80, websockets: false, http2: true, extraDirectives: [], notes: "Container serves on 80 (HTTPS on 443 available)." },
+  umami: { id: "umami", label: "Umami", emoji: "📉", category: "Monitoring", desc: "Privacy-friendly web analytics", defaultPort: 3000, websockets: false, http2: true, extraDirectives: [], notes: "Web analytics — standard HTTP." },
+  plausible: { id: "plausible", label: "Plausible", emoji: "🧮", category: "Monitoring", desc: "Privacy-first web analytics", defaultPort: 8000, websockets: false, http2: true, extraDirectives: [], notes: "Needs ClickHouse + PostgreSQL." },
+  matomo: { id: "matomo", label: "Matomo", emoji: "📐", category: "Monitoring", desc: "Full Google Analytics alternative", defaultPort: 80, websockets: false, http2: true, extraDirectives: ["client_max_body_size 200M;"], notes: "PHP app on 80; larger body for imports." },
+
+  // Productivity & Office
+  planka: { id: "planka", label: "Planka", emoji: "🧷", category: "Productivity & Office", desc: "Realtime Trello-style kanban boards", defaultPort: 1337, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on for realtime board updates." },
+  focalboard: { id: "focalboard", label: "Focalboard", emoji: "🗒️", category: "Productivity & Office", desc: "Project & task boards (Notion-style)", defaultPort: 8000, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on for live board sync." },
+  wekan: { id: "wekan", label: "Wekan", emoji: "🃏", category: "Productivity & Office", desc: "Open-source kanban board", defaultPort: 8080, websockets: ws, http2: true, extraDirectives: [], notes: "WebSocket on; set ROOT_URL to the public address." },
+  nocodb: { id: "nocodb", label: "NocoDB", emoji: "🔢", category: "Productivity & Office", desc: "Open-source Airtable alternative", defaultPort: 8080, websockets: ws, http2: true, extraDirectives: ["client_max_body_size 1G;"], notes: "WebSocket on for collaboration; larger body for imports." },
+  stirlingpdf: { id: "stirlingpdf", label: "Stirling PDF", emoji: "📑", category: "Productivity & Office", desc: "Edit & convert PDFs in the browser", defaultPort: 8080, websockets: false, http2: true, extraDirectives: ["client_max_body_size 500M;"], notes: "Larger body for PDF uploads; no auth unless DOCKER_ENABLE_SECURITY=true." },
+  tandoor: { id: "tandoor", label: "Tandoor Recipes", emoji: "🥘", category: "Productivity & Office", desc: "Recipe manager & meal planner", defaultPort: 80, websockets: false, http2: true, extraDirectives: ["client_max_body_size 200M;"], notes: "Bundles nginx on 80; larger body for imports / images." },
+  grocy: { id: "grocy", label: "Grocy", emoji: "🛒", category: "Productivity & Office", desc: "Groceries & household inventory", defaultPort: 80, websockets: false, http2: true, extraDirectives: [], notes: "Household management — standard HTTP." },
+  snipeit: { id: "snipeit", label: "Snipe-IT", emoji: "🏷️", category: "Productivity & Office", desc: "IT asset & license management", defaultPort: 80, websockets: false, http2: true, extraDirectives: ["client_max_body_size 200M;"], notes: "Asset management; larger body for imports." },
+  kimai: { id: "kimai", label: "Kimai", emoji: "⏱️", category: "Productivity & Office", desc: "Time-tracking for teams & freelancers", defaultPort: 8001, websockets: false, http2: true, extraDirectives: [], notes: "Time-tracking — standard HTTP." },
+
+  // Communication
+  mastodon: { id: "mastodon", label: "Mastodon", emoji: "🐘", category: "Communication", desc: "Federated microblogging server", defaultPort: 3000, websockets: ws, http2: true, extraDirectives: ["client_max_body_size 100M;"], notes: "WebSocket on for the streaming API (web 3000, streaming 4000 internally); media uploads." },
+
+  // Other (wiki, RSS, CMS)
+  freshrss: { id: "freshrss", label: "FreshRSS", emoji: "🗞️", category: "Other", desc: "RSS feed aggregator & reader", defaultPort: 80, websockets: false, http2: true, extraDirectives: [], notes: "Container serves on 80 — standard HTTP." },
+  miniflux: { id: "miniflux", label: "Miniflux", emoji: "📜", category: "Other", desc: "Minimalist, fast RSS reader", defaultPort: 8080, websockets: false, http2: true, extraDirectives: [], notes: "Requires PostgreSQL." },
+  outline: { id: "outline", label: "Outline", emoji: "📔", category: "Other", desc: "Team knowledge base & wiki", defaultPort: 3000, websockets: ws, http2: true, extraDirectives: ["client_max_body_size 100M;"], notes: "WebSocket on for realtime editing; requires SSO / OAuth." },
+  docmost: { id: "docmost", label: "Docmost", emoji: "📙", category: "Other", desc: "Collaborative wiki & documentation", defaultPort: 3000, websockets: ws, http2: true, extraDirectives: ["client_max_body_size 100M;"], notes: "WebSocket on for live collaborative editing." },
+  ghost: { id: "ghost", label: "Ghost", emoji: "👻", category: "Other", desc: "Publishing platform for blogs & newsletters", defaultPort: 2368, websockets: false, http2: true, extraDirectives: ["client_max_body_size 100M;"], notes: "Set url to the public address; admin lives under /ghost." },
+  wordpress: { id: "wordpress", label: "WordPress", emoji: "✍️", category: "Other", desc: "Classic CMS & blogging platform", defaultPort: 80, websockets: false, http2: true, extraDirectives: ["client_max_body_size 256M;"], notes: "Forward proxy headers / set the site URL to avoid redirect loops." },
+
   custom: { id: "custom", label: "Custom / Generic", emoji: "⚙️", category: "Other", desc: "Anything else — sensible defaults", defaultPort: 8080, websockets: false, http2: true, extraDirectives: [], notes: "Sensible defaults + a WebSocket toggle you can flip later." },
 };
 

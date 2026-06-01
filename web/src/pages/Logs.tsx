@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type LogEntry, type MetricsSummary } from "../api.ts";
+import { api, type GeoipStatus, type LogEntry, type MetricsSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { WORLD_LAND } from "../components/worldland.ts";
 
 const statusColor = (s: number) =>
   s >= 500 ? "var(--red)" : s >= 400 ? "var(--yellow)" : s >= 300 ? "var(--accent)" : "var(--green)";
@@ -19,19 +20,30 @@ const CENTROIDS: Record<string, [number, number]> = {
   ID: [-2, 118], TH: [15, 101], VN: [16, 108], PH: [13, 122], MY: [4, 102], HK: [22, 114], TW: [24, 121],
 };
 
-function TrafficMap({ countries }: { countries: { key: string; count: number }[] }) {
-  const W = 640, H = 320;
-  const proj = (lat: number, lon: number) => [((lon + 180) / 360) * W, ((90 - lat) / 180) * H];
+const W = 640, H = 320;
+const proj = (lat: number, lon: number): [number, number] => [((lon + 180) / 360) * W, ((90 - lat) / 180) * H];
+// Build an SVG path from a flat [lon,lat,lon,lat,...] land ring (equirectangular).
+const landPath = (ring: number[]) => {
+  let d = "";
+  for (let i = 0; i < ring.length; i += 2) {
+    const [x, y] = proj(ring[i + 1], ring[i]);
+    d += (i === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1);
+  }
+  return d + "Z";
+};
+
+function TrafficMap({ countries, emptyHint }: { countries: { key: string; count: number }[]; emptyHint?: string }) {
   const max = Math.max(1, ...countries.map((c) => c.count));
-  const grat: React.ReactNode[] = [];
-  for (let lon = -180; lon <= 180; lon += 30) grat.push(<line key={"v" + lon} x1={proj(0, lon)[0]} y1={0} x2={proj(0, lon)[0]} y2={H} stroke="var(--border-soft)" strokeWidth={0.5} />);
-  for (let lat = -60; lat <= 90; lat += 30) grat.push(<line key={"h" + lat} x1={0} y1={proj(lat, 0)[1]} x2={W} y2={proj(lat, 0)[1]} stroke="var(--border-soft)" strokeWidth={0.5} />);
   return (
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-head">Traffic map <span className="pill n">by source country</span></div>
       <div className="card-pad">
         <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: "var(--bg)", borderRadius: 8 }}>
-          {grat}
+          <g>
+            {WORLD_LAND.map((ring, i) => (
+              <path key={i} d={landPath(ring)} fill="var(--bg-elev2)" stroke="var(--border)" strokeWidth={0.4} />
+            ))}
+          </g>
           {countries.map((c) => {
             const ctr = CENTROIDS[c.key.toUpperCase()];
             if (!ctr) return null;
@@ -39,14 +51,17 @@ function TrafficMap({ countries }: { countries: { key: string; count: number }[]
             const r = 4 + (c.count / max) * 14;
             return (
               <g key={c.key}>
-                <circle cx={x} cy={y} r={r} fill="var(--accent)" fillOpacity={0.35} stroke="var(--accent)" strokeWidth={1}>
+                <circle cx={x} cy={y} r={r} fill="var(--accent)" fillOpacity={0.45} stroke="var(--accent)" strokeWidth={1}>
                   <title>{flag(c.key)} {c.key}: {c.count} requests</title>
                 </circle>
-                <text x={x} y={y + 3} textAnchor="middle" fontSize={9} fill="var(--text)" style={{ pointerEvents: "none" }}>{c.key}</text>
+                <text x={x} y={y + 3} textAnchor="middle" fontSize={9} fill="var(--text)" style={{ pointerEvents: "none", fontWeight: 600 }}>{c.key}</text>
               </g>
             );
           })}
         </svg>
+        {countries.length === 0 && emptyHint && (
+          <div className="muted" style={{ fontSize: 12.5, textAlign: "center", marginTop: 10 }}>{emptyHint}</div>
+        )}
       </div>
     </div>
   );
@@ -61,6 +76,7 @@ function fmtBytes(n: number): string {
 
 export function Logs() {
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
+  const [geoip, setGeoip] = useState<GeoipStatus | null>(null);
   const [lines, setLines] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState("");
   const [paused, setPaused] = useState(false);
@@ -71,6 +87,7 @@ export function Logs() {
 
   useEffect(() => {
     api.metricsSummary().then(setSummary).catch(() => {});
+    api.geoipStatus().then(setGeoip).catch(() => {});
     api.recentLogs(undefined, 100).then(setLines).catch(() => {});
     const poll = setInterval(() => api.metricsSummary().then(setSummary).catch(() => {}), 4000);
 
@@ -88,6 +105,14 @@ export function Logs() {
   }, []);
 
   const totalStatus = summary ? Object.values(summary.statusClass).reduce((a, b) => a + b, 0) || 1 : 1;
+
+  // Country needs the GeoIP database (nginx resolves the source IP → country only
+  // when it's installed). Tailor the empty state to the actual cause.
+  const countryHint = geoip && !geoip.present
+    ? "No country data yet — add the free GeoIP database under Settings → Country lock to map visitors by source country."
+    : summary && summary.totalRequests === 0
+      ? "No traffic yet."
+      : "No located visitors yet — requests from your LAN / private IPs don't carry a country.";
 
   return (
     <>
@@ -143,15 +168,16 @@ export function Logs() {
           )}
         </div>
 
-        {summary && summary.topCountries && summary.topCountries.length > 0 && (
-          <TrafficMap countries={summary.topCountries} />
-        )}
+        {summary && <TrafficMap countries={summary.topCountries ?? []} emptyHint={countryHint} />}
 
-        {summary && summary.topCountries && summary.topCountries.length > 0 && (
+        {summary && (
           <div className="card" style={{ marginBottom: 18 }}>
             <div className="card-head">Traffic by country</div>
             <div className="card-pad">
-              {summary.topCountries.map((c) => {
+              {(summary.topCountries ?? []).length === 0 && (
+                <div className="muted" style={{ fontSize: 12.5 }}>{countryHint}</div>
+              )}
+              {(summary.topCountries ?? []).map((c) => {
                 const max = summary.topCountries[0].count || 1;
                 return (
                   <div key={c.key} style={{ marginBottom: 10 }}>

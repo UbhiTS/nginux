@@ -319,6 +319,7 @@ const DEFAULT_SETTINGS: Settings = {
   gitOpsEnabled: false,
   ssoLoginUrl: "",
   ssoCookieDomain: "",
+  ssoForwardSecret: "",
 };
 
 // Settings fields that hold third-party credentials — never expose these to a
@@ -328,6 +329,7 @@ export const SECRET_SETTING_KEYS = [
   "godaddySecret",
   "cloudflareApiToken",
   "maxmindLicenseKey",
+  "ssoForwardSecret",
 ] as const;
 
 export function getSettings(): Settings {

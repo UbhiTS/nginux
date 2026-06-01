@@ -94,6 +94,17 @@ export const Icon = {
       <path d="M19 12H5M11 18l-6-6 6-6" />
     </S>
   ),
+  logout: (p: P) => (
+    <S {...p}>
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" strokeLinecap="round" strokeLinejoin="round" />
+    </S>
+  ),
+  camera: (p: P) => (
+    <S {...p}>
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="13" r="4" />
+    </S>
+  ),
   check: (p: P) => (
     <S {...p}>
       <path d="m5 13 4 4L19 7" />

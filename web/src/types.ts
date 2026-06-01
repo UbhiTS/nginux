@@ -65,6 +65,7 @@ export interface Settings {
   gitOpsEnabled: boolean;
   ssoLoginUrl: string;
   ssoCookieDomain: string;
+  ssoForwardSecret: string;
 }
 
 export interface Preset {
