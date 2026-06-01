@@ -232,17 +232,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_approvals_status   ON approvals(status, ts);
 `);
 
-// Additive migrations for DBs created before a column existed (CREATE TABLE IF
-// NOT EXISTS won't add columns to an existing table). Idempotent + non-destructive:
-// a fresh DB already has the column, an old one gets it with its default value.
-function ensureColumn(table: string, column: string, ddl: string): void {
-  const present = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
-    .some((c) => c.name === column);
-  if (!present) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-}
-ensureColumn("hosts", "rateLimitRps", "rateLimitRps INTEGER NOT NULL DEFAULT 10");
-ensureColumn("hosts", "rateLimitBurst", "rateLimitBurst INTEGER NOT NULL DEFAULT 20");
-
 /** Trim the audit log so it can't grow without bound. Keeps recent rows by time
  *  and an absolute cap by count; returns how many rows were removed. */
 export function pruneAuditLog(retainDays = Number(process.env.NGINUX_AUDIT_RETAIN_DAYS ?? 90), hardCap = 50_000): number {

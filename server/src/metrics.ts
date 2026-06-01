@@ -499,8 +499,24 @@ function parseLine(line: string): void {
 
 // ---------- dev synthetic feeder (no real nginx on this box) ----------
 export function startDemoTraffic(): void {
-  const paths = ["/", "/web/index.html", "/api/data", "/apps/files", "/favicon.ico", "/identity/connect", "/admin"];
-  const geos = [["203.0.113.10", "CA"], ["198.51.100.7", "US"], ["203.0.113.45", "IN"], ["198.51.100.211", "RU"]];
+  const paths = [
+    "/", "/web/index.html", "/api/data", "/apps/files", "/favicon.ico", "/identity/connect", "/admin",
+    // Background-radiation scanner probes - the kind every exposed host sees.
+    "/.env", "/wp-login.php", "/.git/config", "/phpmyadmin/", "/vendor/phpunit",
+  ];
+  // A realistic spread of source countries: a few expected visitors, plus a long
+  // tail of unexpected/rogue scanners hammering the box from all over the world.
+  // (IPs are from the reserved TEST-NET documentation ranges - never real hosts.)
+  const geos = [
+    // Expected, legitimate traffic
+    ["198.51.100.7", "US"], ["198.51.100.32", "US"], ["203.0.113.10", "CA"],
+    ["192.0.2.44", "GB"], ["192.0.2.90", "DE"], ["192.0.2.120", "FR"], ["203.0.113.66", "AU"],
+    // Unexpected / rogue sources you wouldn't expect to be serving
+    ["203.0.113.45", "CN"], ["203.0.113.88", "CN"], ["198.51.100.211", "RU"], ["198.51.100.222", "RU"],
+    ["192.0.2.7", "NG"], ["203.0.113.150", "VN"], ["198.51.100.99", "ID"], ["192.0.2.201", "UA"],
+    ["203.0.113.205", "TR"], ["198.51.100.150", "BR"], ["192.0.2.55", "IN"], ["203.0.113.99", "HK"],
+    ["198.51.100.5", "SG"], ["192.0.2.240", "ZA"],
+  ];
   const pick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 
   setInterval(() => {

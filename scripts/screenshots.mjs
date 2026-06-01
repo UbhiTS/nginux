@@ -34,13 +34,34 @@ const CANDIDATES = [
 const bin = process.env.NGINUX_SHOT_BIN ?? CANDIDATES.find((p) => existsSync(p));
 if (!bin) throw new Error("No Edge/Chrome found - set NGINUX_SHOT_BIN to a browser executable.");
 
-// The pages to capture: [filename, nav-item label shown in the sidebar].
-// "" label = the default dashboard (no click needed).
+// The pages to capture: [filename, nav-item label, optional async prep(page)].
+// "" label = the default dashboard (no click needed). The prep hook runs after
+// navigation + settle, for pages that need an interaction (e.g. hovering the
+// traffic map to surface its country popup) before the shot.
 const SHOTS = [
   ["dashboard", ""],
   ["services", "Services"],
   ["security", "Security Center"],
   ["certificates", "Certificates"],
+  ["logs", "Logs", async (page) => {
+    // Bring the traffic map into frame, then surface its busiest country's "top
+    // source IPs" popup so the capture shows off the per-country drill-down.
+    await page.evaluate(() => {
+      const head = [...document.querySelectorAll(".card-head")].find((h) => h.textContent.includes("Traffic map"));
+      head?.closest(".card")?.scrollIntoView({ block: "center" });
+      // Pick the largest bubble (busiest country) and fire a bubbling mouseover -
+      // React synthesizes onMouseEnter from it, opening the popup. Its x/y come
+      // from the bubble's own coords, so we don't need real cursor positioning.
+      const bubbles = [...document.querySelectorAll("svg g")].filter((g) => g.style.cursor === "pointer");
+      let best = null, bestR = -1;
+      for (const g of bubbles) {
+        const r = parseFloat(g.querySelector("circle")?.getAttribute("r") ?? "0");
+        if (r > bestR) { bestR = r; best = g; }
+      }
+      best?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    });
+    await new Promise((r) => setTimeout(r, 550));
+  }],
   ["agents", "Agents & API"],
 ];
 
@@ -72,8 +93,13 @@ try {
   }, USER, PASS);
   if (!ok) throw new Error(`Login failed for "${USER}". Set NGINUX_SHOT_USER/NGINUX_SHOT_PASS.`);
 
-  for (const [name, label] of SHOTS) {
+  // Optional: capture only a subset, e.g. NGINUX_SHOT_ONLY=logs (comma-separated).
+  const only = (process.env.NGINUX_SHOT_ONLY ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  for (const [name, label, prep] of SHOTS) {
+    if (only.length && !only.includes(name)) continue;
     await page.goto(BASE, { waitUntil: "networkidle2" });
+    // Hide the notification toast stack so it doesn't cover the UI in captures.
+    await page.addStyleTag({ content: ".toast-stack{display:none!important}" }).catch(() => {});
     if (label) {
       await page.evaluate((text) => {
         const el = [...document.querySelectorAll(".nav-item, .nav-child")]
@@ -82,6 +108,7 @@ try {
       }, label);
     }
     await new Promise((r) => setTimeout(r, 1400)); // let charts/topology settle
+    if (prep) await prep(page);
     const file = join(OUT, `${name}.png`);
     await page.screenshot({ path: file });
     console.log("✓", file);

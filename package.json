@@ -2,7 +2,7 @@
   "name": "nginux",
   "version": "0.1.0",
   "private": true,
-  "description": "NginUX - a friendly, container-native control plane for an Nginx reverse proxy.",
+  "description": "NginUX - a security-first, container-native control plane for an Nginx reverse proxy.",
   "workspaces": [
     "server",
     "web"

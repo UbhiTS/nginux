@@ -8,7 +8,7 @@ import { deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./g
 import { addBan, listBans, removeBan } from "./bans.ts";
 import { issueClientCert, listClientCerts, revokeClientCert, writeClientCrl } from "./clientcerts.ts";
 import { getUptime } from "./uptime.ts";
-import { hostStats, recentLogs, summary as metricsSummary, trafficSeries } from "./metrics.ts";
+import { hostStats, recentLogs, rangeSummary as metricsRangeSummary, summary as metricsSummary, trafficSeries } from "./metrics.ts";
 import { PRESETS } from "./presets.ts";
 import type { AgentPrincipal, Scope } from "./tokens.ts";
 import { isHeaderName, isHost, isHostPort, isHostname, isIpOrCidr, isLocationPath } from "./validate.ts";
@@ -188,9 +188,10 @@ export const TOOLS: Record<string, Tool> = {
   },
   get_metrics: {
     name: "get_metrics", title: "Traffic metrics", scope: "report", tier: "read",
-    description: "Request/bandwidth totals, p95, error rate, top IPs/paths/countries.",
-    inputSchema: obj({}), summarize: () => "metrics summary",
-    handler: () => metricsSummary(),
+    description: "Request/bandwidth totals, p95, error rate, top IPs/paths/countries. Pass range (live|1h|4h|1d|7d|30d) to scope every panel to that window; omit for the cumulative snapshot.",
+    inputSchema: obj({ range: { type: "string", enum: ["live", "1h", "4h", "1d", "7d", "30d"] } }),
+    summarize: (a) => (a.range ? `metrics ${a.range}` : "metrics summary"),
+    handler: (a) => (a.range ? metricsRangeSummary(String(a.range)) : metricsSummary()),
   },
   get_traffic: {
     name: "get_traffic", title: "Traffic series", scope: "report", tier: "read",

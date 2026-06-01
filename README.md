@@ -1,17 +1,25 @@
 # NginUX
 
-**A friendly, container-native control plane for an Nginx reverse proxy.**
+**A powerful - and genuinely friendly - control plane for your reverse proxy. TLS termination, access control, and live traffic insight for every self-hosted service, from one clean UI or API. No nginx config. No certbot cron. No YAML.**
 
-NginUX puts a beginner-friendly web UI in front of Nginx so you can expose your
-self-hosted services (Plex, Immich, Nextcloud, Home Assistant, Vaultwarden,
-Grafana, …) without hand-editing config files. It generates and reloads real
-Nginx config, manages TLS certificates, gates services behind login/2FA, watches
-traffic, and exposes a first-class agent/automation API - all from a single
-Docker image that runs anywhere Docker runs (Windows, Linux, NAS, macOS).
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+&nbsp;![Image](https://img.shields.io/badge/ghcr.io-ubhits%2Fnginux-2496ED?logo=docker&logoColor=white)
+&nbsp;![Node](https://img.shields.io/badge/node-%E2%89%A522.5-339933?logo=node.js&logoColor=white)
+&nbsp;![Single image](https://img.shields.io/badge/deploy-one%20container-success)
 
-It's a friendlier alternative to hand-written nginx, Nginx Proxy Manager, or
-SWAG - with a built-in agent/MCP API on top. One `docker compose up`, no nginx
-config required.
+NginUX is a container-native control plane that drives a *real* Nginx data plane.
+Point it at a service - Plex, Immich, Nextcloud, Home Assistant, Vaultwarden,
+Grafana, anything - and it handles the rest: generating and hot-reloading the
+nginx config, issuing and auto-renewing TLS certificates, enforcing login + 2FA
+at the edge, tracking every request on a live world map, and opening the whole
+system up to agents over an MCP/REST API. All from a single Docker image that
+runs anywhere Docker runs (Windows, Linux, NAS, macOS).
+
+Nginx Proxy Manager and SWAG get you routing. NginUX gives you the whole edge -
+security, certificates, observability, and automation - and makes it genuinely
+pleasant to run: security-first by default, fully scriptable over MCP/REST, and
+careful enough that a generated config which fails validation never reaches
+production. One `docker compose up`, zero nginx config to write or maintain.
 
 ![NginUX dashboard - network topology and live traffic](docs/img/dashboard.png)
 
@@ -26,7 +34,7 @@ config required.
 - **Zero-edit reverse proxy** - describe a service in the UI; NginUX writes the
   Nginx `server` / `stream` blocks and test-and-reloads safely.
 - **Network topology dashboard** - Internet → gateway (public/LAN IP) → servers →
-  services tree, plus a multi-range traffic graph (1h / 4h / 1d / 7d / 30d).
+  services tree, plus a multi-range traffic graph (live / 1h / 4h / 1d / 7d / 30d).
 - **TLS done for you** - self-signed / internal CA out of the box, or Let's
   Encrypt via HTTP-01 / DNS-01 with auto-renewal.
 - **Security-first** - login + RFC-6238 TOTP 2FA, forward-auth gate, per-host
@@ -43,6 +51,11 @@ config required.
 ---
 
 ## Screenshots
+
+**Logs** - live tail, range-scoped traffic graph, and a world map you can hover
+to drill into each country's top source IPs.
+
+[![Logs - live traffic and a world map with per-country drill-down](docs/img/logs.png)](docs/img/logs.png)
 
 | Security Center | Certificates |
 | --- | --- |
@@ -108,8 +121,8 @@ npm run cli -- <command>
   **SNI / TLS passthrough** (`ssl_preread`, no termination).
 - **Load balancing** across multiple upstreams (round-robin / least-conn / ip-hash).
 - **Per-path routing** - send specific paths to different backends.
-- **Per-host limits & quotas** - download speed cap (`limit_rate`) and max
-  concurrent connections per IP (`limit_conn`).
+- **Per-host limits & quotas** - request rate limiting (`limit_req`, req/s + burst),
+  download speed cap (`limit_rate`), and max concurrent connections per IP (`limit_conn`).
 - Service presets (Plex, Immich, Nextcloud, Home Assistant, Vaultwarden, Grafana…),
   maintenance mode, custom headers, and raw custom-Nginx escape hatch.
 - Generated config is human-readable; failed validations are translated into
@@ -176,7 +189,10 @@ endpoint can't be called directly; you can rotate it under **Settings → Login 
 ### Observability
 - Nginx **JSON access log** → tailer → in-memory ring buffer + rolling aggregates
   (status classes, p50/p95, top hosts/IPs/paths/countries).
-- **Live log tail** over SSE, **traffic world map**, and per-country breakdown.
+- Every panel is **range-scoped** (live / 1h / 4h / 1d / 7d / 30d) over per-minute
+  buckets, so status mix, latency percentiles, and top-lists all reflect the window.
+- **Live log tail** over SSE, plus a **traffic world map** you hover to reveal each
+  country's top source IPs, and a per-country breakdown with flags.
 - **Prometheus exporter** at `/api/metrics/prometheus` for Grafana.
 - **Uptime monitoring** with history bars and incident tracking.
 
