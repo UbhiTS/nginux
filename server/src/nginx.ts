@@ -169,6 +169,17 @@ export function generateHostConfig(h: ProxyHost): string {
     }
 `
     : "";
+  // When the gate denies (401), send the visitor to the NginUX sign-in page with
+  // the original URL as ?rd=, instead of a bare 401. Needs the SSO login URL set
+  // in Settings; without it the gate just denies (and a notification warns).
+  const ssoLoginUrl = getSettings().ssoLoginUrl.replace(/\/+$/, "");
+  const authRedirect = h.requireLogin && ssoLoginUrl ? `\n    error_page 401 = @nginux_login;` : "";
+  const loginLocation = h.requireLogin && ssoLoginUrl
+    ? `    location @nginux_login {
+        return 302 ${ssoLoginUrl}/login?rd=$scheme://$host$request_uri;
+    }
+`
+    : "";
 
   // GeoIP country lock: $nginux_allowed_country is defined by geoip.conf
   // (allow-all when no MaxMind DB; real per-country map when present).
@@ -246,9 +257,9 @@ ${extra ? extra + "\n" : ""}`;
 
   lines.push(`server {
     listen ${listen};${http2}
-    server_name ${h.domain};${sslBlock}
+    server_name ${h.domain};${sslBlock}${authRedirect}
 ${protections.length ? protections.join("\n") + "\n" : ""}
-${authLocation}${pathBlocks}    location / {
+${loginLocation}${authLocation}${pathBlocks}    location / {
 ${locationBody}    }
 }`);
 

@@ -132,6 +132,26 @@ export function SettingsPage({
             )}
           </div>
 
+          <div className="section-title" style={{ marginTop: 20 }}>Login gate (sign-in for protected services)</div>
+          <div className="card card-pad">
+            <div className="field">
+              <label>NginUX sign-in URL</label>
+              <input className="input" value={settings.ssoLoginUrl} onChange={(e) => update({ ssoLoginUrl: e.target.value })} placeholder="https://nginux.yourdomain.com" />
+              <div className="hint">Where NginUX's own login page is reachable over HTTPS. Services with <b>Require login</b> send unauthenticated visitors here, then back. Expose NginUX itself as a service on a subdomain of your base domain (e.g. <span className="mono">nginux.yourdomain.com → 127.0.0.1:4600</span>) and leave that one <b>un-gated</b>.</div>
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Shared cookie domain</label>
+              <input className="input" value={settings.ssoCookieDomain} onChange={(e) => update({ ssoCookieDomain: e.target.value })} placeholder=".yourdomain.com (auto from sign-in URL if blank)" />
+              <div className="hint">So one sign-in covers every subdomain. Leave blank to derive it from the sign-in URL.</div>
+            </div>
+            {settings.ssoLoginUrl && (
+              <div className="info-line" style={{ marginTop: 12, alignItems: "flex-start" }}>
+                <Icon.alert />
+                <span>The NginUX service at your sign-in URL must <b>not</b> have "Require login" enabled — that would lock you out of the login page itself.</span>
+              </div>
+            )}
+          </div>
+
           <CountryLock settings={settings} update={update} onSave={save} />
           <Notifications />
           <BackupsGitOps settings={settings} update={update} />

@@ -63,6 +63,8 @@ export interface Settings {
   acmeStaging: boolean;
   agentAutoApprove: boolean;
   gitOpsEnabled: boolean;
+  ssoLoginUrl: string;
+  ssoCookieDomain: string;
 }
 
 export interface Preset {

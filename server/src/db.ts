@@ -317,6 +317,8 @@ const DEFAULT_SETTINGS: Settings = {
   acmeStaging: false,
   agentAutoApprove: false,
   gitOpsEnabled: false,
+  ssoLoginUrl: "",
+  ssoCookieDomain: "",
 };
 
 // Settings fields that hold third-party credentials — never expose these to a

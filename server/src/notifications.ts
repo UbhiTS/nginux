@@ -2,6 +2,7 @@ import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { listHosts } from "./repo.ts";
+import { getSettings } from "./db.ts";
 import { CERT_DIR } from "./certs.ts";
 
 /** A plain-language heads-up shown in the app's notification banner. */
@@ -106,7 +107,20 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
     });
   }
 
-  // 4. Login-gated hosts without a forward secret set.
+  // 4a. Login-gated hosts but no sign-in URL → visitors get a bare 401, no way in.
+  if (!getSettings().ssoLoginUrl && enabled.some((h) => h.requireLogin)) {
+    out.push({
+      id: "sso-login-url-missing",
+      severity: "warning",
+      title: "Login-gated services can't sign anyone in",
+      message:
+        "Some services require NginUX login, but no sign-in URL is configured — so visitors get a blank 401 with " +
+        "no way to log in. Set it in Settings → Login gate (expose NginUX on a subdomain of your base domain).",
+      dismissible: true,
+    });
+  }
+
+  // 4b. Login-gated hosts without a forward secret set.
   if (!process.env.NGINUX_FORWARD_SECRET && enabled.some((h) => h.requireLogin)) {
     out.push({
       id: "forward-secret-missing",

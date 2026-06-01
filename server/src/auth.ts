@@ -296,12 +296,17 @@ export function cookieSecure(isHttps: boolean): boolean {
   return isHttps;
 }
 
-export function sessionCookie(token: string, secure = false): string {
+// A non-empty `domain` (e.g. ".example.com") makes the session cookie span every
+// subdomain, so one NginUX sign-in covers all login-gated services under it.
+// Empty keeps the cookie host-only (single host).
+const domainAttr = (domain: string) => (domain ? `; Domain=${domain}` : "");
+
+export function sessionCookie(token: string, secure = false, domain = ""): string {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
+  return `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}${domainAttr(domain)}${secure ? "; Secure" : ""}`;
 }
-export function clearCookie(secure = false): string {
-  return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
+export function clearCookie(secure = false, domain = ""): string {
+  return `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${domainAttr(domain)}${secure ? "; Secure" : ""}`;
 }
 export { SESSION_COOKIE };
 

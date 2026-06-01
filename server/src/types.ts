@@ -104,6 +104,13 @@ export interface Settings {
   agentAutoApprove: boolean;
   /** Commit generated config + state to a local git repo on every apply. */
   gitOpsEnabled: boolean;
+  /** Public HTTPS URL where NginUX's own login is reachable (e.g.
+   *  https://nginux.example.com). Login-gated services redirect unauthenticated
+   *  visitors here. Empty = login-gating can't redirect (just denies). */
+  ssoLoginUrl: string;
+  /** Cookie Domain so one sign-in covers every subdomain (e.g. .example.com).
+   *  Empty = derived from ssoLoginUrl, or a host-only cookie if that's unset. */
+  ssoCookieDomain: string;
 }
 
 /** A server node grouping its services, for the dashboard topology tree. */

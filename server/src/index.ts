@@ -441,6 +441,8 @@ const settingsInput = z.object({
   acmeStaging: z.boolean(),
   agentAutoApprove: z.boolean(),
   gitOpsEnabled: z.boolean(),
+  ssoLoginUrl: z.string().max(512).refine((s) => s === "" || /^https?:\/\/[^\s/]+/i.test(s), "Must be a full URL like https://nginux.example.com."),
+  ssoCookieDomain: z.string().max(253).refine((s) => s === "" || /^\.?[a-z0-9.-]+$/i.test(s), "Invalid cookie domain."),
 }).partial();
 
 app.get("/api/settings", async (req) => {
@@ -811,6 +813,20 @@ function rateLimited(key: string, max: number, windowMs: number): boolean {
   return hits.length > max;
 }
 
+/** Cookie Domain for the session cookie — the configured ssoCookieDomain, or
+ *  derived from ssoLoginUrl's host (strip the leftmost label), or "" (host-only).
+ *  Lets one sign-in cover every subdomain so login-gated services work. */
+function authCookieDomain(): string {
+  const s = getSettings();
+  if (s.ssoCookieDomain) return s.ssoCookieDomain.replace(/^\.?/, ".");
+  try {
+    const host = new URL(s.ssoLoginUrl).hostname;
+    const parts = host.split(".");
+    if (parts.length >= 2) return "." + parts.slice(parts.length > 2 ? 1 : 0).join(".");
+  } catch { /* ssoLoginUrl unset/invalid */ }
+  return "";
+}
+
 const loginInput = z.object({ username: z.string(), password: z.string(), token: z.string().optional() });
 app.post("/api/auth/login", async (req, reply) => {
   const parsed = loginInput.safeParse(req.body);
@@ -859,14 +875,14 @@ app.post("/api/auth/login", async (req, reply) => {
 
   const sessionToken = createSession(String(row.id), device(req), ip);
   logEvent({ type: "login.success", severity: "info", actor: username, summary: "Signed in", ip, meta: {} });
-  reply.header("set-cookie", sessionCookie(sessionToken, cookieSecure(req.protocol === "https")));
+  reply.header("set-cookie", sessionCookie(sessionToken, cookieSecure(req.protocol === "https"), authCookieDomain()));
   return { user: getUserById(String(row.id)) };
 });
 
 app.post("/api/auth/logout", async (req, reply) => {
   const tok = parseCookie(req.headers.cookie)[SESSION_COOKIE];
   if (tok) destroySession(tok);
-  reply.header("set-cookie", clearCookie(cookieSecure(req.protocol === "https")));
+  reply.header("set-cookie", clearCookie(cookieSecure(req.protocol === "https"), authCookieDomain()));
   return { ok: true };
 });
 
@@ -917,7 +933,7 @@ app.post("/api/auth/change-password", async (req, reply) => {
   // changePassword revoked all sessions; issue a fresh one so the current client
   // stays signed in while any other (possibly stolen) sessions are now dead.
   const fresh = createSession(u.id, device(req), clientIp(req));
-  reply.header("set-cookie", sessionCookie(fresh, cookieSecure(req.protocol === "https")));
+  reply.header("set-cookie", sessionCookie(fresh, cookieSecure(req.protocol === "https"), authCookieDomain()));
   logEvent({ type: "security.password_changed", severity: "notice", actor: u.username, summary: "Changed account password", ip: clientIp(req), meta: {} });
   return { ok: true, user: getUserById(u.id) };
 });

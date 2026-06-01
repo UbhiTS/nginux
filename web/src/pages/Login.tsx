@@ -3,7 +3,24 @@ import { api, type AuthUser } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { BrandLogo } from "../components/BrandLogo.tsx";
 
+// A login-gated service redirects unauthenticated visitors here with the original
+// URL as ?rd=. After sign-in we bounce back to it — but only if it's on this same
+// domain family (this host or a sibling subdomain), to avoid an open redirect.
+function safeReturnUrl(): string | null {
+  const m = window.location.search.match(/[?&]rd=(.*)$/);
+  if (!m) return null;
+  let target: URL;
+  try { target = new URL(decodeURIComponent(m[1])); } catch { try { target = new URL(m[1]); } catch { return null; } }
+  if (target.protocol !== "https:" && target.protocol !== "http:") return null;
+  const here = window.location.hostname;
+  const labels = here.split(".");
+  const base = labels.slice(labels.length > 2 ? 1 : 0).join(".");
+  const h = target.hostname;
+  return h === here || h === base || h.endsWith("." + base) ? target.href : null;
+}
+
 export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
+  const returnUrl = safeReturnUrl();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
@@ -21,6 +38,8 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
         setNeeds2fa(true);
         setError(needs2fa ? "That 2FA code didn't match — try the current one." : "");
       } else if (res.user) {
+        // Bounce back to the gated service that sent us here, else into the app.
+        if (returnUrl) { window.location.href = returnUrl; return; }
         onSignedIn(res.user);
       }
     } catch (err) {
@@ -43,7 +62,11 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
           {needs2fa ? "Enter your 2FA code" : "Sign in"}
         </h2>
         <p className="muted" style={{ fontSize: 13, marginBottom: 20 }}>
-          {needs2fa ? "Open your authenticator app for the 6-digit code." : "Use your NginUX account."}
+          {needs2fa
+            ? "Open your authenticator app for the 6-digit code."
+            : returnUrl
+              ? `Sign in to continue to ${new URL(returnUrl).host}.`
+              : "Use your NginUX account."}
         </p>
 
         <form onSubmit={submit}>

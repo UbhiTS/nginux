@@ -130,7 +130,7 @@ npm run cli -- <command>
 ### Auth & security
 - Password auth (scrypt) with DB-backed sessions + httpOnly cookies.
 - **2FA (TOTP)** with backup codes (dependency-free implementation).
-- **Forward-auth** endpoint (`/api/auth/forward`) for Nginx `auth_request`.
+- **Forward-auth SSO** — put any service behind a NginUX sign-in (see below).
 - Per-host **require login / require 2FA / GeoIP country lock**.
 - Per-host protections: security headers, HSTS, IP allow/deny, exploit & bad-bot
   blocking, request rate limiting.
@@ -138,6 +138,27 @@ npm run cli -- <command>
   manual bans, written to a shared `banned.conf`.
 - **Security Center** — exposure map, posture score, login/failure audits.
 - Full **audit log** of every change.
+
+#### Protect a service with login (SSO)
+
+Turning on **Require login** for a service puts an Nginx `auth_request` in front of
+it that checks for a valid NginUX session. For an unauthenticated visitor to be
+able to *sign in*, do a one-time setup so the session is shared across your
+domains:
+
+1. **Expose NginUX itself** as a service on a subdomain of your domain — e.g.
+   `nginux.yourdomain.com → 127.0.0.1:4600` — with HTTPS, and **leave that one
+   un-gated** (don't tick Require login on it, or you'll lock yourself out of the
+   login page).
+2. In **Settings → Login gate**, set **NginUX sign-in URL** to that address
+   (`https://nginux.yourdomain.com`). Leave **Shared cookie domain** blank to
+   derive it (`.yourdomain.com`), or set it explicitly.
+3. Tick **Require login** (and optionally **Require 2FA**) on any service.
+
+Now an unauthenticated visitor to a protected service is redirected to the NginUX
+sign-in, and after logging in once is sent back — and stays signed in across every
+`*.yourdomain.com` service. Set `NGINUX_FORWARD_SECRET` too so the auth endpoint
+can't be called directly.
 
 ### Agents & automation (first-class)
 - **MCP server** over HTTP JSON-RPC (`/api/mcp`): initialize, tools list/call,
