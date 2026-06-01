@@ -33,7 +33,7 @@ export function ChangePassword({ user, onChanged }: { user: AuthUser; onChanged:
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22 }}>
           <BrandLogo className="brand-logo" />
           <div className="brand-name">
-            NginUX<small>your homelab's front door</small>
+            NginUX<small>Secure ingress, simplified</small>
           </div>
         </div>
         <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Set a new password</h2>

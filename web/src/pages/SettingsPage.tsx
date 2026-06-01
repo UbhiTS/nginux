@@ -218,7 +218,7 @@ function About() {
             <div style={{ fontWeight: 700, fontSize: 16 }}>
               NginUX {version && <span className="muted" style={{ fontWeight: 500, fontSize: 13 }}>v{version}</span>}
             </div>
-            <div className="muted" style={{ fontSize: 13 }}>your homelab's front door</div>
+            <div className="muted" style={{ fontSize: 13 }}>Secure ingress, simplified</div>
           </div>
         </div>
         <div className="kv">

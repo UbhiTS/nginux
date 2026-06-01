@@ -41,7 +41,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
       <div className="brand">
         <BrandLogo className="brand-logo" />
         <div className="brand-name">
-          NginUX<small>your homelab's front door</small>
+          NginUX<small>Secure ingress, simplified</small>
         </div>
       </div>
 
