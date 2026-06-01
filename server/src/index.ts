@@ -479,13 +479,20 @@ function streamPortError(h: { protocol: string; listenPort: number; name?: strin
   return null;
 }
 /** A host must not claim the control plane's own public hostname (self-hijack). */
-function isControlPlaneDomain(domain: string): boolean {
+// True when exposing `domain` would hijack the domain NginUX itself runs on
+// (Settings → public URL) away from the control plane. Forwarding that domain TO
+// the control plane (port 4600) is allowed — that's the recommended SSO portal
+// setup (expose NginUX on its own subdomain so login-gated services can sign in).
+function isControlPlaneDomain(domain: string, forwardPort?: number): boolean {
   const raw = getSettings().publicUrl?.trim();
   if (!raw) return false;
+  let h: string;
   try {
-    const h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
-    return h === domain.toLowerCase();
+    h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
   } catch { return false; }
+  if (h !== domain.toLowerCase()) return false;
+  const controlPort = Number(process.env.PORT ?? 4600);
+  return forwardPort !== controlPort; // allowed when it points at the control plane
 }
 
 app.get("/api/hosts", async (req) => {
@@ -510,8 +517,8 @@ app.post("/api/hosts", async (req, reply) => {
   if (getHostByDomain(parsed.data.domain)) {
     return reply.code(409).send({ error: `${parsed.data.domain} is already in use.` });
   }
-  if (isControlPlaneDomain(parsed.data.domain)) {
-    return reply.code(409).send({ error: "That domain is the NginUX control plane itself — choose another." });
+  if (isControlPlaneDomain(parsed.data.domain, parsed.data.forwardPort)) {
+    return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 4600; otherwise pick another domain so you don't lose access to NginUX." });
   }
   const spErr = streamPortError(parsed.data);
   if (spErr) return reply.code(400).send({ error: spErr });
@@ -548,8 +555,8 @@ app.put("/api/hosts/:id", async (req, reply) => {
   if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
   // Validate the *resulting* host (existing merged with the patch) before writing.
   const merged = { ...existing, ...parsed.data };
-  if (parsed.data.domain && parsed.data.domain !== existing.domain && isControlPlaneDomain(parsed.data.domain)) {
-    return reply.code(409).send({ error: "That domain is the NginUX control plane itself — choose another." });
+  if (parsed.data.domain && parsed.data.domain !== existing.domain && isControlPlaneDomain(parsed.data.domain, merged.forwardPort)) {
+    return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 4600; otherwise pick another domain so you don't lose access to NginUX." });
   }
   const spErr = streamPortError(merged, id);
   if (spErr) return reply.code(400).send({ error: spErr });
