@@ -42,6 +42,11 @@ COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# The bootstrap self-signed cert/key paths (NGINX_DEFAULT_CERT / NGINX_DEFAULT_KEY)
+# are intentionally NOT set here: the control plane already defaults them to
+# /data/nginx/selfsigned.{crt,key} (see server/src/nginx.ts) and entrypoint.sh
+# writes them there - so baking them in would only duplicate the default and trip
+# the "secret in ENV" image check on the *_KEY name. Override at runtime if needed.
 ENV NODE_ENV=production \
     PORT=4600 \
     HOST=0.0.0.0 \
@@ -49,8 +54,6 @@ ENV NODE_ENV=production \
     NGINX_CONF_DIR=/data/nginx/conf.d \
     NGINX_STREAM_DIR=/data/nginx/stream.d \
     NGINX_BANNED_FILE=/data/nginx/banned.conf \
-    NGINX_DEFAULT_CERT=/data/nginx/selfsigned.crt \
-    NGINX_DEFAULT_KEY=/data/nginx/selfsigned.key \
     NGINX_ACCESS_LOG=/data/logs/access.log \
     CERT_DIR=/data/certs
 

@@ -17,6 +17,13 @@ permissions:
   contents: write   # create tags + releases
   packages: write   # push to GHCR
 
+# Run the bundled JS actions (checkout, setup-node, buildx, login, build-push) on
+# Node 24 now - they still ship a Node 20 runtime, which GitHub is deprecating and
+# will force to Node 24 anyway. Opting in early silences the warning and de-risks
+# the cutover. Drop this once the actions default to Node 24 on their own.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   # Gate publishing on a green typecheck + web build so broken code never ships.
   verify:
