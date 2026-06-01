@@ -47,6 +47,38 @@ const byCountry = new Map<string, number>();
 // installed — nginx logs $geoip2_country_iso_code). Lets us flag the top IPs and
 // list a country's top IPs. FIFO-bounded; it only drives labels, not counts.
 const ipCountry = new Map<string, string>();
+
+// ---- per-minute analytics buckets (drive the range-scoped Logs summary) ----
+// Latency histogram: a request's ms lands in the first bucket whose upper bound it
+// is <= (last bucket = overflow). Coarse, but enough for an approximate p50/p95
+// over a window without storing every sample.
+const LAT_REPORT = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000]; // representative ms per bucket
+const latBucket = (ms: number): number => {
+  for (let i = 0; i < LAT_REPORT.length - 1; i++) if (ms <= LAT_REPORT[i]) return i;
+  return LAT_REPORT.length - 1;
+};
+type LogBucket = {
+  count: number; out: number;
+  status: [number, number, number, number]; // 2xx,3xx,4xx,5xx
+  lat: number[];                              // length LAT_REPORT.length
+  ip: Map<string, number>; path: Map<string, number>; country: Map<string, number>; host: Map<string, number>;
+};
+const newLogBucket = (): LogBucket => ({
+  count: 0, out: 0, status: [0, 0, 0, 0], lat: new Array(LAT_REPORT.length).fill(0),
+  ip: new Map(), path: new Map(), country: new Map(), host: new Map(),
+});
+// Keyed by minute, bounded to ~25h like minuteBuckets. Each per-minute breakdown
+// is capped so a flood of distinct keys can't exhaust memory.
+const logMinute = new Map<number, LogBucket>();
+const PER_MIN_KEYS = 150;
+function bumpMin(map: Map<string, number>, key: string) {
+  map.set(key, (map.get(key) ?? 0) + 1);
+  if (map.size > PER_MIN_KEYS) {
+    const keep = [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, PER_MIN_KEYS >> 1);
+    map.clear();
+    for (const [k, n] of keep) map.set(k, n);
+  }
+}
 let totalRequests = 0;
 let totalBytes = 0;
 const msSamples: number[] = [];
@@ -80,6 +112,22 @@ export function ingest(e: LogEntry): void {
   bumpStat(b, e);
   minuteBuckets.set(minute, b);
   if (minuteBuckets.size > 1500) minuteBuckets.delete(Math.min(...minuteBuckets.keys()));
+
+  // Rich per-minute breakdown for the range-scoped Logs summary.
+  let lb = logMinute.get(minute);
+  if (!lb) {
+    lb = newLogBucket();
+    logMinute.set(minute, lb);
+    if (logMinute.size > 1500) logMinute.delete(Math.min(...logMinute.keys()));
+  }
+  lb.count++; lb.out += e.bytes;
+  const sci = Math.floor(e.status / 100) - 2;
+  if (sci >= 0 && sci < 4) lb.status[sci]++;
+  lb.lat[latBucket(e.ms)]++;
+  bumpMin(lb.ip, e.ip);
+  bumpMin(lb.path, e.path);
+  bumpMin(lb.host, e.host);
+  if (e.country) bumpMin(lb.country, e.country);
 
   const second = Math.floor(Date.parse(e.ts) / 1000);
   const sb = secondBuckets.get(second) ?? emptyStat();
@@ -158,6 +206,55 @@ function topIpsForCountry(country: string, n: number): { ip: string; count: numb
   const out: { ip: string; count: number }[] = [];
   for (const [ip, count] of byIp) if (ipCountry.get(ip) === country) out.push({ ip, count });
   return out.sort((a, b) => b.count - a.count).slice(0, n);
+}
+
+/** Approximate percentile (ms) from a latency histogram. */
+function pctFromHist(lat: number[], p: number): number {
+  const total = lat.reduce((a, b) => a + b, 0);
+  if (!total) return 0;
+  const target = (p / 100) * total;
+  let cum = 0;
+  for (let i = 0; i < lat.length; i++) { cum += lat[i]; if (cum >= target) return LAT_REPORT[i]; }
+  return LAT_REPORT[LAT_REPORT.length - 1];
+}
+
+const RANGE_MINUTES: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
+
+/** Range-scoped equivalent of summary(), merged from the per-minute analytics
+ *  buckets. Long-range top lists are approximate (top-K-per-minute merged) and
+ *  p50/p95 are histogram-based. Unknown / "live" -> cumulative snapshot. */
+export function rangeSummary(range: string) {
+  const minutes = range === "live" ? 5 : RANGE_MINUTES[range];
+  if (!minutes) return summary();
+  const nowMin = Math.floor(Date.now() / 60000);
+  let count = 0, out = 0;
+  const status = [0, 0, 0, 0];
+  const lat = new Array(LAT_REPORT.length).fill(0) as number[];
+  const ip = new Map<string, number>(), path = new Map<string, number>(),
+    country = new Map<string, number>(), host = new Map<string, number>();
+  const merge = (dst: Map<string, number>, src: Map<string, number>) => { for (const [k, v] of src) dst.set(k, (dst.get(k) ?? 0) + v); };
+  for (let m = 0; m < minutes; m++) {
+    const lb = logMinute.get(nowMin - m);
+    if (!lb) continue;
+    count += lb.count; out += lb.out;
+    for (let i = 0; i < 4; i++) status[i] += lb.status[i];
+    for (let i = 0; i < lat.length; i++) lat[i] += lb.lat[i];
+    merge(ip, lb.ip); merge(path, lb.path); merge(country, lb.country); merge(host, lb.host);
+  }
+  const ipsByCountry = (cc: string, n: number) =>
+    [...ip.entries()].filter(([k]) => ipCountry.get(k) === cc).sort((a, b) => b[1] - a[1]).slice(0, n).map(([ipx, c]) => ({ ip: ipx, count: c }));
+  return {
+    totalRequests: count,
+    totalBytes: out,
+    statusClass: { "2xx": status[0], "3xx": status[1], "4xx": status[2], "5xx": status[3] },
+    errorRate: count ? +(((status[2] + status[3]) / count) * 100).toFixed(2) : 0,
+    p50: pctFromHist(lat, 50),
+    p95: pctFromHist(lat, 95),
+    topHosts: topN(host, 6),
+    topIps: topN(ip, 6).map((t) => ({ ...t, country: ipCountry.get(t.key) ?? "" })),
+    topPaths: topN(path, 6),
+    topCountries: topN(country, 8).map((c) => ({ ...c, topIps: ipsByCountry(c.key, 5) })),
+  };
 }
 
 export function summary() {

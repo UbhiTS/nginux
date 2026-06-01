@@ -89,6 +89,7 @@ import {
   startLogTailer,
   subscribeLog,
   summary as metricsSummary,
+  rangeSummary as metricsRangeSummary,
   trafficSeries,
 } from "./metrics.ts";
 import { getUptime, startUptimeMonitor } from "./uptime.ts";
@@ -766,7 +767,12 @@ app.get("/api/traffic", async (req) => {
 });
 
 // ---------- logs + metrics ----------
-app.get("/api/metrics/summary", async (req, reply) => userRoleAtLeast(req, reply, "admin", "editor") ? metricsSummary() : undefined);
+app.get("/api/metrics/summary", async (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return undefined;
+  const range = (req.query as { range?: string }).range;
+  // A range scopes every panel to that window; no range = cumulative snapshot.
+  return range ? metricsRangeSummary(range) : metricsSummary();
+});
 app.get("/api/metrics/hosts", async (req) => {
   const { range = "live", metric = "requests" } = req.query as { range?: string; metric?: string };
   return hostTraffic(range, metric === "bandwidth" ? "bandwidth" : "requests");

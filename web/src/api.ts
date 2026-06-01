@@ -171,7 +171,7 @@ export const api = {
   deleteWebhook: (id: string) => req<{ ok: boolean }>(`/webhooks/${id}`, { method: "DELETE" }),
 
   // ---- logs / metrics ----
-  metricsSummary: () => req<MetricsSummary>("/metrics/summary"),
+  metricsSummary: (range?: string) => req<MetricsSummary>(`/metrics/summary${range ? `?range=${encodeURIComponent(range)}` : ""}`),
   hostTraffic: (range: string, metric: string = "requests") => req<{ key: string; count: number }[]>(`/metrics/hosts?range=${range}&metric=${metric}`),
   hostStats: (range: string) => req<HostStat[]>(`/metrics/host-stats?range=${range}`),
   reachability: () => req<Reachability>("/network/reachability"),

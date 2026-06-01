@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { api, type GeoipStatus, type LogEntry, type MetricsSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { WORLD_LAND } from "../components/worldland.ts";
+import { TrafficChart } from "../components/TrafficChart.tsx";
+
+const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
 
 const statusColor = (s: number) =>
   s >= 500 ? "var(--red)" : s >= 400 ? "var(--yellow)" : s >= 300 ? "var(--accent)" : "var(--green)";
@@ -111,17 +114,26 @@ export function Logs() {
   const [lines, setLines] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState("");
   const [paused, setPaused] = useState(false);
+  const [range, setRange] = useState("1h");
+  const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
   const pausedRef = useRef(false);
   const filterRef = useRef("");
   pausedRef.current = paused;
   filterRef.current = filter;
 
+  // Range-scoped summary: every analytics panel reflects the selected window.
   useEffect(() => {
-    api.metricsSummary().then(setSummary).catch(() => {});
+    let alive = true;
+    const pull = () => api.metricsSummary(range).then((s) => { if (alive) setSummary(s); }).catch(() => {});
+    pull();
+    const poll = setInterval(pull, range === "live" ? 3000 : 6000);
+    return () => { alive = false; clearInterval(poll); };
+  }, [range]);
+
+  // Live tail + GeoIP status (independent of the analytics range).
+  useEffect(() => {
     api.geoipStatus().then(setGeoip).catch(() => {});
     api.recentLogs(undefined, 100).then(setLines).catch(() => {});
-    const poll = setInterval(() => api.metricsSummary().then(setSummary).catch(() => {}), 4000);
-
     const es = new EventSource("/api/logs/stream", { withCredentials: true });
     es.addEventListener("log", (e) => {
       if (pausedRef.current) return;
@@ -132,7 +144,7 @@ export function Logs() {
         setLines((p) => [entry, ...p].slice(0, 150));
       } catch { /* ignore */ }
     });
-    return () => { clearInterval(poll); es.close(); };
+    return () => es.close();
   }, []);
 
   const totalStatus = summary ? Object.values(summary.statusClass).reduce((a, b) => a + b, 0) || 1 : 1;
@@ -149,13 +161,20 @@ export function Logs() {
     <>
       <div className="topbar">
         <h1>Logs</h1>
-        <div className="search" style={{ maxWidth: 300 }}>
-          <Icon.search />
-          <input placeholder="Filter by host, IP, status, path…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div className="range-tabs">
+            {(["requests", "bandwidth"] as const).map((m) => (
+              <button key={m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>{m === "requests" ? "Requests" : "Bandwidth"}</button>
+            ))}
+          </div>
+          <div className="range-tabs">
+            {RANGES.map((r) => (
+              <button key={r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
+                {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{ flex: 1 }} />
-        <span className="pill g"><span className="dot g" />streaming</span>
-        <button className="btn btn-sm" onClick={() => setPaused((p) => !p)}>{paused ? "Resume" : "Pause"}</button>
       </div>
       <div className="content">
         {summary && (
@@ -166,6 +185,11 @@ export function Logs() {
             <div className="card stat"><div className="label">Error rate</div><div className="value" style={{ color: summary.errorRate > 5 ? "var(--yellow)" : "var(--green)" }}>{summary.errorRate}%</div></div>
           </div>
         )}
+
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="card-head">Traffic <span className="pill n">{range === "live" ? "live" : range}</span></div>
+          <TrafficChart range={range} metric={metric} />
+        </div>
 
         <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", marginBottom: 18 }}>
           {summary && (
@@ -233,7 +257,17 @@ export function Logs() {
         )}
 
         <div className="card">
-          <div className="card-head">Live access log <span className="pill n">{lines.length} shown{paused ? " · paused" : ""}</span></div>
+          <div className="card-head">
+            Live access log <span className="pill n">{lines.length} shown{paused ? " · paused" : ""}</span>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="search" style={{ maxWidth: 240 }}>
+                <Icon.search />
+                <input placeholder="Filter host, IP, status, path…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+              </div>
+              <span className="pill g"><span className="dot g" />streaming</span>
+              <button className="btn btn-sm" onClick={() => setPaused((p) => !p)}>{paused ? "Resume" : "Pause"}</button>
+            </div>
+          </div>
           <div className="card-pad" style={{ maxHeight: 460, overflow: "auto" }}>
             <div className="code" style={{ border: "none", padding: 0, background: "none", lineHeight: 1.9 }}>
               {lines.length === 0 && <div className="muted"><span className="spinner" /> Waiting for requests…</div>}
