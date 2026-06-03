@@ -1,0 +1,5 @@
+# build inputs assembled in CI + electron-builder outputs
+node_modules/
+payload/
+runtime/
+out/
