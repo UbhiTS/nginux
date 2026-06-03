@@ -11,8 +11,11 @@ const sevPill: Record<AuditEvent["severity"], string> = {
   danger: "r",
 };
 
-export function SecurityCenter() {
-  const [tab, setTab] = useState<Tab>("overview");
+const TABS: Tab[] = ["overview", "denylist", "exposure", "logins", "failures"];
+
+export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab: (t: string) => void }) {
+  // Active tab lives in the URL (#/security/<tab>) so refresh / deep links keep it.
+  const tab: Tab = TABS.includes(tabProp as Tab) ? (tabProp as Tab) : "overview";
   const [overview, setOverview] = useState<SecurityOverview | null>(null);
   const [exposure, setExposure] = useState<Exposure[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);

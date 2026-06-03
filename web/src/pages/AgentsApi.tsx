@@ -21,8 +21,9 @@ const tier = (t: ToolDef["tier"] | Approval["tier"]) =>
 
 const ALL_SCOPES = ["read", "report", "control", "security"];
 
-export function AgentsApi() {
-  const [tab, setTab] = useState<Tab>("overview");
+export function AgentsApi({ tab: tabProp, setTab }: { tab?: string; setTab: (t: string) => void }) {
+  // Active tab lives in the URL (#/agents/<tab>) so refresh / deep links keep it.
+  const tab: Tab = (["overview", "mcp", "safety", "events"] as Tab[]).includes(tabProp as Tab) ? (tabProp as Tab) : "overview";
   const [ov, setOv] = useState<AgentsOverview | null>(null);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [tools, setTools] = useState<ToolDef[]>([]);

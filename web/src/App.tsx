@@ -26,6 +26,7 @@ export type RouteName =
 export interface Route {
   name: RouteName;
   hostId?: string;
+  tab?: string; // optional sub-tab, e.g. #/security/exposure
 }
 
 const ROUTE_NAMES: RouteName[] = [
@@ -36,14 +37,19 @@ const ROUTE_NAMES: RouteName[] = [
 // The current screen lives in the URL hash (e.g. #/services, #/host/<id>) so a
 // refresh / back / forward keeps you where you were instead of resetting home.
 function parseHash(): Route {
-  const [name, hostId] = window.location.hash.replace(/^#\/?/, "").split("/");
+  // #/<name>[/<tab>]  ·  #/host/<id>[/<tab>] - the optional trailing segment is the
+  // page's active sub-tab (or "edit" for a host), so a refresh / deep link keeps it.
+  const parts = window.location.hash.replace(/^#\/?/, "").split("/");
+  const name = parts[0];
   if ((ROUTE_NAMES as string[]).includes(name)) {
-    return name === "host" && hostId ? { name: "host", hostId } : { name: name as RouteName };
+    if (name === "host") return parts[1] ? { name: "host", hostId: parts[1], tab: parts[2] || undefined } : { name: "host" };
+    return parts[1] ? { name: name as RouteName, tab: parts[1] } : { name: name as RouteName };
   }
   return { name: "dashboard" };
 }
 function routeHash(r: Route): string {
-  return `#/${r.name}${r.name === "host" && r.hostId ? `/${r.hostId}` : ""}`;
+  if (r.name === "host") return r.hostId ? `#/host/${r.hostId}${r.tab ? `/${r.tab}` : ""}` : "#/host";
+  return `#/${r.name}${r.tab ? `/${r.tab}` : ""}`;
 }
 
 export function App() {
@@ -83,11 +89,14 @@ export function App() {
     if (user) reload();
   }, [user, reload]);
 
-  const navigate = useCallback((r: Route) => {
-    window.location.hash = routeHash(r); // persists across refresh; hashchange syncs state too
+  const navigate = useCallback((r: Route, replace = false) => {
+    const h = routeHash(r);
+    // Page nav pushes a history entry; a tab switch (replace) updates the URL in
+    // place so it survives refresh without spamming back/forward with every tab.
+    if (replace) history.replaceState(null, "", h);
+    else window.location.hash = h; // hashchange syncs state too
     setRoute(r);
-    setDrawerOpen(false); // close the mobile drawer after picking a destination
-    window.scrollTo(0, 0);
+    if (!replace) { setDrawerOpen(false); window.scrollTo(0, 0); }
   }, []);
 
   const logout = useCallback(async () => {
@@ -133,14 +142,14 @@ export function App() {
         <Notifications />
         {route.name === "dashboard" && <Dashboard hosts={hosts} navigate={navigate} />}
         {route.name === "services" && <Services hosts={hosts} navigate={navigate} reload={reload} />}
-        {route.name === "host" && route.hostId && <HostDetail hostId={route.hostId} navigate={navigate} reload={reload} />}
+        {route.name === "host" && route.hostId && <HostDetail hostId={route.hostId} navigate={navigate} reload={reload} tab={route.tab} />}
         {route.name === "wizard" && <Wizard settings={settings} navigate={navigate} reload={reload} />}
         {route.name === "settings" && <SettingsPage reload={reload} />}
-        {route.name === "security" && <SecurityCenter />}
-        {route.name === "useraccess" && <UsersAccess currentUser={user} refreshMe={refreshMe} />}
+        {route.name === "security" && <SecurityCenter tab={route.tab} setTab={(t) => navigate({ name: "security", tab: t }, true)} />}
+        {route.name === "useraccess" && <UsersAccess currentUser={user} refreshMe={refreshMe} tab={route.tab} setTab={(t) => navigate({ name: "useraccess", tab: t }, true)} />}
         {route.name === "certs" && <Certificates />}
         {route.name === "logs" && <Logs />}
-        {route.name === "agents" && <AgentsApi />}
+        {route.name === "agents" && <AgentsApi tab={route.tab} setTab={(t) => navigate({ name: "agents", tab: t }, true)} />}
       </div>
     </div>
   );

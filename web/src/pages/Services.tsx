@@ -86,8 +86,8 @@ export function Services({
                   </span>
                 </div>
                 <div className="host-meta">
-                  <span className="strong">{d !== null ? "Valid" : "No cert"}</span>
-                  {d !== null ? `${d} days left` : "-"}
+                  <span className="strong">{d !== null ? "Valid" : h.ssl ? "Self-signed" : "No cert"}</span>
+                  {d !== null ? `${d} days left` : h.ssl ? "untrusted" : "-"}
                 </div>
                 <div className="host-meta mono">
                   {h.forwardHost}:{h.forwardPort}

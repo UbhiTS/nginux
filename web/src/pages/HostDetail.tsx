@@ -17,16 +17,19 @@ export function HostDetail({
   hostId,
   navigate,
   reload,
+  tab,
 }: {
   hostId: string;
-  navigate: (r: Route) => void;
+  navigate: (r: Route, replace?: boolean) => void;
   reload: () => Promise<void>;
+  tab?: string;
 }) {
   const [host, setHost] = useState<ProxyHost | null>(null);
   const [config, setConfig] = useState<string>("");
   const [advOpen, setAdvOpen] = useState(false);
   const [uptime, setUptime] = useState<Uptime | null>(null);
-  const [editing, setEditing] = useState(false);
+  // Edit mode lives in the URL (#/host/<id>/edit) so a refresh keeps you editing.
+  const editing = tab === "edit";
   const [draft, setDraft] = useState<ProxyHost | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -49,7 +52,6 @@ export function HostDetail({
   // different service in the sidebar while editing would leave the edit form
   // (and advanced panels) open on top of the new service.
   useEffect(() => {
-    setEditing(false);
     setDraft(null);
     setSaveErr("");
     setAdvOpen(false);
@@ -59,8 +61,11 @@ export function HostDetail({
   }, [hostId]);
   useEffect(() => { api.presets().then(setPresets).catch(() => {}); }, []);
   useEffect(() => { api.settings().then(setSettings).catch(() => {}); }, []);
+  // Refresh while editing (#/host/<id>/edit): once the host loads, seed the form.
+  useEffect(() => { if (editing && host) setDraft((d) => d ?? host); }, [editing, host]);
 
-  const startEdit = () => { setDraft(host); setSaveErr(""); setEditing(true); };
+  const startEdit = () => { setDraft(host); setSaveErr(""); navigate({ name: "host", hostId, tab: "edit" }, true); };
+  const cancelEdit = () => { setDraft(null); setSaveErr(""); navigate({ name: "host", hostId }, true); };
   const saveEdit = async () => {
     if (!draft) return;
     setSaving(true);
@@ -69,7 +74,7 @@ export function HostDetail({
       await api.updateHost(hostId, draft);
       await reload();
       refetch();
-      setEditing(false);
+      navigate({ name: "host", hostId }, true);
     } catch (e) {
       // The change was rejected and reverted server-side; keep the form open and
       // show why so they can fix it.
@@ -157,7 +162,7 @@ export function HostDetail({
           {toggling ? <span className="spinner" /> : null}
           {host.enabled ? "Disable" : "Enable"}
         </button>
-        <button className="btn" onClick={editing ? () => setEditing(false) : startEdit}>
+        <button className="btn" onClick={editing ? cancelEdit : startEdit}>
           {editing ? "Cancel" : "Edit"}
         </button>
         <button className="btn btn-danger" onClick={() => setConfirmDel(true)}>
@@ -204,7 +209,7 @@ export function HostDetail({
         </div>
 
         {editing && draft ? (
-          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={() => setEditing(false)} saving={saving} error={saveErr} certs={certs} settings={settings} onCertsChanged={() => api.certificates().then(setCerts).catch(() => {})} />
+          <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={cancelEdit} saving={saving} error={saveErr} certs={certs} settings={settings} onCertsChanged={() => api.certificates().then(setCerts).catch(() => {})} />
         ) : (
         <div className="detail-grid">
           <div>

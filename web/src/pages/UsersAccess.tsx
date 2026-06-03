@@ -10,11 +10,16 @@ const avatarColor = ["var(--purple)", "var(--accent)", "var(--green)", "var(--te
 export function UsersAccess({
   currentUser,
   refreshMe,
+  tab: tabProp,
+  setTab,
 }: {
   currentUser: AuthUser;
   refreshMe: () => Promise<void>;
+  tab?: string;
+  setTab: (t: string) => void;
 }) {
-  const [tab, setTab] = useState<Tab>("users");
+  // Active tab lives in the URL (#/useraccess/<tab>) so refresh keeps it.
+  const tab: Tab = (["users", "sessions"] as Tab[]).includes(tabProp as Tab) ? (tabProp as Tab) : "users";
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [enroll, setEnroll] = useState<{ secret: string; otpauth: string } | null>(null);

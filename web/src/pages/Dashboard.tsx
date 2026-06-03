@@ -29,7 +29,11 @@ export function Dashboard({
   // Paused services are intentionally offline, so they don't count as "needs
   // attention" - only enabled-but-unhealthy ones do.
   const needsAttention = hosts.filter((h) => h.enabled && h.health !== "online").length;
-  const withCert = hosts.filter((h) => h.certExpiresAt);
+  // Only HTTPS L7 services use a web certificate. Ones without an issued/managed
+  // cert are served by the bootstrap self-signed cert (not "no cert").
+  const sslHosts = hosts.filter((h) => h.ssl && (h.protocol === "http" || h.protocol === "grpc" || !h.protocol));
+  const withCert = sslHosts.filter((h) => h.certExpiresAt);
+  const selfSigned = sslHosts.length - withCert.length;
   const days = (iso: string) => Math.round((Date.parse(iso) - Date.now()) / 86400_000);
   const nextRenewal = withCert.length
     ? Math.min(...withCert.map((h) => days(h.certExpiresAt!)))
@@ -99,10 +103,12 @@ export function Dashboard({
               Certificates valid
             </div>
             <div className="value">
-              {withCert.length} <small>/ {hosts.length}</small>
+              {withCert.length} <small>/ {sslHosts.length}</small>
             </div>
-            <div className="trend" style={{ color: "var(--text-dim)" }}>
-              {nextRenewal !== null ? `Next renewal in ${nextRenewal} days` : "-"}
+            <div className="trend" style={{ color: selfSigned > 0 ? "var(--yellow)" : "var(--text-dim)" }}>
+              {selfSigned > 0
+                ? `${selfSigned} on self-signed${withCert.length ? "" : " - issue Let's Encrypt"}`
+                : nextRenewal !== null ? `Next renewal in ${nextRenewal} days` : "-"}
             </div>
           </div>
 
@@ -129,7 +135,7 @@ export function Dashboard({
             </div>
             <div className="trend" style={{ color: unprotected ? "var(--yellow)" : "var(--text-dim)" }}>
               {unprotected ? (
-                <a style={{ cursor: "pointer", textDecoration: "underline" }} onClick={() => navigate({ name: "security" })}>
+                <a style={{ cursor: "pointer", textDecoration: "underline" }} onClick={() => navigate({ name: "security", tab: "exposure" })}>
                   {unprotected} service{unprotected > 1 ? "s" : ""} unprotected
                 </a>
               ) : (
