@@ -178,6 +178,7 @@ export function Logs() {
   const [range, setRange] = useState("1h");
   const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
   const [homeCountry, setHomeCountry] = useState("");
+  const [blockedTop, setBlockedTop] = useState<Record<string, "busy" | "done">>({});
   const pausedRef = useRef(false);
   const logCardRef = useRef<HTMLDivElement>(null);
   pausedRef.current = paused;
@@ -218,6 +219,12 @@ export function Logs() {
   };
   // Block an IP globally (writes the shared nginx deny-list -> all services).
   const blockIp = (ip: string) => api.addBan(ip, "Blocked from traffic map").then(() => undefined);
+  // Same block action for the Top source IPs panel, with per-IP feedback.
+  const blockTop = async (ip: string) => {
+    setBlockedTop((b) => ({ ...b, [ip]: "busy" }));
+    try { await api.addBan(ip, "Blocked from top IPs"); setBlockedTop((b) => ({ ...b, [ip]: "done" })); }
+    catch { setBlockedTop((b) => { const n = { ...b }; delete n[ip]; return n; }); }
+  };
 
   const f = filter.trim().toLowerCase();
   const shown = f
@@ -289,17 +296,26 @@ export function Logs() {
           )}
           {summary && (
             <div className="card">
-              <div className="card-head">Top source IPs</div>
+              <div className="card-head">Top source IPs <span className="pill n">click to filter</span></div>
               <div className="card-pad">
-                {summary.topIps.map((t) => (
-                  <div key={t.key} className="kv">
-                    <span className="k" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                      <span className="mono">{t.key}</span>
-                      {t.country && <span className="muted" style={{ fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{flag(t.country)} {countryName(t.country)}</span>}
-                    </span>
-                    <span className="v">{t.count}</span>
-                  </div>
-                ))}
+                {summary.topIps.map((t) => {
+                  const st = blockedTop[t.key];
+                  return (
+                    <div key={t.key} className="kv">
+                      <span className="k" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <button className="map-ip-pick mono" style={{ flex: "0 1 auto" }} title="Show logs from this IP" onClick={() => pickIp(t.key)}>{t.key}</button>
+                        {t.country && <span className="muted" style={{ fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{flag(t.country)} {countryName(t.country)}</span>}
+                      </span>
+                      <span className="v" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {t.count}
+                        <button className={`map-ip-block${st === "done" ? " done" : ""}`} disabled={!!st}
+                          title={st === "done" ? "Blocked on all services" : "Block this IP on all services"} onClick={() => blockTop(t.key)}>
+                          {st === "done" ? <Icon.check /> : st === "busy" ? <span className="spinner" style={{ width: 11, height: 11 }} /> : <Icon.shield />}
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
                 {summary.topIps.length === 0 && <div className="muted">No traffic yet.</div>}
               </div>
             </div>

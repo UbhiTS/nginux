@@ -43,15 +43,15 @@ export function SecurityCenter() {
       <div className="content">
         <div className="sectabs" role="tablist">
           <button type="button" role="tab" aria-selected={tab === "overview"} className={`sectab${tab === "overview" ? " active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
+          <button type="button" role="tab" aria-selected={tab === "denylist"} className={`sectab${tab === "denylist" ? " active" : ""}`} onClick={() => setTab("denylist")}>
+            Deny list {bans.length > 0 && <span className="badge">{bans.length}</span>}
+          </button>
           <button type="button" role="tab" aria-selected={tab === "exposure"} className={`sectab${tab === "exposure" ? " active" : ""}`} onClick={() => setTab("exposure")}>
             What's exposed {unprotected > 0 && <span className="badge">{unprotected}</span>}
           </button>
           <button type="button" role="tab" aria-selected={tab === "logins"} className={`sectab${tab === "logins" ? " active" : ""}`} onClick={() => setTab("logins")}>Login activity</button>
           <button type="button" role="tab" aria-selected={tab === "failures"} className={`sectab${tab === "failures" ? " active" : ""}`} onClick={() => setTab("failures")}>
             Login failures {failures.length > 0 && <span className="badge">{failures.length}</span>}
-          </button>
-          <button type="button" role="tab" aria-selected={tab === "denylist"} className={`sectab${tab === "denylist" ? " active" : ""}`} onClick={() => setTab("denylist")}>
-            Deny list {bans.length > 0 && <span className="badge">{bans.length}</span>}
           </button>
         </div>
 
@@ -148,7 +148,7 @@ export function SecurityCenter() {
             </div>
             <div className="info-line" style={{ margin: "0 16px 4px" }}>
               <Icon.shield />
-              IPs blocked across <strong>every</strong> service (the shared nginx deny-list). Includes manual blocks, ones you blocked from the traffic map, and auto-bans from repeated auth failures. Unblock anything added by mistake.
+              <span>IPs blocked across <strong>every</strong> service (the shared nginx deny-list). Includes manual blocks, ones you blocked from the traffic map, and auto-bans from repeated auth failures. Unblock anything added by mistake.</span>
             </div>
             <div className="atable">
               {bans.map((b) => (
