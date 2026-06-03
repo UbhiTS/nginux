@@ -52,8 +52,9 @@ production. One `docker compose up`, zero nginx config to write or maintain.
 
 ## Screenshots
 
-**Logs** - live tail, range-scoped traffic graph, and a world map you can hover
-to drill into each country's top source IPs.
+**Logs** - live tail, a range-scoped traffic graph, and an interactive world map
+where arcs trace traffic to your home country. Hover a country for its top source
+IPs; click one to filter the log to it or block it across every service.
 
 [![Logs - live traffic and a world map with per-country drill-down](docs/img/logs.png)](docs/img/logs.png)
 
@@ -147,8 +148,10 @@ npm run cli -- <command>
 - Per-host **require login / require 2FA / GeoIP country lock**.
 - Per-host protections: security headers, HSTS, IP allow/deny, exploit & bad-bot
   blocking, request rate limiting.
-- **fail2ban-style auto-banning** (auto-ban after repeated auth failures) plus
-  manual bans, written to a shared `banned.conf`.
+- **Global deny list** - one shared `banned.conf` enforced on every service. The
+  Security Center's **Deny list** tab shows every blocked IP (manual, blocked from
+  the traffic map, or fail2ban-style auto-bans after repeated auth failures), each
+  one click to unblock.
 - **Security Center** - exposure map, posture score, login/failure audits.
 - Full **audit log** of every change.
 
@@ -191,8 +194,11 @@ endpoint can't be called directly; you can rotate it under **Settings → Login 
   (status classes, p50/p95, top hosts/IPs/paths/countries).
 - Every panel is **range-scoped** (live / 1h / 4h / 1d / 7d / 30d) over per-minute
   buckets, so status mix, latency percentiles, and top-lists all reflect the window.
-- **Live log tail** over SSE, plus a **traffic world map** you hover to reveal each
-  country's top source IPs, and a per-country breakdown with flags.
+- **Live log tail** over SSE, plus an **interactive traffic world map** with
+  source→home arcs: hover a country for its top source IPs, click one to filter the
+  log to it or **block it across every service**; per-country breakdown with flags.
+- **History survives restarts** - on boot the access log is replayed back into the
+  metrics, so a redeploy doesn't wipe your traffic graphs.
 - **Prometheus exporter** at `/api/metrics/prometheus` for Grafana.
 - **Uptime monitoring** with history bars and incident tracking.
 
