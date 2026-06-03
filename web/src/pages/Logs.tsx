@@ -80,19 +80,26 @@ function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: 
                 <path key={i} d={landPath(ring)} fill="var(--bg-elev2)" stroke="var(--border)" strokeWidth={0.4} />
               ))}
             </g>
-            {/* Thin dotted arcs from each source country to the home country. */}
+            {/* Thin solid arc from each source to home, with one dot travelling
+                source -> home -> source at constant speed (like the Network Map).
+                Curvature scales with length (no cap) so near and far arcs share
+                the same shape. */}
             {home && countries.map((c) => {
               const ctr = CENTROIDS[c.key.toUpperCase()];
               if (!ctr || c.key.toUpperCase() === homeCc) return null;
               const [x, y] = proj(ctr[0], ctr[1]);
               const dx = home[0] - x, dy = home[1] - y, len = Math.hypot(dx, dy) || 1;
-              const off = Math.min(70, len * 0.28);
+              const off = len * 0.16; // proportional bulge -> consistent curvature
               const cx = (x + home[0]) / 2 + (-dy / len) * off, cy = (y + home[1]) / 2 + (dx / len) * off;
+              const d = `M${x.toFixed(1)} ${y.toFixed(1)} Q${cx.toFixed(1)} ${cy.toFixed(1)} ${home[0].toFixed(1)} ${home[1].toFixed(1)}`;
+              const dur = Math.max(2, (len * 2.2) / 130).toFixed(2); // ~constant px/sec, both ways
               return (
-                <path key={"arc-" + c.key} d={`M${x.toFixed(1)} ${y.toFixed(1)} Q${cx.toFixed(1)} ${cy.toFixed(1)} ${home[0].toFixed(1)} ${home[1].toFixed(1)}`}
-                  fill="none" stroke="var(--accent)" strokeWidth={0.7} strokeOpacity={0.32} strokeDasharray="2 5" strokeLinecap="round">
-                  <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.1s" repeatCount="indefinite" />
-                </path>
+                <g key={"arc-" + c.key}>
+                  <path d={d} fill="none" stroke="var(--accent)" strokeWidth={0.6} strokeOpacity={0.2} strokeLinecap="round" />
+                  <circle r={1.7} fill="var(--accent)">
+                    <animateMotion path={d} dur={`${dur}s`} repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" />
+                  </circle>
+                </g>
               );
             })}
             {home && <circle cx={home[0]} cy={home[1]} r={4.5} fill="var(--green)" stroke="var(--green)" strokeOpacity={0.4} strokeWidth={3} />}
