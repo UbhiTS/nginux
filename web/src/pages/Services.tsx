@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Route } from "../App.tsx";
-import { api } from "../api.ts";
+import { api, certForHost, type Certificate } from "../api.ts";
 import type { ProxyHost } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { Icon } from "../icons.tsx";
@@ -15,6 +15,25 @@ const statusText = (h: ProxyHost) => {
   return bits.join(" · ");
 };
 
+// The cert badge, read from the cert store (the source of truth) - not the stale
+// host.certExpiresAt - so it matches the host detail + Certificates page exactly.
+function certBadge(h: ProxyHost, certs: Certificate[]): { label: string; detail: string } {
+  if (!h.ssl) return { label: "No HTTPS", detail: "not encrypted" };
+  const c = certForHost(h, certs);
+  if (!c) return { label: "Self-signed", detail: "untrusted" };
+  const trusted = c.method !== "selfsigned";
+  const detail = c.daysRemaining != null
+    ? (c.daysRemaining < 0 ? "expired" : `${c.daysRemaining} days left`)
+    : trusted ? "-" : "untrusted";
+  const label = c.status === "valid" ? (trusted ? "Valid" : "Self-signed")
+    : c.status === "expiring" ? "Expiring"
+    : c.status === "expired" ? "Expired"
+    : c.status === "error" ? "Failed"
+    : c.status === "pending" ? "Pending"
+    : "Self-signed";
+  return { label, detail: c.status === "error" ? "issuance failed" : detail };
+}
+
 export function Services({
   hosts,
   navigate,
@@ -25,9 +44,8 @@ export function Services({
   reload: () => Promise<void>;
 }) {
   const [toggling, setToggling] = useState<string | null>(null);
-
-  const days = (iso: string | null) =>
-    iso ? Math.round((Date.parse(iso) - Date.now()) / 86400_000) : null;
+  const [certs, setCerts] = useState<Certificate[]>([]);
+  useEffect(() => { api.certificates().then(setCerts).catch(() => {}); }, []);
 
   // Flip a service between served (enabled) and paused (disabled). Disabling
   // removes its nginx server block so the site stops responding publicly.
@@ -61,7 +79,7 @@ export function Services({
             <div>Enabled</div>
           </div>
           {hosts.map((h) => {
-            const d = days(h.certExpiresAt);
+            const cb = certBadge(h, certs);
             return (
               <div
                 key={h.id}
@@ -86,8 +104,8 @@ export function Services({
                   </span>
                 </div>
                 <div className="host-meta">
-                  <span className="strong">{d !== null ? "Valid" : h.ssl ? "Self-signed" : "No cert"}</span>
-                  {d !== null ? `${d} days left` : h.ssl ? "untrusted" : "-"}
+                  <span className="strong">{cb.label}</span>
+                  {cb.detail}
                 </div>
                 <div className="host-meta mono">
                   {h.forwardHost}:{h.forwardPort}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Route } from "../App.tsx";
-import { api, type MetricsSummary } from "../api.ts";
+import { api, certForHost, type MetricsSummary, type Certificate } from "../api.ts";
 import type { ProxyHost, Topology as TopologyData } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { NetworkTraffic } from "../components/NetworkTraffic.tsx";
@@ -16,12 +16,15 @@ export function Dashboard({
 }) {
   const [topology, setTopology] = useState<TopologyData | null>(null);
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
+  const [certs, setCerts] = useState<Certificate[]>([]);
 
   useEffect(() => {
     api.topology().then(setTopology).catch(() => setTopology(null));
     // Real traffic numbers; only admin/editor can read metrics, so a readonly
     // user simply sees "-" rather than a fabricated figure.
     api.metricsSummary().then(setSummary).catch(() => setSummary(null));
+    // Cert status comes from the store (source of truth), like every other screen.
+    api.certificates().then(setCerts).catch(() => setCerts([]));
   }, [hosts]);
 
   const online = hosts.filter((h) => h.enabled && h.health === "online").length;
@@ -29,14 +32,18 @@ export function Dashboard({
   // Paused services are intentionally offline, so they don't count as "needs
   // attention" - only enabled-but-unhealthy ones do.
   const needsAttention = hosts.filter((h) => h.enabled && h.health !== "online").length;
-  // Only HTTPS L7 services use a web certificate. Ones without an issued/managed
-  // cert are served by the bootstrap self-signed cert (not "no cert").
+  // Only HTTPS L7 services use a web certificate. "Valid" here means a trusted
+  // (non-self-signed) cert that's current - read from the cert store, so this
+  // agrees with the host detail + Certificates page. Self-signed, expired, or
+  // failed certs count as "needs a trusted cert".
   const sslHosts = hosts.filter((h) => h.ssl && (h.protocol === "http" || h.protocol === "grpc" || !h.protocol));
-  const withCert = sslHosts.filter((h) => h.certExpiresAt);
-  const selfSigned = sslHosts.length - withCert.length;
-  const days = (iso: string) => Math.round((Date.parse(iso) - Date.now()) / 86400_000);
-  const nextRenewal = withCert.length
-    ? Math.min(...withCert.map((h) => days(h.certExpiresAt!)))
+  const trustedValid = sslHosts.filter((h) => {
+    const c = certForHost(h, certs);
+    return !!c && c.method !== "selfsigned" && (c.status === "valid" || c.status === "expiring");
+  });
+  const needCert = sslHosts.length - trustedValid.length;
+  const nextRenewal = trustedValid.length
+    ? Math.min(...trustedValid.map((h) => certForHost(h, certs)!.daysRemaining ?? 99999))
     : null;
   const unprotected = hosts.filter((h) => h.ssl && !h.requireLogin).length;
 
@@ -103,11 +110,11 @@ export function Dashboard({
               Certificates valid
             </div>
             <div className="value">
-              {withCert.length} <small>/ {sslHosts.length}</small>
+              {trustedValid.length} <small>/ {sslHosts.length}</small>
             </div>
-            <div className="trend" style={{ color: selfSigned > 0 ? "var(--yellow)" : "var(--text-dim)" }}>
-              {selfSigned > 0
-                ? `${selfSigned} on self-signed${withCert.length ? "" : " - issue Let's Encrypt"}`
+            <div className="trend" style={{ color: needCert > 0 ? "var(--yellow)" : "var(--text-dim)" }}>
+              {needCert > 0
+                ? `${needCert} need a trusted cert`
                 : nextRenewal !== null ? `Next renewal in ${nextRenewal} days` : "-"}
             </div>
           </div>

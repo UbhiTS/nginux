@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
-import { CERT_DIR } from "./certs.ts";
+import { CERT_DIR, listCerts } from "./certs.ts";
 
 /** A plain-language heads-up shown in the app's notification banner. */
 export interface AppNotification {
@@ -134,13 +134,14 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
     });
   }
 
-  // 5. Expiring / expired certificates.
-  const now = Date.now();
-  const expiring = enabled.filter(
-    (h) => h.certExpiresAt && Date.parse(h.certExpiresAt) - now < 14 * 86400_000,
-  );
+  // 5. Expiring / expired certificates - read from the cert store (source of
+  //    truth), matched to each host by the cert domain it actually serves.
+  const certByDomain = new Map(listCerts().map((c) => [c.domain, c]));
+  const certDays = (h: { certDomain: string; domain: string }) =>
+    certByDomain.get(h.certDomain || h.domain)?.daysRemaining ?? null;
+  const expiring = enabled.filter((h) => { const d = certDays(h); return d !== null && d < 14; });
   if (expiring.length) {
-    const expired = expiring.filter((h) => Date.parse(h.certExpiresAt!) < now);
+    const expired = expiring.filter((h) => (certDays(h) ?? 0) < 0);
     out.push({
       id: "cert-expiring:" + expiring.map((h) => h.id).sort().join(","),
       severity: expired.length ? "critical" : "warning",

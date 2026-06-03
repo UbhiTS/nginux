@@ -377,6 +377,18 @@ export interface Certificate {
   updatedAt: string;
 }
 
+/** The certificate a host actually serves - its chosen `certDomain` (or its own
+ *  domain) looked up in the cert store - or null when HTTPS is off / no match.
+ *  This is the single source of truth for a host's cert status. Do NOT use
+ *  host.certExpiresAt (it isn't kept in sync with the store). */
+export function certForHost(
+  host: { ssl: boolean; certDomain?: string; domain: string },
+  certs: Certificate[],
+): Certificate | null {
+  if (!host.ssl) return null;
+  return certs.find((c) => c.domain === (host.certDomain || host.domain)) ?? null;
+}
+
 export interface AuthUser {
   id: string;
   username: string;
