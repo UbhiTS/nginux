@@ -29,6 +29,11 @@ const bumpStat = (s: Stat, e: LogEntry) => { s.count++; s.out += e.bytes; s.in +
 const RING_MAX = 500;
 const ring: LogEntry[] = [];
 const minuteBuckets = new Map<number, Stat>();
+// Per-hour totals (global + per-host) so the 7d/30d traffic graph spans its full
+// window - minuteBuckets only retain ~25h. ~40 days of hours is <1k entries.
+const HOUR_CAP = 24 * 40;
+const statHour = new Map<number, Stat>();
+const hostStatHour = new Map<number, Map<string, Stat>>();
 // Per-second totals for the "live" view (last ~3 minutes retained).
 const secondBuckets = new Map<number, Stat>();
 const statusClass = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
@@ -79,6 +84,29 @@ function bumpMin(map: Map<string, number>, key: string) {
     for (const [k, n] of keep) map.set(k, n);
   }
 }
+
+// Hour-granularity rollups. Per-minute buckets are only retained ~25h, so without
+// these the 7d/30d ranges silently truncate to ~25h. ~40 days of hour buckets
+// (<1k entries) covers 30d cheaply and lets the long ranges span their full window.
+const logHour = new Map<number, LogBucket>();
+
+/** Add one request's contribution to a per-minute or per-hour breakdown bucket. */
+function fillLogBucket(lb: LogBucket, e: LogEntry): void {
+  lb.count++; lb.out += e.bytes;
+  const sci = Math.floor(e.status / 100) - 2;
+  if (sci >= 0 && sci < 4) lb.status[sci]++;
+  lb.lat[latBucket(e.ms)]++;
+  bumpMin(lb.ip, e.ip);
+  bumpMin(lb.path, e.path);
+  bumpMin(lb.host, e.host);
+  if (e.country) bumpMin(lb.country, e.country);
+}
+/** Get-or-create a time bucket, evicting the oldest key once over `cap`. */
+function getLogBucket(map: Map<number, LogBucket>, key: number, cap: number): LogBucket {
+  let b = map.get(key);
+  if (!b) { b = newLogBucket(); map.set(key, b); if (map.size > cap) map.delete(Math.min(...map.keys())); }
+  return b;
+}
 let totalRequests = 0;
 let totalBytes = 0;
 const msSamples: number[] = [];
@@ -113,21 +141,10 @@ export function ingest(e: LogEntry): void {
   minuteBuckets.set(minute, b);
   if (minuteBuckets.size > 1500) minuteBuckets.delete(Math.min(...minuteBuckets.keys()));
 
-  // Rich per-minute breakdown for the range-scoped Logs summary.
-  let lb = logMinute.get(minute);
-  if (!lb) {
-    lb = newLogBucket();
-    logMinute.set(minute, lb);
-    if (logMinute.size > 1500) logMinute.delete(Math.min(...logMinute.keys()));
-  }
-  lb.count++; lb.out += e.bytes;
-  const sci = Math.floor(e.status / 100) - 2;
-  if (sci >= 0 && sci < 4) lb.status[sci]++;
-  lb.lat[latBucket(e.ms)]++;
-  bumpMin(lb.ip, e.ip);
-  bumpMin(lb.path, e.path);
-  bumpMin(lb.host, e.host);
-  if (e.country) bumpMin(lb.country, e.country);
+  // Rich per-minute + per-hour breakdowns for the range-scoped Logs summary.
+  // Minute buckets (~25h retained) drive live/1h/4h/1d; hour rollups drive 7d/30d.
+  fillLogBucket(getLogBucket(logMinute, minute, 1500), e);
+  fillLogBucket(getLogBucket(logHour, Math.floor(Date.parse(e.ts) / 3600_000), 24 * 40), e);
 
   const second = Math.floor(Date.parse(e.ts) / 1000);
   const sb = secondBuckets.get(second) ?? emptyStat();
@@ -146,6 +163,17 @@ export function ingest(e: LogEntry): void {
   const hmv = hm.get(e.host) ?? emptyStat();
   bumpStat(hmv, e); hm.set(e.host, hmv);
   if (hostMinute.size > 1500) hostMinute.delete(Math.min(...hostMinute.keys()));
+
+  // Hour rollups (global + per-host) for the long-range traffic graph.
+  const hour = Math.floor(Date.parse(e.ts) / 3600_000);
+  const sbh = statHour.get(hour) ?? emptyStat();
+  bumpStat(sbh, e); statHour.set(hour, sbh);
+  if (statHour.size > HOUR_CAP) statHour.delete(Math.min(...statHour.keys()));
+  let hmh = hostStatHour.get(hour);
+  if (!hmh) { hmh = new Map(); hostStatHour.set(hour, hmh); }
+  const hmhv = hmh.get(e.host) ?? emptyStat();
+  bumpStat(hmhv, e); hmh.set(e.host, hmhv);
+  if (hostStatHour.size > HOUR_CAP) hostStatHour.delete(Math.min(...hostStatHour.keys()));
 
   const bh = byHostStat.get(e.host) ?? emptyStat();
   bumpStat(bh, e); byHostStat.set(e.host, bh);
@@ -220,21 +248,34 @@ function pctFromHist(lat: number[], p: number): number {
 
 const RANGE_MINUTES: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
 
+// The source-country map/list is meant to show EVERY country sending traffic, not
+// a "top talkers" shortlist - otherwise widening the range trims lower-volume
+// countries below the cutoff and they look like they vanished even though their
+// (monotonic) counts only grew. Bound it generously to stay safe against a flood
+// of bogus country codes while still showing the full real-world spread.
+const MAP_COUNTRIES = 50;
+
 /** Range-scoped equivalent of summary(), merged from the per-minute analytics
  *  buckets. Long-range top lists are approximate (top-K-per-minute merged) and
  *  p50/p95 are histogram-based. Unknown / "live" -> cumulative snapshot. */
 export function rangeSummary(range: string) {
   const minutes = range === "live" ? 5 : RANGE_MINUTES[range];
   if (!minutes) return summary();
-  const nowMin = Math.floor(Date.now() / 60000);
+  // Short ranges read per-minute buckets (finer, ~25h retained); ranges past a day
+  // read the hour rollups so 7d/30d actually cover their whole window.
+  const useHours = minutes > 1440;
+  const buckets = useHours ? logHour : logMinute;
+  const unitMs = useHours ? 3600_000 : 60_000;
+  const steps = useHours ? Math.ceil(minutes / 60) : minutes;
+  const nowUnit = Math.floor(Date.now() / unitMs);
   let count = 0, out = 0;
   const status = [0, 0, 0, 0];
   const lat = new Array(LAT_REPORT.length).fill(0) as number[];
   const ip = new Map<string, number>(), path = new Map<string, number>(),
     country = new Map<string, number>(), host = new Map<string, number>();
   const merge = (dst: Map<string, number>, src: Map<string, number>) => { for (const [k, v] of src) dst.set(k, (dst.get(k) ?? 0) + v); };
-  for (let m = 0; m < minutes; m++) {
-    const lb = logMinute.get(nowMin - m);
+  for (let m = 0; m < steps; m++) {
+    const lb = buckets.get(nowUnit - m);
     if (!lb) continue;
     count += lb.count; out += lb.out;
     for (let i = 0; i < 4; i++) status[i] += lb.status[i];
@@ -253,7 +294,7 @@ export function rangeSummary(range: string) {
     topHosts: topN(host, 6),
     topIps: topN(ip, 6).map((t) => ({ ...t, country: ipCountry.get(t.key) ?? "" })),
     topPaths: topN(path, 6),
-    topCountries: topN(country, 8).map((c) => ({ ...c, topIps: ipsByCountry(c.key, 5) })),
+    topCountries: topN(country, MAP_COUNTRIES).map((c) => ({ ...c, topIps: ipsByCountry(c.key, 5) })),
   };
 }
 
@@ -270,7 +311,7 @@ export function summary() {
     topHosts: topN(byHost, 6),
     topIps: topN(byIp, 6).map((t) => ({ ...t, country: ipCountry.get(t.key) ?? "" })),
     topPaths: topN(byPath, 6),
-    topCountries: topN(byCountry, 8).map((c) => ({ ...c, topIps: topIpsForCountry(c.key, 5) })),
+    topCountries: topN(byCountry, MAP_COUNTRIES).map((c) => ({ ...c, topIps: topIpsForCountry(c.key, 5) })),
   };
 }
 
@@ -347,10 +388,22 @@ export function trafficSeries(
   } else {
     const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
     const minutes = spans[range] ?? 60;
-    const nowMin = Math.floor(Date.now() / 60000);
-    points = 30; const per = Math.max(1, Math.floor(minutes / points));
-    axis = axisFor(range); unit = per === 1 ? "/min" : `/${per}m`;
-    stepGet = (i) => Array.from({ length: per }, (_, m) => getMin(nowMin - (points - 1 - i) * per - m)).filter(Boolean) as Stat[];
+    points = 30;
+    axis = axisFor(range);
+    if (minutes > 1440) {
+      // Long ranges (7d/30d) bucket by hour - minute buckets only span ~25h.
+      const hours = Math.ceil(minutes / 60);
+      const nowHr = Math.floor(Date.now() / 3600_000);
+      const per = Math.max(1, Math.floor(hours / points));
+      unit = per === 1 ? "/h" : `/${per}h`;
+      const getHr = (h: number): Stat | undefined => (host ? hostStatHour.get(h)?.get(host) : statHour.get(h));
+      stepGet = (i) => Array.from({ length: per }, (_, m) => getHr(nowHr - (points - 1 - i) * per - m)).filter(Boolean) as Stat[];
+    } else {
+      const nowMin = Math.floor(Date.now() / 60000);
+      const per = Math.max(1, Math.floor(minutes / points));
+      unit = per === 1 ? "/min" : `/${per}m`;
+      stepGet = (i) => Array.from({ length: per }, (_, m) => getMin(nowMin - (points - 1 - i) * per - m)).filter(Boolean) as Stat[];
+    }
   }
 
   const outArr: number[] = [], inArr: number[] = [], cntArr: number[] = [];
