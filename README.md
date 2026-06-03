@@ -13,7 +13,8 @@ Grafana, anything - and it handles the rest: generating and hot-reloading the
 nginx config, issuing and auto-renewing TLS certificates, enforcing login + 2FA
 at the edge, tracking every request on a live world map, and opening the whole
 system up to agents over an MCP/REST API. All from a single Docker image that
-runs anywhere Docker runs (Windows, Linux, NAS, macOS).
+runs anywhere Docker runs - Windows, macOS, Linux, and NAS, on both **amd64 and
+arm64** (Apple Silicon, Raspberry Pi, ARM NAS).
 
 Nginx Proxy Manager and SWAG get you routing. NginUX gives you the whole edge -
 security, certificates, observability, and automation - and makes it genuinely
@@ -45,7 +46,7 @@ production. One `docker compose up`, zero nginx config to write or maintain.
 - **Observability** - JSON access-log pipeline → live tail, status/latency
   aggregates, top IPs/paths/countries, a traffic world map, and a Prometheus
   exporter for Grafana.
-- **Runs anywhere** - one image (Nginx data plane + Node control plane), state on
+- **Runs anywhere** - one multi-arch image (amd64 + arm64; Nginx data plane + Node control plane), state on
   a single mounted volume.
 
 ---
