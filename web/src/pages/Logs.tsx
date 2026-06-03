@@ -40,12 +40,38 @@ const landPath = (ring: number[]) => {
   return d + "Z";
 };
 
-function TrafficMap({ countries, emptyHint }: { countries: MetricsSummary["topCountries"]; emptyHint?: string }) {
+function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: {
+  countries: MetricsSummary["topCountries"];
+  emptyHint?: string;
+  homeCountry?: string;
+  onPickIp: (ip: string) => void;
+  onBlockIp: (ip: string) => Promise<void>;
+}) {
   const max = Math.max(1, ...countries.map((c) => c.count));
-  const [hover, setHover] = useState<{ c: MetricsSummary["topCountries"][number]; x: number; y: number } | null>(null);
+  // The popup stays open while the cursor is over a bubble OR the popup itself,
+  // and auto-closes 3s after the cursor leaves both (or immediately via the X).
+  const [open, setOpen] = useState<{ c: MetricsSummary["topCountries"][number]; x: number; y: number } | null>(null);
+  const [blocked, setBlocked] = useState<Record<string, "busy" | "done">>({});
+  const closeTimer = useRef<number | null>(null);
+  const cancelClose = () => { if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; } };
+  const scheduleClose = () => { cancelClose(); closeTimer.current = window.setTimeout(() => setOpen(null), 3000); };
+  useEffect(() => () => cancelClose(), []);
+
+  const homeCc = homeCountry?.toUpperCase();
+  const homeCtr = homeCc ? CENTROIDS[homeCc] : undefined;
+  const home = homeCtr ? proj(homeCtr[0], homeCtr[1]) : null;
+
+  const block = async (ip: string) => {
+    setBlocked((b) => ({ ...b, [ip]: "busy" }));
+    try { await onBlockIp(ip); setBlocked((b) => ({ ...b, [ip]: "done" })); }
+    catch { setBlocked((b) => { const n = { ...b }; delete n[ip]; return n; }); }
+  };
+
   return (
     <div className="card" style={{ marginBottom: 18 }}>
-      <div className="card-head">Traffic map <span className="pill n">by source country</span></div>
+      <div className="card-head">Traffic map <span className="pill n">by source country</span>
+        {home && <span className="muted" style={{ fontSize: 11, marginLeft: "auto", fontWeight: 400 }}>arcs converge on {flag(homeCc!)} {countryName(homeCc!)}</span>}
+      </div>
       <div className="card-pad">
         <div style={{ position: "relative" }}>
           <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: "var(--bg)", borderRadius: 8 }}>
@@ -54,40 +80,68 @@ function TrafficMap({ countries, emptyHint }: { countries: MetricsSummary["topCo
                 <path key={i} d={landPath(ring)} fill="var(--bg-elev2)" stroke="var(--border)" strokeWidth={0.4} />
               ))}
             </g>
+            {/* Thin dotted arcs from each source country to the home country. */}
+            {home && countries.map((c) => {
+              const ctr = CENTROIDS[c.key.toUpperCase()];
+              if (!ctr || c.key.toUpperCase() === homeCc) return null;
+              const [x, y] = proj(ctr[0], ctr[1]);
+              const dx = home[0] - x, dy = home[1] - y, len = Math.hypot(dx, dy) || 1;
+              const off = Math.min(70, len * 0.28);
+              const cx = (x + home[0]) / 2 + (-dy / len) * off, cy = (y + home[1]) / 2 + (dx / len) * off;
+              return (
+                <path key={"arc-" + c.key} d={`M${x.toFixed(1)} ${y.toFixed(1)} Q${cx.toFixed(1)} ${cy.toFixed(1)} ${home[0].toFixed(1)} ${home[1].toFixed(1)}`}
+                  fill="none" stroke="var(--accent)" strokeWidth={0.7} strokeOpacity={0.32} strokeDasharray="2 5" strokeLinecap="round">
+                  <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.1s" repeatCount="indefinite" />
+                </path>
+              );
+            })}
+            {home && <circle cx={home[0]} cy={home[1]} r={4.5} fill="var(--green)" stroke="var(--green)" strokeOpacity={0.4} strokeWidth={3} />}
             {countries.map((c) => {
               const ctr = CENTROIDS[c.key.toUpperCase()];
               if (!ctr) return null;
               const [x, y] = proj(ctr[0], ctr[1]);
               const r = 4 + (c.count / max) * 14;
-              const on = hover?.c.key === c.key;
+              const on = open?.c.key === c.key;
               return (
-                <g key={c.key} style={{ cursor: "pointer" }} onMouseEnter={() => setHover({ c, x, y })} onMouseLeave={() => setHover(null)}>
-                  <circle cx={x} cy={y} r={r} fill="var(--accent)" fillOpacity={on ? 0.75 : 0.45} stroke="var(--accent)" strokeWidth={on ? 1.8 : 1} />
+                <g key={c.key} style={{ cursor: "pointer" }} onMouseEnter={() => { cancelClose(); setOpen({ c, x, y }); }} onMouseLeave={scheduleClose}>
+                  <circle cx={x} cy={y} r={r} fill="var(--accent)" fillOpacity={on ? 0.8 : 0.45} stroke="var(--accent)" strokeWidth={on ? 1.8 : 1} />
                   <text x={x} y={y + 3} textAnchor="middle" fontSize={9} fill="var(--text)" style={{ pointerEvents: "none", fontWeight: 600 }}>{c.key}</text>
                 </g>
               );
             })}
           </svg>
-          {hover && (
-            <div style={{
+          {open && (
+            <div onMouseEnter={cancelClose} onMouseLeave={scheduleClose} style={{
               position: "absolute",
-              left: `${(hover.x / W) * 100}%`,
-              top: `${(hover.y / H) * 100}%`,
-              transform: `translate(${hover.x < W * 0.25 ? "0%" : hover.x > W * 0.75 ? "-100%" : "-50%"}, ${hover.y < H * 0.4 ? "16px" : "calc(-100% - 16px)"})`,
+              left: `${(open.x / W) * 100}%`,
+              top: `${(open.y / H) * 100}%`,
+              transform: `translate(${open.x < W * 0.25 ? "0%" : open.x > W * 0.75 ? "-100%" : "-50%"}, ${open.y < H * 0.4 ? "16px" : "calc(-100% - 16px)"})`,
               background: "var(--bg-elev)", border: "1px solid var(--border)", borderRadius: 8,
-              padding: "8px 10px", boxShadow: "var(--shadow)", minWidth: 160, pointerEvents: "none", zIndex: 5,
+              padding: "8px 10px", boxShadow: "var(--shadow)", minWidth: 200, zIndex: 5,
             }}>
-              <div style={{ fontWeight: 600, fontSize: 12.5, marginBottom: hover.c.topIps.length ? 6 : 0 }}>
-                {flag(hover.c.key)} {countryName(hover.c.key)} <span className="muted" style={{ fontWeight: 400 }}>· {hover.c.count} req</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: open.c.topIps.length ? 6 : 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 12.5, flex: 1 }}>
+                  {flag(open.c.key)} {countryName(open.c.key)} <span className="muted" style={{ fontWeight: 400 }}>· {open.c.count} req</span>
+                </div>
+                <button className="map-pop-x" title="Close" onClick={() => { cancelClose(); setOpen(null); }}><Icon.x /></button>
               </div>
-              {hover.c.topIps.length > 0 && (
+              {open.c.topIps.length > 0 && (
                 <div style={{ borderTop: "1px solid var(--border-soft)", paddingTop: 5 }}>
-                  <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 3 }}>Top IPs</div>
-                  {hover.c.topIps.map((t) => (
-                    <div key={t.ip} style={{ display: "flex", justifyContent: "space-between", gap: 14, fontSize: 11.5 }}>
-                      <span className="mono">{t.ip}</span><span className="muted">{t.count}</span>
-                    </div>
-                  ))}
+                  <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>Top IPs · click to filter</div>
+                  {open.c.topIps.map((t) => {
+                    const st = blocked[t.ip];
+                    return (
+                      <div key={t.ip} className="map-ip">
+                        <button className="map-ip-pick mono" title="Show logs from this IP" onClick={() => onPickIp(t.ip)}>{t.ip}</button>
+                        <span className="muted">{t.count}</span>
+                        <button className={`map-ip-block${st === "done" ? " done" : ""}`} disabled={!!st}
+                          title={st === "done" ? "Blocked on all services" : "Block this IP on all services"}
+                          onClick={() => block(t.ip)}>
+                          {st === "done" ? <Icon.check /> : st === "busy" ? <span className="spinner" style={{ width: 11, height: 11 }} /> : <Icon.shield />}
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -116,10 +170,10 @@ export function Logs() {
   const [paused, setPaused] = useState(false);
   const [range, setRange] = useState("1h");
   const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
+  const [homeCountry, setHomeCountry] = useState("");
   const pausedRef = useRef(false);
-  const filterRef = useRef("");
+  const logCardRef = useRef<HTMLDivElement>(null);
   pausedRef.current = paused;
-  filterRef.current = filter;
 
   // Range-scoped summary: every analytics panel reflects the selected window.
   useEffect(() => {
@@ -130,22 +184,38 @@ export function Logs() {
     return () => { alive = false; clearInterval(poll); };
   }, [range]);
 
-  // Live tail + GeoIP status (independent of the analytics range).
+  // Live tail + GeoIP status + home country (independent of the analytics range).
   useEffect(() => {
     api.geoipStatus().then(setGeoip).catch(() => {});
+    api.settings().then((s) => setHomeCountry(s.homeCountry || "")).catch(() => {});
     api.recentLogs(undefined, 100).then(setLines).catch(() => {});
     const es = new EventSource("/api/logs/stream", { withCredentials: true });
     es.addEventListener("log", (e) => {
       if (pausedRef.current) return;
       try {
+        // Keep every line; the filter is applied at render so changing it (or
+        // clicking a map IP) instantly re-filters what's already on screen.
         const entry: LogEntry = JSON.parse((e as MessageEvent).data);
-        const f = filterRef.current.toLowerCase();
-        if (f && !(entry.host.includes(f) || entry.path.toLowerCase().includes(f) || entry.ip.includes(f) || String(entry.status) === f)) return;
-        setLines((p) => [entry, ...p].slice(0, 150));
+        setLines((p) => [entry, ...p].slice(0, 200));
       } catch { /* ignore */ }
     });
     return () => es.close();
   }, []);
+
+  // Click an IP on the traffic map -> filter the log to it, pull its history,
+  // and scroll the live log into view.
+  const pickIp = (ip: string) => {
+    setFilter(ip);
+    api.recentLogs(ip, 200).then(setLines).catch(() => {});
+    setTimeout(() => logCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+  // Block an IP globally (writes the shared nginx deny-list -> all services).
+  const blockIp = (ip: string) => api.addBan(ip, "Blocked from traffic map").then(() => undefined);
+
+  const f = filter.trim().toLowerCase();
+  const shown = f
+    ? lines.filter((e) => e.host.toLowerCase().includes(f) || e.path.toLowerCase().includes(f) || e.ip.includes(f) || String(e.status) === f)
+    : lines;
 
   const totalStatus = summary ? Object.values(summary.statusClass).reduce((a, b) => a + b, 0) || 1 : 1;
 
@@ -229,7 +299,7 @@ export function Logs() {
           )}
         </div>
 
-        {summary && <TrafficMap countries={summary.topCountries ?? []} emptyHint={countryHint} />}
+        {summary && <TrafficMap countries={summary.topCountries ?? []} emptyHint={countryHint} homeCountry={homeCountry} onPickIp={pickIp} onBlockIp={blockIp} />}
 
         {summary && (
           <div className="card" style={{ marginBottom: 18 }}>
@@ -256,13 +326,14 @@ export function Logs() {
           </div>
         )}
 
-        <div className="card">
+        <div className="card" ref={logCardRef}>
           <div className="card-head">
-            Live access log <span className="pill n">{lines.length} shown{paused ? " · paused" : ""}</span>
+            Live access log <span className="pill n">{shown.length} shown{filter ? " · filtered" : ""}{paused ? " · paused" : ""}</span>
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
               <div className="search" style={{ maxWidth: 240 }}>
                 <Icon.search />
                 <input placeholder="Filter host, IP, status, path…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                {filter && <button className="map-pop-x" title="Clear filter" onClick={() => setFilter("")} style={{ marginLeft: 2 }}><Icon.x /></button>}
               </div>
               <span className="pill g"><span className="dot g" />streaming</span>
               <button className="btn btn-sm" onClick={() => setPaused((p) => !p)}>{paused ? "Resume" : "Pause"}</button>
@@ -270,8 +341,8 @@ export function Logs() {
           </div>
           <div className="card-pad" style={{ maxHeight: 460, overflow: "auto" }}>
             <div className="code" style={{ border: "none", padding: 0, background: "none", lineHeight: 1.9 }}>
-              {lines.length === 0 && <div className="muted"><span className="spinner" /> Waiting for requests…</div>}
-              {lines.map((e, i) => (
+              {shown.length === 0 && <div className="muted"><span className="spinner" /> {filter ? `No lines match "${filter}" yet…` : "Waiting for requests…"}</div>}
+              {shown.map((e, i) => (
                 <div key={i}>
                   <span style={{ color: statusColor(e.status), fontWeight: 700 }}>{e.status}</span>{" "}
                   {e.method.padEnd(4)} {e.host}{" "}

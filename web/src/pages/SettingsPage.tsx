@@ -19,6 +19,18 @@ export function SettingsPage({
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [saved, setSaved] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+
+  // Auto-detect the public IP (and home country) via an outbound lookup, filling
+  // the fields - the user can still override and must Save to persist.
+  const detectIp = async () => {
+    setDetecting(true);
+    try {
+      const r = await api.detectPublicIp();
+      if (r.ip) update({ publicIp: r.ip, ...(r.country ? { homeCountry: r.country } : {}) });
+    } catch { /* offline / blocked - leave fields as-is */ }
+    finally { setDetecting(false); }
+  };
 
   useEffect(() => {
     api.settings().then(setSettings);
@@ -85,7 +97,12 @@ export function SettingsPage({
               <button className={`switch${settings.acmeStaging ? " on" : ""}`} onClick={() => update({ acmeStaging: !settings.acmeStaging })} />
             </div>
             <div className="kv"><span className="k">Public IP (gateway)</span>
-              <input className="input" style={{ maxWidth: 200 }} value={settings.publicIp} onChange={(e) => update({ publicIp: e.target.value })} />
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input className="input" style={{ maxWidth: 200 }} value={settings.publicIp} onChange={(e) => update({ publicIp: e.target.value })} placeholder="auto-detect or enter manually" />
+                <button className="btn btn-sm" onClick={detectIp} disabled={detecting} title="Detect this host's public IP (and home country) via an outbound lookup. You can still edit it.">
+                  {detecting ? <span className="spinner" /> : <Icon.globe />}Detect
+                </button>
+              </div>
             </div>
             <div className="kv"><span className="k">LAN IP (gateway)</span>
               <input className="input" style={{ maxWidth: 200 }} value={settings.gatewayIp} onChange={(e) => update({ gatewayIp: e.target.value })} />

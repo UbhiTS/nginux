@@ -31,7 +31,8 @@ const HANDOFF_SEC = 0.12; // brief pause between a batch finishing and the next 
 const MIN_W = 1.4; // thinnest line (idle / tiny bandwidth)
 const MAX_W = 8; // thickest line (busiest direction across all services)
 const STAGGER_SEC = 0.22; // small per-service phase offset within the shared cycle
-const QUIET_SEC = 0.5; // quiet tail at the end of the cycle (no dots in flight) for safe commits
+const QUIET_SEC = 0.08; // tiny quiet tail (the last dot lands at cycle-QUIET, so this just
+                        // guards the commit) - small so the next batch re-emits near-instantly
 const LINE_OFF = 4; // vertical gap between the request (upper) and response (lower) lines
 const PALETTE = [
   "#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899",
@@ -230,7 +231,7 @@ export function Topology({
         setBox(layout.box);
         const built = buildOne(layout, svc, i, live);
         setAnim((prev) => ({ ...prev, [svc.id]: { strokes: built.strokes, flows: built.flows, gen: (prev[svc.id]?.gen ?? 0) + 1 } }));
-        timers.set(svc.id, window.setTimeout(run, Math.max(700, built.cycle * 1000)));
+        timers.set(svc.id, window.setTimeout(run, Math.max(400, built.cycle * 1000)));
       };
       timers.set(svc.id, window.setTimeout(run, Math.round(i * STAGGER_SEC * 1000))); // staggered start
     });

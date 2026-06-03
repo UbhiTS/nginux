@@ -66,6 +66,7 @@ export const api = {
   settings: () => req<Settings>("/settings"),
   saveSettings: (patch: Partial<Settings>) =>
     req<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  detectPublicIp: () => req<{ ip: string | null; country: string | null }>("/network/detect-ip"),
   topology: () => req<Topology>("/topology"),
   traffic: (range: string, metric: string = "requests", host?: string) =>
     req<Traffic>(`/traffic?range=${range}&metric=${metric}${host ? `&host=${encodeURIComponent(host)}` : ""}`),

@@ -813,6 +813,30 @@ app.get("/api/network/reachability", async (req, reply) => {
     ext80, ext443,
   };
 });
+// Best-effort public-IP (and country) auto-detection via outbound echo services.
+// Fixed, trusted endpoints - never user-supplied - so this isn't an SSRF vector.
+async function detectPublicIp(): Promise<{ ip: string | null; country: string | null }> {
+  let ip: string | null = null, country: string | null = null;
+  try {
+    const r = await fetch("https://api.ipify.org", { signal: AbortSignal.timeout(3000) });
+    if (r.ok) { const t = (await r.text()).trim(); if (/^\d{1,3}(\.\d{1,3}){3}$/.test(t)) ip = t; }
+  } catch { /* offline or blocked */ }
+  if (ip) {
+    try {
+      const r = await fetch(`https://ipapi.co/${ip}/country/`, { signal: AbortSignal.timeout(3000) });
+      if (r.ok) { const cc = (await r.text()).trim().toUpperCase(); if (/^[A-Z]{2}$/.test(cc)) country = cc; }
+    } catch { /* country is a best-effort bonus */ }
+  }
+  return { ip, country };
+}
+
+// Auto-detect this host's public IP (+ country) so the user doesn't have to look
+// it up - they can still override it manually in Settings.
+app.get("/api/network/detect-ip", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  return detectPublicIp();
+});
+
 app.get("/api/metrics/traffic", async (req) => {
   const { range = "1d" } = req.query as { range?: string };
   return trafficSeries(range);
