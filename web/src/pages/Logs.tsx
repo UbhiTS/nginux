@@ -96,7 +96,7 @@ function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: 
               return (
                 <g key={"arc-" + c.key}>
                   <path d={d} fill="none" stroke="var(--accent)" strokeWidth={0.6} strokeOpacity={0.2} strokeLinecap="round" />
-                  <circle r={1.7} fill="var(--accent)">
+                  <circle r={2.0} fill="var(--accent)">
                     <animateMotion path={d} dur={`${dur}s`} repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" />
                   </circle>
                 </g>
