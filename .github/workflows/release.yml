@@ -43,8 +43,6 @@ jobs:
   release:
     needs: verify
     runs-on: ubuntu-latest
-    outputs:
-      next: ${{ steps.version.outputs.next }}
     steps:
       - name: Checkout (full history for tags)
         uses: actions/checkout@v4
@@ -117,58 +115,3 @@ jobs:
             --title "$NEXT" \
             --generate-notes \
             --notes "Docker image: \`$IMAGE:$NEXT\` (also tagged \`:latest\`)."
-
-  # Build the Linux AppImage and attach it to the release just cut. This lives in
-  # the release workflow (not a standalone one) because a tag pushed by the
-  # release job's GITHUB_TOKEN would NOT trigger a separate `on: push: tags`
-  # workflow (GitHub's anti-recursion rule). Docker stays the primary artifact;
-  # this just adds a self-contained, distro-agnostic desktop build.
-  appimage:
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      # Build the web UI, then reduce to production deps so the bundled control
-      # plane carries just what it needs at runtime.
-      - name: Build control plane payload
-        run: |
-          npm ci
-          npm run build --workspace web
-          npm ci --omit=dev
-          mkdir -p desktop/payload/web
-          cp -R server      desktop/payload/server
-          cp -R web/dist     desktop/payload/web/dist
-          cp -R node_modules desktop/payload/node_modules
-          rm -rf desktop/payload/server/node_modules desktop/payload/server/data
-
-      # Bundle a real Node 24 runtime so the server runs with node:sqlite +
-      # type-stripping regardless of Electron's own Node version.
-      - name: Vendor Node runtime (linux-x64)
-        run: |
-          mkdir -p desktop/runtime
-          url="https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.gz"
-          curl -fsSL "$url" -o /tmp/node.tar.gz
-          tar -xzf /tmp/node.tar.gz -C /tmp
-          cp "/tmp/node-v24.15.0-linux-x64/bin/node" desktop/runtime/node
-          chmod +x desktop/runtime/node
-
-      - name: Build AppImage
-        working-directory: desktop
-        run: |
-          npm install
-          npx electron-builder --linux AppImage --x64 --publish never
-
-      - name: Attach AppImage to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEXT: ${{ needs.release.outputs.next }}
-        run: |
-          mkdir -p dist-out
-          find desktop/out -maxdepth 1 -type f -name '*.AppImage' -exec cp {} dist-out/ \;
-          ls -la dist-out
-          gh release upload "$NEXT" dist-out/* --clobber
