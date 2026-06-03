@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, statSync, createReadStream, watchFile } from "node:fs";
+import { existsSync, mkdirSync, statSync, createReadStream, watchFile, openSync, readSync, closeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listHosts } from "./repo.ts";
@@ -498,6 +498,30 @@ export function prometheus(): string {
 }
 
 // ---------- file tailer (container: real nginx logs) ----------
+/** Rebuild the in-memory metrics from the persisted access log on startup, so a
+ *  restart / redeploy doesn't drop history (the file survives on the /data volume;
+ *  the tailer otherwise resumes at EOF). Reads the tail (bounded so a huge log
+ *  can't blow up boot) and replays each line through the same ingest path. The
+ *  per-minute/-hour buckets are time-keyed, so history lands in the right window.
+ *  Returns how many lines were replayed. Best-effort. */
+export function replayAccessLog(maxBytes = 64 * 1024 * 1024): number {
+  try {
+    if (!existsSync(ACCESS_LOG)) return 0;
+    const size = statSync(ACCESS_LOG).size;
+    if (size <= 0) return 0;
+    const start = size > maxBytes ? size - maxBytes : 0;
+    const len = size - start;
+    const fd = openSync(ACCESS_LOG, "r");
+    const buf = Buffer.allocUnsafe(len);
+    try { readSync(fd, buf, 0, len, start); } finally { closeSync(fd); }
+    const lines = buf.toString("utf8").split("\n");
+    if (start > 0) lines.shift(); // tail-trimmed: drop the partial first line
+    let n = 0;
+    for (const line of lines) { if (line) { parseLine(line); n++; } }
+    return n;
+  } catch { return 0; }
+}
+
 export function startLogTailer(): void {
   const dir = dirname(ACCESS_LOG);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

@@ -87,6 +87,7 @@ import {
   hostTraffic,
   startDemoTraffic,
   startLogTailer,
+  replayAccessLog,
   subscribeLog,
   summary as metricsSummary,
   rangeSummary as metricsRangeSummary,
@@ -1455,6 +1456,8 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   startRenewalScheduler();
   // Metrics: tail nginx access logs; only feed synthetic traffic when explicitly
   // asked (NGINUX_DEMO_TRAFFIC=1) or in an explicit dev run - never silently in prod.
+  const replayed = replayAccessLog();
+  if (replayed) app.log.info(`metrics: replayed ${replayed} access-log lines from disk (history survives restarts)`);
   startLogTailer();
   const devRun = process.execArgv.includes("--watch"); // `npm run dev`, never `start`
   if (process.env.NGINUX_DEMO_TRAFFIC === "1" || devRun) {

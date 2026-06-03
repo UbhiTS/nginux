@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type AuditEvent, type Ban, type Exposure, type SecurityOverview } from "../api.ts";
 import { Icon } from "../icons.tsx";
 
-type Tab = "overview" | "exposure" | "logins" | "failures";
+type Tab = "overview" | "exposure" | "logins" | "failures" | "denylist";
 
 const sevPill: Record<AuditEvent["severity"], string> = {
   info: "g",
@@ -49,6 +49,9 @@ export function SecurityCenter() {
           <button type="button" role="tab" aria-selected={tab === "logins"} className={`sectab${tab === "logins" ? " active" : ""}`} onClick={() => setTab("logins")}>Login activity</button>
           <button type="button" role="tab" aria-selected={tab === "failures"} className={`sectab${tab === "failures" ? " active" : ""}`} onClick={() => setTab("failures")}>
             Login failures {failures.length > 0 && <span className="badge">{failures.length}</span>}
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "denylist"} className={`sectab${tab === "denylist" ? " active" : ""}`} onClick={() => setTab("denylist")}>
+            Deny list {bans.length > 0 && <span className="badge">{bans.length}</span>}
           </button>
         </div>
 
@@ -133,30 +136,32 @@ export function SecurityCenter() {
         )}
 
         {tab === "logins" && <EventTable rows={logins} kind="login" />}
-        {tab === "failures" && (
-          <>
-            <div className="card" style={{ marginBottom: 18 }}>
-              <div className="card-head">
-                Banned IPs <span className="pill r">{bans.length}</span>
-                <div className="search" style={{ maxWidth: 280, marginLeft: "auto" }}>
-                  <input placeholder="Ban an IP / CIDR…" value={banIp} onChange={(e) => setBanIp(e.target.value)} />
-                  <button className="btn btn-sm btn-danger" onClick={async () => { if (banIp.trim()) { await api.addBan(banIp.trim()); setBanIp(""); loadBans(); } }}>Ban</button>
-                </div>
-              </div>
-              <div className="atable">
-                {bans.map((b) => (
-                  <div key={b.ip} className="arow" style={{ gridTemplateColumns: "1fr 1.4fr 0.8fr 80px" }}>
-                    <div className="mono">{b.ip}</div>
-                    <div className="muted">{b.reason}</div>
-                    <div style={{ textAlign: "center" }}><span className={`pill ${b.source === "auto" ? "r" : "n"}`}>{b.source}</span></div>
-                    <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={async () => { await api.removeBan(b.ip); loadBans(); }}>Unban</button>
-                  </div>
-                ))}
-                {bans.length === 0 && <div className="placeholder"><p>No banned IPs. Brute-force attempts are auto-banned (5 fails in 5 min).</p></div>}
+        {tab === "failures" && <EventTable rows={failures} kind="failure" />}
+        {tab === "denylist" && (
+          <div className="card" style={{ marginBottom: 18 }}>
+            <div className="card-head">
+              Global deny list <span className="pill r">{bans.length}</span>
+              <div className="search" style={{ maxWidth: 280, marginLeft: "auto" }}>
+                <input placeholder="Block an IP / CIDR…" value={banIp} onChange={(e) => setBanIp(e.target.value)} />
+                <button className="btn btn-sm btn-danger" onClick={async () => { if (banIp.trim()) { await api.addBan(banIp.trim(), "Blocked from Security Center"); setBanIp(""); loadBans(); } }}>Block</button>
               </div>
             </div>
-            <EventTable rows={failures} kind="failure" />
-          </>
+            <div className="info-line" style={{ margin: "0 16px 4px" }}>
+              <Icon.shield />
+              IPs blocked across <strong>every</strong> service (the shared nginx deny-list). Includes manual blocks, ones you blocked from the traffic map, and auto-bans from repeated auth failures. Unblock anything added by mistake.
+            </div>
+            <div className="atable">
+              {bans.map((b) => (
+                <div key={b.ip} className="arow" style={{ gridTemplateColumns: "1fr 1.4fr 0.8fr 90px" }}>
+                  <div className="mono">{b.ip}</div>
+                  <div className="muted">{b.reason}</div>
+                  <div style={{ textAlign: "center" }}><span className={`pill ${b.source === "auto" ? "r" : "n"}`}>{b.source === "auto" ? "auto-ban" : "manual"}</span></div>
+                  <button className="btn btn-ghost btn-sm" style={{ justifySelf: "end" }} onClick={async () => { await api.removeBan(b.ip); loadBans(); }}>Unblock</button>
+                </div>
+              ))}
+              {bans.length === 0 && <div className="placeholder"><p>Deny list is empty. Block an IP above, from the traffic map, or let auto-ban handle brute-force (5 fails in 5 min).</p></div>}
+            </div>
+          </div>
         )}
       </div>
     </>
