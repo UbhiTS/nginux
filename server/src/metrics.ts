@@ -214,6 +214,55 @@ export function recentLogs(filter?: string, limit = 200): LogEntry[] {
   return out;
 }
 
+/** Search the PERSISTED access log (on disk) for lines matching `filter`,
+ *  newest-first, up to `limit`. The in-memory ring only holds the last few
+ *  hundred lines, so filtering it for an IP that the traffic map surfaced from
+ *  the longer-window aggregates would often find nothing even though the request
+ *  is recorded on disk. Reads a bounded tail so a huge log can't stall the
+ *  request, and a cheap substring pre-filter avoids parsing non-matching lines. */
+export function searchLog(filter: string, limit = 200): LogEntry[] {
+  const f = filter.trim().toLowerCase();
+  if (!f) return recentLogs(undefined, limit);
+  const matches = (e: LogEntry) =>
+    e.host.toLowerCase().includes(f) || e.path.toLowerCase().includes(f) ||
+    e.ip.includes(f) || String(e.status) === f || e.method.toLowerCase() === f;
+  const out: LogEntry[] = [];
+  const seen = new Set<string>();
+  const take = (e: LogEntry) => { const k = `${e.ts}|${e.ip}|${e.path}|${e.status}`; if (!seen.has(k)) { seen.add(k); out.push(e); } };
+  // Freshest matches from the in-memory ring (also covers dev, where demo traffic
+  // is ingested in memory and never written to disk).
+  for (let i = ring.length - 1; i >= 0 && out.length < limit; i--) if (matches(ring[i])) take(ring[i]);
+  // Then the persisted access log - full history up to retention, newest-first.
+  try {
+    if (existsSync(ACCESS_LOG)) {
+      const size = statSync(ACCESS_LOG).size;
+      if (size > 0) {
+        const maxBytes = 32 * 1024 * 1024;
+        const startAt = size > maxBytes ? size - maxBytes : 0;
+        const fd = openSync(ACCESS_LOG, "r");
+        const buf = Buffer.allocUnsafe(size - startAt);
+        try { readSync(fd, buf, 0, buf.length, startAt); } finally { closeSync(fd); }
+        const lines = buf.toString("utf8").split("\n");
+        if (startAt > 0) lines.shift(); // drop the partial first line when tail-trimmed
+        for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
+          const t = lines[i];
+          if (!t || !t.toLowerCase().includes(f)) continue; // widen-then-narrow: skip obvious non-matches
+          try {
+            const j = JSON.parse(t);
+            const e: LogEntry = {
+              ts: j.time ?? "", host: j.host ?? "-", method: j.method ?? "GET", path: j.path ?? "/",
+              status: Number(j.status ?? 0), bytes: Number(j.bytes ?? 0), bytesIn: Number(j.bytes_in ?? 0),
+              ip: j.ip ?? "-", country: j.country ?? "", ua: j.ua ?? "", ms: Math.round(Number(j.ms ?? 0) * 1000) / 1000,
+            };
+            if (matches(e)) take(e);
+          } catch { /* skip malformed line */ }
+        }
+      }
+    }
+  } catch { /* fall back to whatever ring matches we found */ }
+  return out;
+}
+
 // Sort the latency samples ONCE per caller, then read any percentile off it -
 // summary() and prometheus() each need p50 + p95, so this halves the sorts.
 function sortedMs(): number[] {

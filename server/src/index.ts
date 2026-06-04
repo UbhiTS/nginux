@@ -83,6 +83,7 @@ import { handleMcp } from "./mcp.ts";
 import {
   prometheus,
   recentLogs,
+  searchLog,
   hostStats,
   hostTraffic,
   startDemoTraffic,
@@ -851,7 +852,9 @@ const clampLimit = (raw?: string): number | undefined =>
 app.get("/api/logs/recent", async (req, reply) => {
   if (!userRoleAtLeast(req, reply, "admin", "editor")) return; // access logs carry client IPs
   const { filter, limit } = req.query as { filter?: string; limit?: string };
-  return recentLogs(filter, clampLimit(limit));
+  // A filter (e.g. clicking an IP on the traffic map) searches the persisted log
+  // on disk so older IPs still resolve; an unfiltered tail uses the live ring.
+  return filter ? searchLog(filter, clampLimit(limit)) : recentLogs(undefined, clampLimit(limit));
 });
 let sseClients = 0;
 const SSE_MAX = Number(process.env.NGINUX_SSE_MAX ?? 200);
