@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type GeoipStatus, type LogEntry, type MetricsSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { WORLD_LAND } from "../components/worldland.ts";
@@ -40,6 +40,17 @@ const landPath = (ring: number[]) => {
   return d + "Z";
 };
 
+// Pan/zoom transform for the map: translate (x,y) then scale (s), in SVG units.
+type View = { s: number; x: number; y: number };
+const MAX_ZOOM = 8;
+// Keep the content covering the viewport (no empty margins): at scale s the content
+// spans [x, x + W*s]; to cover [0,W] we need W*(1-s) <= x <= 0 (and likewise y).
+const clampView = (v: View): View => ({
+  s: v.s,
+  x: Math.min(0, Math.max(W * (1 - v.s), v.x)),
+  y: Math.min(0, Math.max(H * (1 - v.s), v.y)),
+});
+
 function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: {
   countries: MetricsSummary["topCountries"];
   emptyHint?: string;
@@ -57,6 +68,34 @@ function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: 
   const scheduleClose = () => { cancelClose(); closeTimer.current = window.setTimeout(() => setOpen(null), 3000); };
   useEffect(() => () => cancelClose(), []);
 
+  // ---- pan / zoom: double-click or wheel to zoom (toward the cursor), drag to pan ----
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [view, setView] = useState<View>({ s: 1, x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const drag = useRef<{ cx: number; cy: number; ox: number; oy: number } | null>(null);
+  // Client px -> SVG user units (the viewBox is 0..W x 0..H scaled to the element).
+  const toSvg = useCallback((cx: number, cy: number) => {
+    const r = svgRef.current!.getBoundingClientRect();
+    return { x: ((cx - r.left) / r.width) * W, y: ((cy - r.top) / r.height) * H };
+  }, []);
+  // Zoom by factor f keeping the SVG-space point p stationary under the cursor.
+  const zoomAt = useCallback((p: { x: number; y: number }, f: number) => setView((v) => {
+    const s = Math.min(MAX_ZOOM, Math.max(1, v.s * f));
+    if (s === v.s) return v;
+    let x = p.x - (p.x - v.x) * (s / v.s);
+    let y = p.y - (p.y - v.y) * (s / v.s);
+    if (s === 1) { x = 0; y = 0; }
+    return clampView({ s, x, y });
+  }), []);
+  // Wheel zoom needs a non-passive listener to preventDefault the page scroll.
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => { e.preventDefault(); zoomAt(toSvg(e.clientX, e.clientY), e.deltaY < 0 ? 1.2 : 1 / 1.2); };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [toSvg, zoomAt]);
+
   const homeCc = homeCountry?.toUpperCase();
   const homeCtr = homeCc ? CENTROIDS[homeCc] : undefined;
   const home = homeCtr ? proj(homeCtr[0], homeCtr[1]) : null;
@@ -70,11 +109,21 @@ function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: 
   return (
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-head">Traffic map <span className="pill n">by source country</span>
+        <span className="muted" style={{ fontSize: 11, marginLeft: 8, fontWeight: 400 }}>· drag to pan · scroll / double-click to zoom</span>
         {home && <span className="muted" style={{ fontSize: 11, marginLeft: "auto", fontWeight: 400 }}>arcs converge on {flag(homeCc!)} {countryName(homeCc!)}</span>}
       </div>
       <div className="card-pad">
         <div style={{ position: "relative" }}>
-          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: "var(--bg)", borderRadius: 8 }}>
+          <svg
+            ref={svgRef}
+            viewBox={`0 0 ${W} ${H}`}
+            style={{ width: "100%", height: "auto", display: "block", background: "var(--bg)", borderRadius: 8, cursor: dragging ? "grabbing" : view.s > 1 ? "grab" : "default", touchAction: "none" }}
+            onDoubleClick={(e) => zoomAt(toSvg(e.clientX, e.clientY), 1.7)}
+            onPointerDown={(e) => { if (e.button !== 0) return; svgRef.current!.setPointerCapture(e.pointerId); drag.current = { cx: e.clientX, cy: e.clientY, ox: view.x, oy: view.y }; setDragging(true); }}
+            onPointerMove={(e) => { const d = drag.current; if (!d) return; const r = svgRef.current!.getBoundingClientRect(); const dx = (e.clientX - d.cx) * (W / r.width); const dy = (e.clientY - d.cy) * (H / r.height); setView((v) => clampView({ s: v.s, x: d.ox + dx, y: d.oy + dy })); }}
+            onPointerUp={(e) => { drag.current = null; setDragging(false); try { svgRef.current?.releasePointerCapture(e.pointerId); } catch { /* ignore */ } }}
+          >
+            <g transform={`translate(${view.x.toFixed(2)} ${view.y.toFixed(2)}) scale(${view.s.toFixed(3)})`}>
             <g>
               {WORLD_LAND.map((ring, i) => (
                 <path key={i} d={landPath(ring)} fill="var(--bg-elev2)" stroke="var(--border)" strokeWidth={0.4} />
@@ -110,18 +159,23 @@ function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: 
               const r = 4 + (c.count / max) * 14;
               const on = open?.c.key === c.key;
               return (
-                <g key={c.key} style={{ cursor: "pointer" }} onMouseEnter={() => { cancelClose(); setOpen({ c, x, y }); }} onMouseLeave={scheduleClose}>
+                <g key={c.key} style={{ cursor: "pointer" }} onMouseEnter={() => { if (drag.current) return; cancelClose(); setOpen({ c, x, y }); }} onMouseLeave={scheduleClose}>
                   <circle cx={x} cy={y} r={r} fill="var(--accent)" fillOpacity={on ? 0.8 : 0.45} stroke="var(--accent)" strokeWidth={on ? 1.8 : 1} />
                   <text x={x} y={y + 3} textAnchor="middle" fontSize={9} fill="var(--text)" style={{ pointerEvents: "none", fontWeight: 600 }}>{c.key}</text>
                 </g>
               );
             })}
+            </g>
           </svg>
+          {view.s > 1 && (
+            <button className="btn btn-sm" onClick={() => setView({ s: 1, x: 0, y: 0 })}
+              style={{ position: "absolute", top: 8, right: 8, zIndex: 6 }} title="Reset zoom">Reset</button>
+          )}
           {open && (
             <div onMouseEnter={cancelClose} onMouseLeave={scheduleClose} style={{
               position: "absolute",
-              left: `${(open.x / W) * 100}%`,
-              top: `${(open.y / H) * 100}%`,
+              left: `${((view.x + open.x * view.s) / W) * 100}%`,
+              top: `${((view.y + open.y * view.s) / H) * 100}%`,
               transform: `translate(${open.x < W * 0.25 ? "0%" : open.x > W * 0.75 ? "-100%" : "-50%"}, ${open.y < H * 0.4 ? "16px" : "calc(-100% - 16px)"})`,
               background: "var(--bg-elev)", border: "1px solid var(--border)", borderRadius: 8,
               padding: "8px 10px", boxShadow: "var(--shadow)", minWidth: 200, zIndex: 5,
