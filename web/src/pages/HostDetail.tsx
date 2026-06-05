@@ -571,7 +571,13 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
   return (
     <div className="card wcard" style={{ maxWidth: 720 }}>
       <h2 style={{ fontSize: 18, marginBottom: 18 }}>Edit {draft.name}</h2>
-      <div className="field"><label>Name</label><input className="input" value={draft.name} onChange={(e) => set({ name: e.target.value })} /></div>
+      <div className="field"><label>Icon &amp; name</label>
+        <div className="input-group">
+          <input className="input" style={{ maxWidth: 60, textAlign: "center", fontSize: 18 }} value={draft.emoji} onChange={(e) => set({ emoji: e.target.value })} maxLength={16} aria-label="Icon" title="Any emoji" />
+          <input className="input" value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="Service name" />
+        </div>
+        <div className="hint">The icon is an emoji - pick one with your OS picker (Windows <b>Win + .</b> · macOS <b>Cmd + Ctrl + Space</b>) or copy from <a href="https://emojipedia.org" target="_blank" rel="noreferrer noopener">emojipedia.org</a>.</div>
+      </div>
       <div className="field"><label>Public domain / label</label><input className="input" value={draft.domain} onChange={(e) => set({ domain: e.target.value })} /></div>
       <div className="field">
         <label>Protocol</label>

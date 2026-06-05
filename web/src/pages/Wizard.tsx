@@ -41,6 +41,7 @@ export function Wizard({
   const [test, setTest] = useState<{ reachable: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [sub, setSub] = useState("");
+  const [subTouched, setSubTouched] = useState(false); // stop auto-suggesting once the user types
   const [ssl, setSsl] = useState(true);
   const [advCert, setAdvCert] = useState(false);
   const [certMethod, setCertMethod] = useState<CertChoice>("dns-01");
@@ -55,6 +56,11 @@ export function Wizard({
 
   const base = settings?.baseDomain ?? "example.com";
   const hasDnsProvider = (settings?.dnsProvider ?? "none") !== "none";
+
+  // Suggest the subdomain from the chosen app (e.g. Plex -> "plex", Immich ->
+  // "immich"), and keep it in sync as they switch apps - until they type their own.
+  const suggestSub = (p: Preset | null) => (p && p.id !== "custom" ? p.id.toLowerCase().replace(/[^a-z0-9-]/g, "") : "");
+  useEffect(() => { if (!subTouched) setSub(suggestSub(preset)); }, [preset, subTouched]);
 
   useEffect(() => {
     api.presets().then((p) => {
@@ -325,8 +331,8 @@ export function Wizard({
                     className="input"
                     style={{ maxWidth: 200 }}
                     value={sub}
-                    onChange={(e) => setSub(e.target.value.replace(/[^a-z0-9-]/gi, "").toLowerCase())}
-                    placeholder="plex"
+                    onChange={(e) => { setSub(e.target.value.replace(/[^a-z0-9-]/gi, "").toLowerCase()); setSubTouched(true); }}
+                    placeholder={suggestSub(preset) || "subdomain"}
                     autoFocus
                   />
                   <input className="input" style={{ maxWidth: 200, color: "var(--text-dim)" }} value={`.${base}`} disabled />
