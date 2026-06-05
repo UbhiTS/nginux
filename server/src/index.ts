@@ -253,7 +253,8 @@ app.addHook("onSend", async (_req, reply, payload) => {
   reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
   reply.header(
     "Content-Security-Policy",
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
+    // jsdelivr serves the dashboard-icons logo set used for service icons (images only).
+    "default-src 'self'; img-src 'self' data: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; " +
       "script-src 'self'; font-src 'self' data:; connect-src 'self'; object-src 'none'; " +
       "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
   );
@@ -385,6 +386,7 @@ const customNginxField = z.string().default("").refine(
 const hostInput = z.object({
   name: z.string().min(1).max(100).refine((s) => !hasNginxMetachars(s), "Name may not contain ; { } or line breaks."),
   emoji: z.string().max(16).refine((s) => !hasNginxMetachars(s), "Invalid emoji.").default("⚙️"),
+  iconUrl: z.string().max(4096).refine((s) => s === "" || /^https:\/\/cdn\.jsdelivr\.net\//.test(s) || /^data:image\//.test(s), "Icon must be a dashboard-icons URL or an uploaded image.").default(""),
   domain: z.string().min(1).max(253).refine(isHostname, "Invalid domain/hostname."),
   forwardScheme: z.enum(["http", "https"]).default("http"),
   forwardHost: z.string().min(1).refine(isHost, "Invalid forward host (must be a hostname or IP)."),
@@ -837,6 +839,37 @@ async function detectPublicIp(): Promise<{ ip: string | null; country: string | 
 app.get("/api/network/detect-ip", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   return detectPublicIp();
+});
+
+// Search the dashboard-icons logo catalog (homarr-labs/dashboard-icons via jsdelivr)
+// so a service can use a real app logo instead of an emoji. We proxy the metadata
+// index (cached ~1 day) and return matching {name, url}; the CDN images themselves
+// load directly in the browser (allowed in the CSP img-src).
+const ICON_CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons";
+let iconIndex: { name: string; base: string; aliases: string[] }[] | null = null;
+let iconIndexAt = 0;
+async function getIconIndex(): Promise<typeof iconIndex> {
+  if (iconIndex && Date.now() - iconIndexAt < 24 * 3600_000) return iconIndex;
+  const r = await fetch(`${ICON_CDN}/metadata.json`, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error("icon catalog unavailable");
+  const meta = (await r.json()) as Record<string, { base?: string; aliases?: string[] }>;
+  iconIndex = Object.entries(meta).map(([name, m]) => ({ name, base: m.base || "svg", aliases: m.aliases ?? [] }));
+  iconIndexAt = Date.now();
+  return iconIndex;
+}
+app.get("/api/icons", async (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return;
+  const q = String((req.query as { q?: string }).q ?? "").trim().toLowerCase();
+  if (q.length < 1) return [];
+  try {
+    const idx = (await getIconIndex()) ?? [];
+    const rank = (n: string) => (n === q ? 0 : n.startsWith(q) ? 1 : 2);
+    return idx
+      .filter((i) => i.name.includes(q) || i.aliases.some((a) => a.toLowerCase().includes(q)))
+      .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
+      .slice(0, 60)
+      .map((i) => ({ name: i.name, url: `${ICON_CDN}/${i.base}/${i.name}.${i.base}` }));
+  } catch { return reply.code(502).send({ error: "Couldn't reach the icon catalog." }); }
 });
 
 app.get("/api/metrics/traffic", async (req) => {

@@ -4,6 +4,7 @@ import type { Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { api, type Reachability } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { ServiceIcon } from "./ServiceIcon.tsx";
 
 interface PulsePhase { t0: number; t1: number; width: number; }
 interface Pulse { dur: number; begin: string; phases: PulsePhase[]; }
@@ -406,7 +407,7 @@ export function Topology({
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: s.id }); } }}
                   >
                     <span className="svc-tag" style={{ background: PALETTE[idx % PALETTE.length] }} />
-                    <span className="svc-emoji">{s.emoji}</span>
+                    <span className="svc-emoji"><ServiceIcon emoji={s.emoji} iconUrl={s.iconUrl} size={16} /></span>
                     <div className="svc-body">
                       <div className="svc-name">
                         {s.name} <span className="port">:{s.port}</span>

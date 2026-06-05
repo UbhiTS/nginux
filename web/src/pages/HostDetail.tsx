@@ -5,6 +5,7 @@ import type { Preset, ProxyHost, Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 import { CertDetailModal } from "../components/CertDetailModal.tsx";
+import { ServiceIcon } from "../components/ServiceIcon.tsx";
 
 const banner = {
   online: { cls: "", icon: <Icon.check />, title: "Working. Everything looks healthy." },
@@ -138,7 +139,7 @@ export function HostDetail({
           <Icon.arrowLeft />
         </button>
         <h1>
-          {host.emoji} {host.name}
+          <ServiceIcon emoji={host.emoji} iconUrl={host.iconUrl} size={22} /> {host.name}
         </h1>
         {host.enabled ? (
           <span className={`pill ${host.health === "down" ? "r" : host.health === "degraded" ? "y" : "g"}`}>
@@ -456,6 +457,16 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
   onCertsChanged: () => void;
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
+  // Logo picker: search the dashboard-icons catalog (debounced) for a real app logo.
+  const [iconQuery, setIconQuery] = useState("");
+  const [iconResults, setIconResults] = useState<{ name: string; url: string }[]>([]);
+  useEffect(() => {
+    const q = iconQuery.trim();
+    if (!q) { setIconResults([]); return; }
+    let alive = true;
+    const t = setTimeout(() => { api.searchIcons(q).then((r) => { if (alive) setIconResults(r); }).catch(() => {}); }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [iconQuery]);
   // What's configured elsewhere - drives the "needs setup" hints on toggles.
   const hasDnsProvider = (settings?.dnsProvider ?? "none") !== "none";
   const ssoConfigured = !!settings?.ssoLoginUrl;
@@ -573,10 +584,27 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       <h2 style={{ fontSize: 18, marginBottom: 18 }}>Edit {draft.name}</h2>
       <div className="field"><label>Icon &amp; name</label>
         <div className="input-group">
-          <input className="input" style={{ maxWidth: 60, textAlign: "center", fontSize: 18 }} value={draft.emoji} onChange={(e) => set({ emoji: e.target.value })} maxLength={16} aria-label="Icon" title="Any emoji" />
+          <span className="host-icon" style={{ width: 40, height: 40, flexShrink: 0 }} aria-label="Icon preview"><ServiceIcon emoji={draft.emoji} iconUrl={draft.iconUrl} size={26} /></span>
           <input className="input" value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="Service name" />
         </div>
-        <div className="hint">The icon is an emoji - pick one with your OS picker (Windows <b>Win + .</b> · macOS <b>Cmd + Ctrl + Space</b>) or copy from <a href="https://emojipedia.org" target="_blank" rel="noreferrer noopener">emojipedia.org</a>.</div>
+        <div className="input-group" style={{ marginTop: 8 }}>
+          <input className="input" style={{ maxWidth: 84, textAlign: "center", fontSize: 18 }} value={draft.emoji} onChange={(e) => set({ emoji: e.target.value, iconUrl: "" })} maxLength={16} aria-label="Emoji" title="Type an emoji (clears the logo)" placeholder="🙂" />
+          <div className="search" style={{ flex: 1 }}>
+            <Icon.search />
+            <input placeholder="Search app logos - plex, grafana, nextcloud…" value={iconQuery} onChange={(e) => setIconQuery(e.target.value)} />
+          </div>
+          {draft.iconUrl && <button className="btn btn-sm" onClick={() => set({ iconUrl: "" })} title="Use the emoji instead">Use emoji</button>}
+        </div>
+        {iconResults.length > 0 && (
+          <div className="icon-grid">
+            {iconResults.map((r) => (
+              <button key={r.name} type="button" className={`icon-opt${draft.iconUrl === r.url ? " sel" : ""}`} title={r.name} onClick={() => set({ iconUrl: r.url })}>
+                <img src={r.url} alt={r.name} loading="lazy" />
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="hint">Pick a real app logo from <a href="https://dashboardicons.com" target="_blank" rel="noreferrer noopener">dashboard-icons</a> (2,900+), or type an emoji (OS picker: Windows <b>Win + .</b> · macOS <b>Cmd + Ctrl + Space</b>).</div>
       </div>
       <div className="field"><label>Public domain / label</label><input className="input" value={draft.domain} onChange={(e) => set({ domain: e.target.value })} /></div>
       <div className="field">

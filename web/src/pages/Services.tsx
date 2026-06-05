@@ -4,6 +4,7 @@ import { api, certForHost, type Certificate } from "../api.ts";
 import type { ProxyHost } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { ServiceIcon } from "../components/ServiceIcon.tsx";
 
 const statusText = (h: ProxyHost) => {
   if (h.health === "down") return "Can't reach service";
@@ -91,7 +92,7 @@ export function Services({
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: h.id }); } }}
               >
                 <div className="host-main">
-                  <div className="host-icon">{h.emoji}</div>
+                  <div className="host-icon"><ServiceIcon emoji={h.emoji} iconUrl={h.iconUrl} size={26} /></div>
                   <div>
                     <div className="host-name">{h.name}</div>
                     <div className="host-url">{h.domain}</div>

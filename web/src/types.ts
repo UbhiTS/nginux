@@ -6,6 +6,8 @@ export interface ProxyHost {
   id: string;
   name: string;
   emoji: string;
+  /** Optional image-logo URL (dashboard-icons CDN, or a data: URL). Empty = use the emoji. */
+  iconUrl: string;
   domain: string;
   forwardScheme: ForwardScheme;
   forwardHost: string;
@@ -97,6 +99,7 @@ export interface TopologyServer {
     id: string;
     name: string;
     emoji: string;
+    iconUrl: string;
     domain: string;
     port: number;
     health: HealthStatus;

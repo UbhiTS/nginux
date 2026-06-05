@@ -8,6 +8,8 @@ export interface ProxyHost {
   id: string;
   name: string;
   emoji: string;
+  /** Optional image-logo URL (dashboard-icons CDN, or a data: URL). Empty = use the emoji. */
+  iconUrl: string;
   /** Public domain, e.g. "plex.ubhi.io" */
   domain: string;
   forwardScheme: ForwardScheme;
@@ -79,7 +81,7 @@ type OptionalOnCreate =
   | "health" | "certExpiresAt" | "certDomain" | "maintenanceMode" | "securityHeaders" | "hsts"
   | "rateLimit" | "blockExploits" | "ipAllow" | "ipDeny" | "customHeaders" | "customNginx"
   | "upstreams" | "lbMethod" | "protocol" | "listenPort" | "pathRules" | "mtls"
-  | "rateLimitKbps" | "maxConns" | "rateLimitRps" | "rateLimitBurst";
+  | "rateLimitKbps" | "maxConns" | "rateLimitRps" | "rateLimitBurst" | "iconUrl";
 
 export type NewProxyHost = Omit<ProxyHost, ManagedFields | OptionalOnCreate> &
   Partial<Pick<ProxyHost, OptionalOnCreate>>;
@@ -134,6 +136,7 @@ export interface TopologyServer {
     id: string;
     name: string;
     emoji: string;
+    iconUrl: string;
     domain: string;
     port: number;
     health: HealthStatus;

@@ -44,14 +44,14 @@ export function createHost(input: NewProxyHost): ProxyHost {
   const now = new Date().toISOString();
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO hosts (id, name, emoji, domain, forwardScheme, forwardHost, forwardPort, preset,
+    INSERT INTO hosts (id, name, emoji, iconUrl, domain, forwardScheme, forwardHost, forwardPort, preset,
       websockets, http2, ssl, requireLogin, require2fa, countryLock, serverGroup, serverIp,
       enabled, health, certExpiresAt, certDomain, maintenanceMode, securityHeaders, hsts, rateLimit,
       blockExploits, ipAllow, ipDeny, customHeaders, customNginx, upstreams, lbMethod,
       protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, rateLimitRps, rateLimitBurst, createdAt, updatedAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
-    id, input.name, input.emoji, input.domain, input.forwardScheme, input.forwardHost,
+    id, input.name, input.emoji, input.iconUrl ?? "", input.domain, input.forwardScheme, input.forwardHost,
     input.forwardPort, input.preset, b(input.websockets), b(input.http2), b(input.ssl),
     b(input.requireLogin), b(input.require2fa), b(input.countryLock), input.serverGroup,
     input.serverIp, b(input.enabled), input.health ?? "unknown", input.certExpiresAt ?? null,
@@ -72,7 +72,7 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
   if (!existing) return null;
   const merged = { ...existing, ...patch, updatedAt: new Date().toISOString() };
   db.prepare(`
-    UPDATE hosts SET name=?, emoji=?, domain=?, forwardScheme=?, forwardHost=?, forwardPort=?,
+    UPDATE hosts SET name=?, emoji=?, iconUrl=?, domain=?, forwardScheme=?, forwardHost=?, forwardPort=?,
       preset=?, websockets=?, http2=?, ssl=?, requireLogin=?, require2fa=?, countryLock=?,
       serverGroup=?, serverIp=?, enabled=?, health=?, certExpiresAt=?, certDomain=?,
       maintenanceMode=?, securityHeaders=?, hsts=?, rateLimit=?, blockExploits=?,
@@ -80,7 +80,7 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
       protocol=?, listenPort=?, pathRules=?, mtls=?, rateLimitKbps=?, maxConns=?, rateLimitRps=?, rateLimitBurst=?, updatedAt=?
     WHERE id=?
   `).run(
-    merged.name, merged.emoji, merged.domain, merged.forwardScheme, merged.forwardHost,
+    merged.name, merged.emoji, merged.iconUrl ?? "", merged.domain, merged.forwardScheme, merged.forwardHost,
     merged.forwardPort, merged.preset, b(merged.websockets), b(merged.http2), b(merged.ssl),
     b(merged.requireLogin), b(merged.require2fa), b(merged.countryLock), merged.serverGroup,
     merged.serverIp, b(merged.enabled), merged.health, merged.certExpiresAt, merged.certDomain ?? "",
@@ -107,19 +107,19 @@ export function deleteHost(id: string): boolean {
 /** Replace the entire host set (used by config restore). */
 export function replaceAllHosts(hosts: ProxyHost[]): void {
   const insert = db.prepare(`
-    INSERT INTO hosts (id, name, emoji, domain, forwardScheme, forwardHost, forwardPort, preset,
+    INSERT INTO hosts (id, name, emoji, iconUrl, domain, forwardScheme, forwardHost, forwardPort, preset,
       websockets, http2, ssl, requireLogin, require2fa, countryLock, serverGroup, serverIp,
       enabled, health, certExpiresAt, certDomain, maintenanceMode, securityHeaders, hsts, rateLimit,
       blockExploits, ipAllow, ipDeny, customHeaders, customNginx, upstreams, lbMethod,
       protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, rateLimitRps, rateLimitBurst, createdAt, updatedAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   db.exec("BEGIN");
   try {
     db.prepare("DELETE FROM hosts").run();
     for (const h of hosts) {
       insert.run(
-        h.id, h.name, h.emoji, h.domain, h.forwardScheme, h.forwardHost, h.forwardPort, h.preset,
+        h.id, h.name, h.emoji, h.iconUrl ?? "", h.domain, h.forwardScheme, h.forwardHost, h.forwardPort, h.preset,
         b(h.websockets), b(h.http2), b(h.ssl), b(h.requireLogin), b(h.require2fa), b(h.countryLock),
         h.serverGroup, h.serverIp, b(h.enabled), h.health, h.certExpiresAt ?? null, h.certDomain ?? "",
         b(h.maintenanceMode), b(h.securityHeaders), b(h.hsts), b(h.rateLimit), b(h.blockExploits),
@@ -152,6 +152,7 @@ export function getTopology(gateway: { publicIp: string; gatewayIp: string }): T
       id: h.id,
       name: h.name,
       emoji: h.emoji,
+      iconUrl: h.iconUrl,
       domain: h.domain,
       port: h.forwardPort,
       health: h.health,

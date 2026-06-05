@@ -67,6 +67,7 @@ export const api = {
   saveSettings: (patch: Partial<Settings>) =>
     req<Settings>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
   detectPublicIp: () => req<{ ip: string | null; country: string | null }>("/network/detect-ip"),
+  searchIcons: (q: string) => req<{ name: string; url: string }[]>(`/icons?q=${encodeURIComponent(q)}`),
   topology: () => req<Topology>("/topology"),
   traffic: (range: string, metric: string = "requests", host?: string) =>
     req<Traffic>(`/traffic?range=${range}&metric=${metric}${host ? `&host=${encodeURIComponent(host)}` : ""}`),
@@ -442,6 +443,7 @@ export interface Exposure {
   id: string;
   name: string;
   emoji: string;
+  iconUrl: string;
   domain: string;
   https: boolean;
   login: boolean;

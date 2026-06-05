@@ -361,6 +361,7 @@ export function securityExposure() {
     id: h.id,
     name: h.name,
     emoji: h.emoji,
+    iconUrl: h.iconUrl,
     domain: h.domain,
     https: h.ssl,
     login: h.requireLogin,

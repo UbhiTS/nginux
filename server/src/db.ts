@@ -39,6 +39,7 @@ db.exec(`
     id            TEXT PRIMARY KEY,
     name          TEXT NOT NULL,
     emoji         TEXT NOT NULL DEFAULT '⚙️',
+    iconUrl       TEXT NOT NULL DEFAULT '',
     domain        TEXT NOT NULL UNIQUE,
     forwardScheme TEXT NOT NULL DEFAULT 'http',
     forwardHost   TEXT NOT NULL,
@@ -232,6 +233,16 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_approvals_status   ON approvals(status, ts);
 `);
 
+// Additive, idempotent migrations for columns added after a live DB was created
+// (CREATE TABLE IF NOT EXISTS won't add columns to an existing table). A fresh DB
+// already has the column from the schema above; an existing one gets it here.
+function ensureColumn(table: string, column: string, ddl: string): void {
+  const present = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+    .some((c) => c.name === column);
+  if (!present) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+ensureColumn("hosts", "iconUrl", "iconUrl TEXT NOT NULL DEFAULT ''");
+
 /** Trim the audit log so it can't grow without bound. Keeps recent rows by time
  *  and an absolute cap by count; returns how many rows were removed. */
 export function pruneAuditLog(retainDays = Number(process.env.NGINUX_AUDIT_RETAIN_DAYS ?? 90), hardCap = 50_000): number {
@@ -262,6 +273,7 @@ export function rowToHost(r: HostRow): ProxyHost {
     id: String(r.id),
     name: String(r.name),
     emoji: String(r.emoji),
+    iconUrl: r.iconUrl ? String(r.iconUrl) : "",
     domain: String(r.domain),
     forwardScheme: r.forwardScheme as ProxyHost["forwardScheme"],
     forwardHost: String(r.forwardHost),

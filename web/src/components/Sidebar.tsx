@@ -6,6 +6,7 @@ import { healthClass } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "./Avatar.tsx";
 import { BrandLogo } from "./BrandLogo.tsx";
+import { ServiceIcon } from "./ServiceIcon.tsx";
 import type { Theme } from "../theme.ts";
 
 interface Props {
@@ -91,7 +92,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
               aria-current={route.name === "host" && route.hostId === h.id ? "page" : undefined}
               onClick={() => navigate({ name: "host", hostId: h.id })}
             >
-              <span className="ce">{h.emoji}</span>
+              <span className="ce"><ServiceIcon emoji={h.emoji} iconUrl={h.iconUrl} size={16} /></span>
               {h.name}
               <span className={`dot ${h.enabled ? healthClass[h.health] : "n"}`} title={h.enabled ? undefined : "Paused"} />
             </button>

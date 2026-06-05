@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type AuditEvent, type Ban, type Exposure, type SecurityOverview } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { ServiceIcon } from "../components/ServiceIcon.tsx";
 
 type Tab = "overview" | "exposure" | "logins" | "failures" | "denylist";
 
@@ -117,7 +118,7 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
             {exposure.map((e) => (
               <div key={e.id} className="audit-row">
                 <div className="host-main">
-                  <div className="host-icon">{e.emoji}</div>
+                  <div className="host-icon"><ServiceIcon emoji={e.emoji} iconUrl={e.iconUrl} size={22} /></div>
                   <div>
                     <div className="host-name">{e.name}</div>
                     <div className="host-url">{e.domain}</div>
