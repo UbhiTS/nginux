@@ -205,11 +205,8 @@ export function reconcileImportedCerts(): void {
 
 function writeFiles(domain: string, keyPem: string, certPem: string) {
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  // Private key is owner-only (0600); the cert chain is public. On Windows mode is
-  // a no-op, but in the Linux container this keeps a leaked-readable key off a
-  // shared data volume. The host owner (root) can still manage the volume.
-  writeFileSync(join(dir, "privkey.pem"), keyPem, { mode: 0o600 });
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "privkey.pem"), keyPem); // default perms so the data volume stays host-manageable (see commit 01f8ffa)
   writeFileSync(join(dir, "fullchain.pem"), certPem);
 }
 
@@ -331,7 +328,7 @@ async function acmeAccountKey(): Promise<Buffer> {
   if (existsSync(ACCOUNT_KEY_PATH)) return readFileSync(ACCOUNT_KEY_PATH);
   const key = await acme.crypto.createPrivateKey();
   mkdirSync(CERT_DIR, { recursive: true });
-  writeFileSync(ACCOUNT_KEY_PATH, key, { mode: 0o600 }); // owner-only: it's a private key
+  writeFileSync(ACCOUNT_KEY_PATH, key); // default perms so the data volume stays host-manageable (see commit 01f8ffa)
   return key;
 }
 
