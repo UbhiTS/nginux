@@ -92,7 +92,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
               aria-current={route.name === "host" && route.hostId === h.id ? "page" : undefined}
               onClick={() => navigate({ name: "host", hostId: h.id })}
             >
-              <span className="ce"><ServiceIcon emoji={h.emoji} iconUrl={h.iconUrl} size={16} /></span>
+              <span className="ce"><ServiceIcon iconUrl={h.iconUrl} size={16} /></span>
               {h.name}
               <span className={`dot ${h.enabled ? healthClass[h.health] : "n"}`} title={h.enabled ? undefined : "Paused"} />
             </button>

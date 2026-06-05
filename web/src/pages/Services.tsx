@@ -92,7 +92,7 @@ export function Services({
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: h.id }); } }}
               >
                 <div className="host-main">
-                  <div className="host-icon"><ServiceIcon emoji={h.emoji} iconUrl={h.iconUrl} size={26} /></div>
+                  <div className="host-icon"><ServiceIcon iconUrl={h.iconUrl} size={26} /></div>
                   <div>
                     <div className="host-name">{h.name}</div>
                     <div className="host-url">{h.domain}</div>

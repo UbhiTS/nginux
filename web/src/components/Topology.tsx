@@ -407,7 +407,7 @@ export function Topology({
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: s.id }); } }}
                   >
                     <span className="svc-tag" style={{ background: PALETTE[idx % PALETTE.length] }} />
-                    <span className="svc-emoji"><ServiceIcon emoji={s.emoji} iconUrl={s.iconUrl} size={16} /></span>
+                    <span className="svc-emoji"><ServiceIcon iconUrl={s.iconUrl} size={16} /></span>
                     <div className="svc-body">
                       <div className="svc-name">
                         {s.name} <span className="port">:{s.port}</span>

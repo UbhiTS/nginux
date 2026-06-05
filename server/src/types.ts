@@ -7,8 +7,7 @@ export type ForwardScheme = "http" | "https";
 export interface ProxyHost {
   id: string;
   name: string;
-  emoji: string;
-  /** Optional image-logo URL (dashboard-icons CDN, or a data: URL). Empty = use the emoji. */
+  /** Dashboard-icons logo URL. Empty shows a neutral placeholder. */
   iconUrl: string;
   /** Public domain, e.g. "plex.ubhi.io" */
   domain: string;
@@ -135,7 +134,6 @@ export interface TopologyServer {
   services: Array<{
     id: string;
     name: string;
-    emoji: string;
     iconUrl: string;
     domain: string;
     port: number;

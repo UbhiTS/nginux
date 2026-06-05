@@ -5,8 +5,7 @@ export type ForwardScheme = "http" | "https";
 export interface ProxyHost {
   id: string;
   name: string;
-  emoji: string;
-  /** Optional image-logo URL (dashboard-icons CDN, or a data: URL). Empty = use the emoji. */
+  /** Dashboard-icons logo URL. Empty shows a neutral placeholder. */
   iconUrl: string;
   domain: string;
   forwardScheme: ForwardScheme;
@@ -77,7 +76,7 @@ export interface Settings {
 export interface Preset {
   id: string;
   label: string;
-  emoji: string;
+  icon: string;
   category: string;
   /** Plain-language one-liner: what the app is. */
   desc: string;
@@ -98,7 +97,6 @@ export interface TopologyServer {
   services: Array<{
     id: string;
     name: string;
-    emoji: string;
     iconUrl: string;
     domain: string;
     port: number;

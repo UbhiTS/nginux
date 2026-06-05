@@ -139,7 +139,7 @@ export function HostDetail({
           <Icon.arrowLeft />
         </button>
         <h1>
-          <ServiceIcon emoji={host.emoji} iconUrl={host.iconUrl} size={22} /> {host.name}
+          <ServiceIcon iconUrl={host.iconUrl} size={22} /> {host.name}
         </h1>
         {host.enabled ? (
           <span className={`pill ${host.health === "down" ? "r" : host.health === "degraded" ? "y" : "g"}`}>
@@ -174,7 +174,7 @@ export function HostDetail({
       {confirmDel && (
         <ConfirmDialog
           danger
-          title={`Remove ${host.emoji} ${host.name}?`}
+          title={`Remove ${host.name}?`}
           message={<>This takes <b>{host.domain}</b> offline and deletes its proxy configuration. You can expose it again later.</>}
           confirmLabel="Remove service"
           busy={deleting}
@@ -584,16 +584,15 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       <h2 style={{ fontSize: 18, marginBottom: 18 }}>Edit {draft.name}</h2>
       <div className="field"><label>Icon &amp; name</label>
         <div className="input-group">
-          <span className="host-icon" style={{ width: 40, height: 40, flexShrink: 0 }} aria-label="Icon preview"><ServiceIcon emoji={draft.emoji} iconUrl={draft.iconUrl} size={26} /></span>
+          <span className="host-icon" style={{ width: 40, height: 40, flexShrink: 0 }} aria-label="Icon preview"><ServiceIcon iconUrl={draft.iconUrl} size={26} /></span>
           <input className="input" value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="Service name" />
         </div>
         <div className="input-group" style={{ marginTop: 8 }}>
-          <input className="input" style={{ maxWidth: 84, textAlign: "center", fontSize: 18 }} value={draft.emoji} onChange={(e) => set({ emoji: e.target.value, iconUrl: "" })} maxLength={16} aria-label="Emoji" title="Type an emoji (clears the logo)" placeholder="🙂" />
           <div className="search" style={{ flex: 1 }}>
             <Icon.search />
             <input placeholder="Search app logos - plex, grafana, nextcloud…" value={iconQuery} onChange={(e) => setIconQuery(e.target.value)} />
           </div>
-          {draft.iconUrl && <button className="btn btn-sm" onClick={() => set({ iconUrl: "" })} title="Use the emoji instead">Use emoji</button>}
+          {draft.iconUrl && <button className="btn btn-sm" onClick={() => set({ iconUrl: "" })} title="Clear the logo">Clear</button>}
         </div>
         {iconResults.length > 0 && (
           <div className="icon-grid">
@@ -604,7 +603,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
             ))}
           </div>
         )}
-        <div className="hint">Pick a real app logo from <a href="https://dashboardicons.com" target="_blank" rel="noreferrer noopener">dashboard-icons</a> (2,900+), or type an emoji (OS picker: Windows <b>Win + .</b> · macOS <b>Cmd + Ctrl + Space</b>).</div>
+        <div className="hint">Pick a real app logo from the <a href="https://dashboardicons.com" target="_blank" rel="noreferrer noopener">dashboard-icons</a> catalog (2,900+). Clearing it shows a neutral placeholder.</div>
       </div>
       <div className="field"><label>Public domain / label</label><input className="input" value={draft.domain} onChange={(e) => set({ domain: e.target.value })} /></div>
       <div className="field">

@@ -442,7 +442,6 @@ export interface Ban {
 export interface Exposure {
   id: string;
   name: string;
-  emoji: string;
   iconUrl: string;
   domain: string;
   https: boolean;

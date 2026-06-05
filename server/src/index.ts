@@ -385,7 +385,6 @@ const customNginxField = z.string().default("").refine(
 
 const hostInput = z.object({
   name: z.string().min(1).max(100).refine((s) => !hasNginxMetachars(s), "Name may not contain ; { } or line breaks."),
-  emoji: z.string().max(16).refine((s) => !hasNginxMetachars(s), "Invalid emoji.").default("⚙️"),
   iconUrl: z.string().max(4096).refine((s) => s === "" || /^https:\/\/cdn\.jsdelivr\.net\//.test(s) || /^data:image\//.test(s), "Icon must be a dashboard-icons URL or an uploaded image.").default(""),
   domain: z.string().min(1).max(253).refine(isHostname, "Invalid domain/hostname."),
   forwardScheme: z.enum(["http", "https"]).default("http"),

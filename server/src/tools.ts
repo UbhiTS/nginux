@@ -246,7 +246,7 @@ export const TOOLS: Record<string, Tool> = {
       const port = Number(a.forwardPort);
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid forwardPort.");
       const host = createHost({
-        name: String(a.name), emoji: "⚙️", domain,
+        name: String(a.name), domain,
         forwardScheme: a.forwardScheme === "https" ? "https" : "http", forwardHost, forwardPort: port,
         preset: String(a.preset ?? "custom"), websockets: a.websockets === true, http2: a.http2 !== false,
         ssl: a.ssl !== false, requireLogin: a.requireLogin !== false, require2fa: a.require2fa === true,

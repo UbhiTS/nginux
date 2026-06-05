@@ -38,7 +38,6 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS hosts (
     id            TEXT PRIMARY KEY,
     name          TEXT NOT NULL,
-    emoji         TEXT NOT NULL DEFAULT '⚙️',
     iconUrl       TEXT NOT NULL DEFAULT '',
     domain        TEXT NOT NULL UNIQUE,
     forwardScheme TEXT NOT NULL DEFAULT 'http',
@@ -272,7 +271,6 @@ export function rowToHost(r: HostRow): ProxyHost {
   return {
     id: String(r.id),
     name: String(r.name),
-    emoji: String(r.emoji),
     iconUrl: r.iconUrl ? String(r.iconUrl) : "",
     domain: String(r.domain),
     forwardScheme: r.forwardScheme as ProxyHost["forwardScheme"],
@@ -404,17 +402,18 @@ export function seedIfEmpty(): void {
   if (count > 0) return;
 
   const now = new Date().toISOString();
+  const icon = (slug: string) => `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/${slug}.svg`;
   const seed: Array<Partial<ProxyHost> & { id: string }> = [
-    { id: "plex", name: "Plex", emoji: "🎬", domain: "plex.ubhi.io", forwardHost: "192.168.1.50", forwardPort: 32400, preset: "plex", websockets: true, requireLogin: true, require2fa: true, countryLock: true, serverGroup: "media-server", serverIp: "192.168.1.50", health: "online", certExpiresAt: daysFromNow(67) },
-    { id: "immich", name: "Immich", emoji: "📷", domain: "photos.ubhi.io", forwardHost: "192.168.1.50", forwardPort: 2283, preset: "immich", websockets: true, requireLogin: true, require2fa: true, serverGroup: "media-server", serverIp: "192.168.1.50", health: "online", certExpiresAt: daysFromNow(67) },
-    { id: "nextcloud", name: "Nextcloud", emoji: "☁️", domain: "cloud.ubhi.io", forwardHost: "192.168.1.60", forwardPort: 443, forwardScheme: "https", preset: "nextcloud", requireLogin: false, serverGroup: "apps-server", serverIp: "192.168.1.60", health: "degraded", certExpiresAt: daysFromNow(30) },
-    { id: "ha", name: "Home Assistant", emoji: "🏠", domain: "ha.ubhi.io", forwardHost: "192.168.1.60", forwardPort: 8123, preset: "homeassistant", websockets: true, requireLogin: true, require2fa: true, serverGroup: "apps-server", serverIp: "192.168.1.60", health: "online", certExpiresAt: daysFromNow(67) },
-    { id: "vault", name: "Vaultwarden", emoji: "🔐", domain: "vault.ubhi.io", forwardHost: "192.168.1.60", forwardPort: 8080, preset: "vaultwarden", websockets: true, requireLogin: true, require2fa: true, serverGroup: "apps-server", serverIp: "192.168.1.60", health: "online", certExpiresAt: daysFromNow(67) },
-    { id: "grafana", name: "Grafana", emoji: "📊", domain: "grafana.ubhi.io", forwardHost: "192.168.1.70", forwardPort: 3000, preset: "grafana", websockets: true, requireLogin: false, serverGroup: "monitor-vm", serverIp: "192.168.1.70", health: "down", certExpiresAt: daysFromNow(52) },
+    { id: "plex", name: "Plex", iconUrl: icon("plex"), domain: "plex.ubhi.io", forwardHost: "192.168.1.50", forwardPort: 32400, preset: "plex", websockets: true, requireLogin: true, require2fa: true, countryLock: true, serverGroup: "media-server", serverIp: "192.168.1.50", health: "online", certExpiresAt: daysFromNow(67) },
+    { id: "immich", name: "Immich", iconUrl: icon("immich"), domain: "photos.ubhi.io", forwardHost: "192.168.1.50", forwardPort: 2283, preset: "immich", websockets: true, requireLogin: true, require2fa: true, serverGroup: "media-server", serverIp: "192.168.1.50", health: "online", certExpiresAt: daysFromNow(67) },
+    { id: "nextcloud", name: "Nextcloud", iconUrl: icon("nextcloud"), domain: "cloud.ubhi.io", forwardHost: "192.168.1.60", forwardPort: 443, forwardScheme: "https", preset: "nextcloud", requireLogin: false, serverGroup: "apps-server", serverIp: "192.168.1.60", health: "degraded", certExpiresAt: daysFromNow(30) },
+    { id: "ha", name: "Home Assistant", iconUrl: icon("home-assistant"), domain: "ha.ubhi.io", forwardHost: "192.168.1.60", forwardPort: 8123, preset: "homeassistant", websockets: true, requireLogin: true, require2fa: true, serverGroup: "apps-server", serverIp: "192.168.1.60", health: "online", certExpiresAt: daysFromNow(67) },
+    { id: "vault", name: "Vaultwarden", iconUrl: icon("vaultwarden"), domain: "vault.ubhi.io", forwardHost: "192.168.1.60", forwardPort: 8080, preset: "vaultwarden", websockets: true, requireLogin: true, require2fa: true, serverGroup: "apps-server", serverIp: "192.168.1.60", health: "online", certExpiresAt: daysFromNow(67) },
+    { id: "grafana", name: "Grafana", iconUrl: icon("grafana"), domain: "grafana.ubhi.io", forwardHost: "192.168.1.70", forwardPort: 3000, preset: "grafana", websockets: true, requireLogin: false, serverGroup: "monitor-vm", serverIp: "192.168.1.70", health: "down", certExpiresAt: daysFromNow(52) },
   ];
 
   const insert = db.prepare(`
-    INSERT INTO hosts (id, name, emoji, domain, forwardScheme, forwardHost, forwardPort, preset,
+    INSERT INTO hosts (id, name, iconUrl, domain, forwardScheme, forwardHost, forwardPort, preset,
       websockets, http2, ssl, requireLogin, require2fa, countryLock, serverGroup, serverIp,
       enabled, health, certExpiresAt, createdAt, updatedAt)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -427,7 +426,7 @@ export function seedIfEmpty(): void {
 
   for (const h of seed) {
     insert.run(
-      h.id, h.name!, h.emoji!, h.domain!, h.forwardScheme ?? "http", h.forwardHost!, h.forwardPort!, h.preset ?? "custom",
+      h.id, h.name!, h.iconUrl ?? "", h.domain!, h.forwardScheme ?? "http", h.forwardHost!, h.forwardPort!, h.preset ?? "custom",
       h.websockets ? 1 : 0, 1, 1, h.requireLogin ? 1 : 0, h.require2fa ? 1 : 0, h.countryLock ? 1 : 0,
       h.serverGroup ?? "default", h.serverIp ?? "", 1, h.health ?? "unknown", h.certExpiresAt ?? null, now, now,
     );

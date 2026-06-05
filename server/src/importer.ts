@@ -67,7 +67,6 @@ export function importNginxConf(text: string): { imported: string[]; skipped: st
     }
     const host: NewProxyHost = {
       name: p.domain.split(".")[0].replace(/^\w/, (c) => c.toUpperCase()),
-      emoji: "📥",
       domain: p.domain,
       forwardScheme: p.forwardScheme,
       forwardHost: p.forwardHost,

@@ -3,6 +3,7 @@ import type { Route } from "../App.tsx";
 import { api, type Certificate } from "../api.ts";
 import type { ApplyResult, Preset, Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { ServiceIcon, iconUrlForSlug } from "../components/ServiceIcon.tsx";
 
 type CertChoice = "existing" | "dns-01" | "http-01" | "selfsigned";
 const MAX_CERT_ATTEMPTS = 3;
@@ -161,7 +162,7 @@ export function Wizard({
     try {
       const res = await api.createHost({
         name: preset.label.split(" ")[0] === "Custom" ? sub || "Service" : preset.label.split(" / ")[0],
-        emoji: preset.emoji,
+        iconUrl: iconUrlForSlug(preset.icon),
         domain,
         forwardScheme: parsed.scheme,
         forwardHost: parsed.host,
@@ -218,7 +219,7 @@ export function Wizard({
           {step === 1 && (() => {
             const card = (p: Preset) => (
               <div key={p.id} className={`preset${preset?.id === p.id ? " selected" : ""}`} onClick={() => setPreset(p)}>
-                <div className="emoji">{p.emoji}</div>
+                <div className="emoji"><ServiceIcon iconUrl={iconUrlForSlug(p.icon)} size={28} /></div>
                 <div className="pname">{p.label}</div>
               </div>
             );
@@ -245,7 +246,7 @@ export function Wizard({
                     onClick={() => setPreset(customP)}
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPreset(customP); } }}
                   >
-                    <div className="pp-emoji">{customP.emoji}</div>
+                    <div className="pp-emoji"><ServiceIcon iconUrl={iconUrlForSlug(customP.icon)} size={26} /></div>
                     <div className="pp-text">
                       <div className="pp-name">Custom / Generic</div>
                       <div className="pp-sub">Not in the list? Start from a blank service with sensible defaults.</div>
