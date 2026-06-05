@@ -111,7 +111,15 @@ jobs:
         run: |
           git tag "$NEXT" "${{ github.sha }}"
           git push origin "$NEXT"
+          # Use the curated, version-controlled notes and append the version-specific
+          # image line, so every release ships a real description instead of an empty body.
+          {
+            cat RELEASE_NOTES.md
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Docker image:** \`$IMAGE:$NEXT\` (also tagged \`:latest\`)."
+          } > "$RUNNER_TEMP/release-notes.md"
           gh release create "$NEXT" \
             --title "$NEXT" \
-            --generate-notes \
-            --notes "Docker image: \`$IMAGE:$NEXT\` (also tagged \`:latest\`)."
+            --notes-file "$RUNNER_TEMP/release-notes.md"
