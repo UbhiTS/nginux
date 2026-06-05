@@ -28,13 +28,25 @@ const toBan = (r: Row): Ban => ({
   createdAt: String(r.createdAt), expiresAt: r.expiresAt ? String(r.expiresAt) : null,
 });
 
-function pruneExpired() {
-  db.prepare("DELETE FROM bans WHERE expiresAt IS NOT NULL AND expiresAt < ?").run(new Date().toISOString());
+/** Delete expired rows; returns how many were removed. Run on a timer, not on the
+ *  read path (a SELECT shouldn't issue a write). */
+function pruneExpired(): number {
+  return Number(db.prepare("DELETE FROM bans WHERE expiresAt IS NOT NULL AND expiresAt < ?").run(new Date().toISOString()).changes);
+}
+
+// Coalesce nginx reloads: an auto-ban storm (many bans within seconds) would
+// otherwise trigger a reload per ban. Debounce so a burst yields one reload.
+let applyTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleBannedApply(): void {
+  if (applyTimer) return;
+  applyTimer = setTimeout(() => { applyTimer = null; void applyConfig(); }, 750);
+  applyTimer.unref?.();
 }
 
 export function listBans(): Ban[] {
-  pruneExpired();
-  return (db.prepare("SELECT * FROM bans ORDER BY createdAt DESC").all() as Row[]).map(toBan);
+  // Filter expired in the query (no write on read); the prune timer cleans the table.
+  return (db.prepare("SELECT * FROM bans WHERE expiresAt IS NULL OR expiresAt > ? ORDER BY createdAt DESC")
+    .all(new Date().toISOString()) as Row[]).map(toBan);
 }
 
 export function addBan(ip: string, reason: string, source: Ban["source"] = "manual", ttlMs = BAN_MS): Ban {
@@ -44,13 +56,13 @@ export function addBan(ip: string, reason: string, source: Ban["source"] = "manu
     "ON CONFLICT(ip) DO UPDATE SET reason=excluded.reason, source=excluded.source, expiresAt=excluded.expiresAt",
   ).run(ip, reason, source, new Date(now).toISOString(), ttlMs ? new Date(now + ttlMs).toISOString() : null);
   writeBannedConf();
-  void applyConfig();
+  scheduleBannedApply();
   return toBan(db.prepare("SELECT * FROM bans WHERE ip = ?").get(ip) as Row);
 }
 
 export function removeBan(ip: string): boolean {
   const changed = db.prepare("DELETE FROM bans WHERE ip = ?").run(ip).changes > 0;
-  if (changed) { writeBannedConf(); void applyConfig(); }
+  if (changed) { writeBannedConf(); scheduleBannedApply(); }
   return changed;
 }
 
@@ -66,6 +78,10 @@ const failures = new Map<string, number[]>();
 
 export function startBanEngine(): void {
   writeBannedConf();
+  // Periodically drop expired rows and, if any went away, refresh the deny-list.
+  setInterval(() => {
+    try { if (pruneExpired() > 0) { writeBannedConf(); scheduleBannedApply(); } } catch { /* ignore */ }
+  }, 3600_000).unref?.();
   subscribe((e) => {
     if (e.type !== "login.failed") return;
     const ip = String(e.data?.ip ?? "").trim();

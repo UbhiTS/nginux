@@ -101,10 +101,14 @@ function fillLogBucket(lb: LogBucket, e: LogEntry): void {
   bumpMin(lb.host, e.host);
   if (e.country) bumpMin(lb.country, e.country);
 }
-/** Get-or-create a time bucket, evicting the oldest key once over `cap`. */
+/** Get-or-create a time bucket, evicting the oldest key once over `cap`. Time
+ *  buckets are inserted in increasing time order (live tailing and chronological
+ *  replay), so the first-inserted key (Map preserves insertion order) is the
+ *  oldest - an O(1) eviction instead of an O(n) `Math.min(...keys())` spread on
+ *  every line once the map is at cap. */
 function getLogBucket(map: Map<number, LogBucket>, key: number, cap: number): LogBucket {
   let b = map.get(key);
-  if (!b) { b = newLogBucket(); map.set(key, b); if (map.size > cap) map.delete(Math.min(...map.keys())); }
+  if (!b) { b = newLogBucket(); map.set(key, b); if (map.size > cap) map.delete(map.keys().next().value as number); }
   return b;
 }
 let totalRequests = 0;
@@ -139,7 +143,7 @@ export function ingest(e: LogEntry): void {
   const b = minuteBuckets.get(minute) ?? emptyStat();
   bumpStat(b, e);
   minuteBuckets.set(minute, b);
-  if (minuteBuckets.size > 1500) minuteBuckets.delete(Math.min(...minuteBuckets.keys()));
+  if (minuteBuckets.size > 1500) minuteBuckets.delete(minuteBuckets.keys().next().value as number);
 
   // Rich per-minute + per-hour breakdowns for the range-scoped Logs summary.
   // Minute buckets (~25h retained) drive live/1h/4h/1d; hour rollups drive 7d/30d.
@@ -150,30 +154,30 @@ export function ingest(e: LogEntry): void {
   const sb = secondBuckets.get(second) ?? emptyStat();
   bumpStat(sb, e);
   secondBuckets.set(second, sb);
-  if (secondBuckets.size > 200) secondBuckets.delete(Math.min(...secondBuckets.keys()));
+  if (secondBuckets.size > 200) secondBuckets.delete(secondBuckets.keys().next().value as number);
 
   let hsec = hostSecond.get(second);
   if (!hsec) { hsec = new Map(); hostSecond.set(second, hsec); }
   const hsv = hsec.get(e.host) ?? emptyStat();
   bumpStat(hsv, e); hsec.set(e.host, hsv);
-  if (hostSecond.size > 150) hostSecond.delete(Math.min(...hostSecond.keys()));
+  if (hostSecond.size > 150) hostSecond.delete(hostSecond.keys().next().value as number);
 
   let hm = hostMinute.get(minute);
   if (!hm) { hm = new Map(); hostMinute.set(minute, hm); }
   const hmv = hm.get(e.host) ?? emptyStat();
   bumpStat(hmv, e); hm.set(e.host, hmv);
-  if (hostMinute.size > 1500) hostMinute.delete(Math.min(...hostMinute.keys()));
+  if (hostMinute.size > 1500) hostMinute.delete(hostMinute.keys().next().value as number);
 
   // Hour rollups (global + per-host) for the long-range traffic graph.
   const hour = Math.floor(Date.parse(e.ts) / 3600_000);
   const sbh = statHour.get(hour) ?? emptyStat();
   bumpStat(sbh, e); statHour.set(hour, sbh);
-  if (statHour.size > HOUR_CAP) statHour.delete(Math.min(...statHour.keys()));
+  if (statHour.size > HOUR_CAP) statHour.delete(statHour.keys().next().value as number);
   let hmh = hostStatHour.get(hour);
   if (!hmh) { hmh = new Map(); hostStatHour.set(hour, hmh); }
   const hmhv = hmh.get(e.host) ?? emptyStat();
   bumpStat(hmhv, e); hmh.set(e.host, hmhv);
-  if (hostStatHour.size > HOUR_CAP) hostStatHour.delete(Math.min(...hostStatHour.keys()));
+  if (hostStatHour.size > HOUR_CAP) hostStatHour.delete(hostStatHour.keys().next().value as number);
 
   const bh = byHostStat.get(e.host) ?? emptyStat();
   bumpStat(bh, e); byHostStat.set(e.host, bh);

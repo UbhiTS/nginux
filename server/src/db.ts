@@ -263,7 +263,9 @@ export function rowToHost(r: HostRow): ProxyHost {
     name: String(r.name),
     iconUrl: String(r.iconUrl),
     domain: String(r.domain),
-    forwardScheme: r.forwardScheme as ProxyHost["forwardScheme"],
+    // Whitelist on read-back: this value is emitted into `proxy_pass ${scheme}://`,
+    // so coerce anything unexpected to "http" rather than trusting the stored cell.
+    forwardScheme: r.forwardScheme === "https" ? "https" : "http",
     forwardHost: String(r.forwardHost),
     forwardPort: Number(r.forwardPort),
     preset: String(r.preset),

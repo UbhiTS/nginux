@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db, getSettings, redactSettings, saveSettings } from "./db.ts";
 import { listEvents, listUsers, logEvent, securityExposure, securityOverview, type User } from "./auth.ts";
-import { createHost, deleteHost, getHost, getTopology, listHosts, updateHost } from "./repo.ts";
+import { createHost, deleteHost, getHost, getHostByDomain, getTopology, listHosts, updateHost } from "./repo.ts";
 import { deleteCert, ensureCert, getCert, getCertDetails, issue, listCerts, setAutoRenew } from "./certs.ts";
 import { applyConfig, generateHostConfig, generateSniPassthrough, generateStreamConfig } from "./nginx.ts";
 import { deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
@@ -15,8 +15,18 @@ import { isHeaderName, isHost, isHostPort, isHostname, isIpOrCidr, isLocationPat
 import type { NewProxyHost, ProxyHost, Settings } from "./types.ts";
 
 // Agents reach updateHost/createHost WITHOUT the REST zod schema, so validate
-// here too. Fields an agent may never set via tools (raw-config / managed).
-const FORBIDDEN_TOOL_FIELDS = new Set(["id", "domain", "customNginx", "health", "certExpiresAt", "createdAt", "updatedAt"]);
+// here too. Fields an agent may never set via the generic update_service tool:
+//  - raw-config / DB-managed (id, domain, customNginx, health, timestamps);
+//  - security POSTURE fields. Weakening protection must not be possible through a
+//    control-scope, auto-approvable edit. Raising the login gate has its own tool
+//    (enable_login); lowering it requires the security scope + approval
+//    (disable_login). The rest (mtls, countryLock, header/exploit toggles, IP
+//    allow/deny) are admin-only via the REST UI - never via an agent tool.
+const FORBIDDEN_TOOL_FIELDS = new Set([
+  "id", "domain", "customNginx", "health", "certExpiresAt", "createdAt", "updatedAt",
+  "requireLogin", "require2fa", "mtls", "countryLock", "securityHeaders", "hsts",
+  "blockExploits", "ipAllow", "ipDeny",
+]);
 const splitList = (s: string) => String(s).split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
 const splitLines = (s: string) => String(s).split("\n").map((x) => x.trim()).filter(Boolean);
 
@@ -30,13 +40,27 @@ function sanitizeHostPatch(raw: Record<string, unknown>): Partial<ProxyHost> {
   if (typeof patch.name === "string" && /[;{}\n\r]/.test(patch.name)) throw new Error("Invalid name.");
   if (typeof patch.forwardHost === "string" && !isHost(patch.forwardHost)) throw new Error("Invalid forwardHost.");
   if (typeof patch.serverIp === "string" && patch.serverIp && !isHost(patch.serverIp)) throw new Error("Invalid serverIp.");
-  for (const f of ["ipAllow", "ipDeny"]) {
-    if (typeof patch[f] === "string" && !splitList(patch[f] as string).every(isIpOrCidr)) throw new Error(`Invalid ${f} entry.`);
-  }
+  // forwardScheme is emitted raw into `proxy_pass ${scheme}://...`; the REST schema
+  // pins it to the enum, so do the same here or an agent could inject directives.
+  if (patch.forwardScheme !== undefined && patch.forwardScheme !== "http" && patch.forwardScheme !== "https") throw new Error("Invalid forwardScheme.");
+  // certDomain becomes a cert-dir path segment - same charset/no-traversal rule as REST.
+  if (typeof patch.certDomain === "string" && patch.certDomain !== "" && (!/^[a-z0-9.*_-]+$/i.test(patch.certDomain) || patch.certDomain.includes(".."))) throw new Error("Invalid certDomain.");
   if (typeof patch.upstreams === "string" && !splitLines(patch.upstreams as string).every(isHostPort)) throw new Error("Invalid upstreams entry.");
   if (typeof patch.customHeaders === "string" && !splitLines(patch.customHeaders as string).every((l) => { const i = l.indexOf(":"); return i > 0 && isHeaderName(l.slice(0, i).trim()) && !/[\n\r"]/.test(l.slice(i + 1)); })) throw new Error("Invalid customHeaders.");
   if (typeof patch.pathRules === "string" && !splitLines(patch.pathRules as string).every((l) => { const [p, t, ...rest] = l.split(/\s+/); return rest.length === 0 && isLocationPath(p) && isHostPort(t); })) throw new Error("Invalid pathRules.");
   return patch as Partial<ProxyHost>;
+}
+
+/** Would exposing `domain` hijack the domain NginUX itself runs on away from the
+ *  control plane? (Mirror of the REST guard; forwarding TO :4600 is allowed.) */
+function wouldHijackControlPlane(domain: string, forwardPort: number): boolean {
+  const raw = getSettings().publicUrl?.trim();
+  if (!raw) return false;
+  let h: string;
+  try { h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase(); }
+  catch { return false; }
+  if (h !== domain.toLowerCase()) return false;
+  return forwardPort !== Number(process.env.PORT ?? 4600);
 }
 
 export type Tier = "read" | "low" | "medium" | "high";
@@ -245,6 +269,10 @@ export const TOOLS: Record<string, Tool> = {
       if (!isHost(forwardHost)) throw new Error("Invalid forwardHost.");
       const port = Number(a.forwardPort);
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid forwardPort.");
+      // Mirror the REST guards: clear duplicate-domain error, and don't let an
+      // agent repoint NginUX's own portal domain away from the control plane.
+      if (getHostByDomain(domain)) throw new Error(`${domain} is already in use.`);
+      if (wouldHijackControlPlane(domain, port)) throw new Error("That domain is where NginUX itself runs; forward it to the control plane on port 4600 or pick another.");
       const host = createHost({
         name: String(a.name), domain,
         forwardScheme: a.forwardScheme === "https" ? "https" : "http", forwardHost, forwardPort: port,

@@ -16,7 +16,7 @@ export function isHostname(s: string): boolean {
   return HOSTNAME_RE.test(s) || LABEL_RE.test(s);
 }
 
-export function isIpv4(s: string): boolean {
+function isIpv4(s: string): boolean {
   return IPV4_RE.test(s);
 }
 

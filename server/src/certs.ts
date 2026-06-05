@@ -7,6 +7,7 @@ import acme from "acme-client";
 import { db, getSettings } from "./db.ts";
 import { getDnsProvider, recordName } from "./dns.ts";
 import { logEvent } from "./auth.ts";
+import { applyConfig } from "./nginx.ts";
 import { assertWithin } from "./validate.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -45,6 +46,12 @@ export interface Certificate {
 }
 
 type Row = Record<string, unknown>;
+/** Parse the stored SANs JSON, falling back to [domain] so one corrupt row can't
+ *  throw out of listCerts() (which feeds renewal, notifications, and the UI). */
+function parseSans(raw: unknown, domain: string): string[] {
+  try { const a = JSON.parse(String(raw)); return Array.isArray(a) && a.length ? a.map(String) : [domain]; }
+  catch { return [domain]; }
+}
 function toCert(r: Row): Certificate {
   const notAfter = r.notAfter ? String(r.notAfter) : null;
   const daysRemaining = notAfter
@@ -57,7 +64,7 @@ function toCert(r: Row): Certificate {
     method: r.method as CertMethod,
     notBefore: r.notBefore ? String(r.notBefore) : null,
     notAfter,
-    sans: JSON.parse(String(r.sans)),
+    sans: parseSans(r.sans, String(r.domain)),
     wildcard: !!r.wildcard,
     autoRenew: !!r.autoRenew,
     lastError: r.lastError ? String(r.lastError) : null,
@@ -198,8 +205,11 @@ export function reconcileImportedCerts(): void {
 
 function writeFiles(domain: string, keyPem: string, certPem: string) {
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "privkey.pem"), keyPem); // default perms so the data volume stays host-manageable
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // Private key is owner-only (0600); the cert chain is public. On Windows mode is
+  // a no-op, but in the Linux container this keeps a leaked-readable key off a
+  // shared data volume. The host owner (root) can still manage the volume.
+  writeFileSync(join(dir, "privkey.pem"), keyPem, { mode: 0o600 });
   writeFileSync(join(dir, "fullchain.pem"), certPem);
 }
 
@@ -236,7 +246,9 @@ export function importCertFiles(files: { path: string; content: string }[]): Imp
       keyOk = c.checkPrivateKey(createPrivateKey(keyFile.content));
       info = parseLeaf(certFile.content);
     } catch { skipped.push({ name: label, reason: "couldn't parse the certificate" }); continue; }
-    if (!domain || !/^[a-z0-9.*-]+$/i.test(domain)) { skipped.push({ name: label, reason: "no valid domain (CN) in the certificate" }); continue; }
+    // CN becomes a cert-dir path segment - reject traversal explicitly (writeFiles'
+    // assertWithin is the backstop, but don't rely on it alone).
+    if (!domain || !/^[a-z0-9.*-]+$/i.test(domain) || domain.includes("..")) { skipped.push({ name: label, reason: "no valid domain (CN) in the certificate" }); continue; }
     if (!keyOk) { skipped.push({ name: domain, reason: "the private key doesn't match the certificate" }); continue; }
     try {
       writeFiles(domain, keyFile.content, certFile.content);
@@ -319,7 +331,7 @@ async function acmeAccountKey(): Promise<Buffer> {
   if (existsSync(ACCOUNT_KEY_PATH)) return readFileSync(ACCOUNT_KEY_PATH);
   const key = await acme.crypto.createPrivateKey();
   mkdirSync(CERT_DIR, { recursive: true });
-  writeFileSync(ACCOUNT_KEY_PATH, key); // default perms so the data volume stays host-manageable
+  writeFileSync(ACCOUNT_KEY_PATH, key, { mode: 0o600 }); // owner-only: it's a private key
   return key;
 }
 
@@ -405,27 +417,41 @@ export async function ensureCert(domain: string): Promise<void> {
 
 /** Re-issue certs that are within the renewal lead window. */
 export async function renewDue(): Promise<void> {
+  let renewed = 0;
   for (const c of listCerts()) {
     if (!c.autoRenew || c.daysRemaining === null) continue;
     if (c.daysRemaining > RENEW_LEAD_DAYS) continue;
     try {
       await issue(c.domain, c.method);
+      renewed++;
     } catch {
       /* error already recorded on the cert */
     }
+  }
+  // issue() only writes the new cert/key to disk; nginx caches certs in memory and
+  // won't serve the fresh one until reloaded. The manual renew paths apply config
+  // themselves, but the background scheduler must too - otherwise an auto-renewed
+  // cert sits unused on disk and the live cert can silently expire. Reload once,
+  // outside the per-cert loop, so one failure doesn't skip the others.
+  if (renewed > 0) {
+    try { await applyConfig(); } catch { /* a failed reload is logged by applyConfig's callers; the certs are on disk */ }
   }
 }
 
 export function startRenewalScheduler(): void {
   // check daily; also refresh status flags from expiry
   const tick = () => {
-    for (const c of listCerts()) {
-      if (c.notAfter) {
-        const st = statusFromExpiry(new Date(c.notAfter));
-        if (st !== c.status) db.prepare("UPDATE certificates SET status = ? WHERE domain = ?").run(st, c.domain);
+    try {
+      for (const c of listCerts()) {
+        if (c.notAfter) {
+          const st = statusFromExpiry(new Date(c.notAfter));
+          if (st !== c.status) db.prepare("UPDATE certificates SET status = ? WHERE domain = ?").run(st, c.domain);
+        }
       }
+      void renewDue();
+    } catch {
+      /* a transient DB error in one tick must not kill the daily interval */
     }
-    void renewDue();
   };
   setInterval(tick, 24 * 3600_000).unref?.();
 }

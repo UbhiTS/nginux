@@ -66,7 +66,9 @@ export function deleteWebhook(id: string): boolean {
   return db.prepare("DELETE FROM webhooks WHERE id = ?").run(id).changes > 0;
 }
 
-function matches(patterns: string[], type: string): boolean {
+/** Does an event `type` match a subscriber's pattern list? Supports "*" (all),
+ *  exact match, and "prefix.*" (e.g. "cert.*"). Shared with the notify channels. */
+export function matchesEvent(patterns: string[], type: string): boolean {
   return patterns.some((p) => p === "*" || p === type || (p.endsWith(".*") && type.startsWith(p.slice(0, -1))));
 }
 
@@ -74,7 +76,7 @@ async function deliverWebhooks(e: NgxEvent): Promise<void> {
   const rows = db.prepare("SELECT * FROM webhooks").all() as Row[];
   for (const r of rows) {
     const wh = toWebhook(r);
-    if (!matches(wh.events, e.type)) continue;
+    if (!matchesEvent(wh.events, e.type)) continue;
     // Defense in depth: never deliver to a link-local/metadata host even if a
     // record predates URL validation.
     try { if (isDangerousHost(new URL(wh.url).hostname)) continue; } catch { continue; }

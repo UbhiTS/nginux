@@ -102,7 +102,7 @@ export async function ensureClientCA(domain: string): Promise<void> {
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   const caCrt = join(dir, "client-ca.crt");
   if (existsSync(caCrt)) return;
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
 
   const keys = await generateRsaKeyPair(2048);
   const ca = forge.pki.createCertificate();
@@ -119,10 +119,9 @@ export async function ensureClientCA(domain: string): Promise<void> {
   ]);
   ca.sign(keys.privateKey, forge.md.sha256.create());
   writeFileSync(caCrt, forge.pki.certificateToPem(ca));
-  // Default perms (like the other key files) so the data volume stays manageable
-  // by the host owner over SMB. Protect the keys at the filesystem/host level if
-  // your deployment shares the host with untrusted users.
-  writeFileSync(join(dir, "client-ca.key"), forge.pki.privateKeyToPem(keys.privateKey));
+  // Owner-only (0600): a leaked client-CA key lets an attacker mint client certs
+  // that pass this host's mTLS. The host owner (root) can still manage the volume.
+  writeFileSync(join(dir, "client-ca.key"), forge.pki.privateKeyToPem(keys.privateKey), { mode: 0o600 });
   // Seed an (empty) CRL so nginx's ssl_crl always has a file to load.
   writeClientCrl(domain);
 }

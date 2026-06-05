@@ -117,11 +117,17 @@ export function startUptimeMonitor() {
         }
       } else {
         // Probe all hosts concurrently so one slow/down host can't stall the sweep.
+        // Each host is isolated: a probe or DB error for one must not reject the
+        // whole Promise.all and abandon the others' checks.
         await Promise.all(hosts.map(async (h) => {
-          const { up, ms } = await probe(h.forwardHost, h.forwardPort, 4000);
-          recordCheck(h.id, up, ms);
+          try {
+            const { up, ms } = await probe(h.forwardHost, h.forwardPort, 4000);
+            recordCheck(h.id, up, ms);
+          } catch { /* skip this host this sweep */ }
         }));
       }
+    } catch {
+      /* a sweep-level failure must not kill the recurring interval */
     } finally {
       running = false;
     }

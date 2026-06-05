@@ -288,7 +288,15 @@ ${locationBody}    }
  *  removes only files no longer wanted. The old "delete every .conf then rewrite
  *  all" churned the disk on every apply and briefly unlinked configs nginx may
  *  still be reading mid-reload - this leaves untouched files in place. */
-export function writeAllConfigs(): string[] {
+const safeRead = (p: string): string | null => { try { return readFileSync(p, "utf8"); } catch { return null; } };
+
+export interface WriteResult {
+  files: string[];
+  /** Restore the on-disk config to exactly what it was before this write. */
+  rollback: () => void;
+}
+
+export function writeAllConfigs(): WriteResult {
   if (!existsSync(CONF_DIR)) mkdirSync(CONF_DIR, { recursive: true });
   if (!existsSync(STREAM_DIR)) mkdirSync(STREAM_DIR, { recursive: true });
   // Refresh the country-lock include from current settings + DB presence.
@@ -308,22 +316,35 @@ export function writeAllConfigs(): string[] {
     desired.set(join(STREAM_DIR, "_sni_passthrough.conf"), generateSniPassthrough(sniHosts));
   }
 
+  // Capture the prior content of every managed .conf we touch, so a failed
+  // `nginx -t` can be rolled back ON DISK by applyConfigInner. Without this, an
+  // invalid set is written before validation and a crash in the window would
+  // leave a broken .conf that makes nginx (and, in the container, the whole
+  // process tree) fail to start on the next boot - with no UI left to fix it.
+  const undo: Array<{ file: string; prev: string | null }> = [];
+
   // Remove only our managed .conf files that are no longer desired.
   for (const dir of [CONF_DIR, STREAM_DIR]) {
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".conf")) continue;
       const p = join(dir, f);
-      if (!desired.has(p)) rmSync(p);
+      if (!desired.has(p)) { undo.push({ file: p, prev: safeRead(p) }); rmSync(p); }
     }
   }
 
   // Write only files whose content actually changed.
   for (const [file, content] of desired) {
-    let current: string | null = null;
-    try { current = readFileSync(file, "utf8"); } catch { /* missing → write */ }
-    if (current !== content) writeFileSync(file, content);
+    const current = safeRead(file);
+    if (current !== content) { undo.push({ file, prev: current }); writeFileSync(file, content); }
   }
-  return [...desired.keys()];
+
+  const rollback = () => {
+    for (const u of undo) {
+      try { u.prev === null ? rmSync(u.file, { force: true }) : writeFileSync(u.file, u.prev); }
+      catch { /* best-effort restore */ }
+    }
+  };
+  return { files: [...desired.keys()], rollback };
 }
 
 async function nginxInstalled(): Promise<boolean> {
@@ -353,7 +374,7 @@ export function applyConfig(): Promise<ApplyResult> {
  * rather than failing - the real validation happens in the container.
  */
 async function applyConfigInner(): Promise<ApplyResult> {
-  writeAllConfigs();
+  const { rollback } = writeAllConfigs();
 
   if (!(await nginxInstalled())) {
     // In production nginx must be present; refuse to claim success when we
@@ -376,6 +397,10 @@ async function applyConfigInner(): Promise<ApplyResult> {
   try {
     await execFileAsync(NGINX_BIN, ["-t"]);
   } catch (err) {
+    // Validation failed: nginx was never reloaded (live traffic is safe), but the
+    // invalid files are on disk. Restore the prior valid set so a later restart or
+    // unrelated reload can't pick up the broken config and wedge the container.
+    rollback();
     const detail = err instanceof Error ? err.message : String(err);
     return {
       ok: false,

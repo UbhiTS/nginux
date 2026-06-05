@@ -1,5 +1,5 @@
 import { connect } from "node:net";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +7,7 @@ import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { closeDb, dbOk, getSettings, pruneAuditLog, redactSettings, saveSettings, seedIfEmpty } from "./db.ts";
-import { PRESETS, getPreset } from "./presets.ts";
+import { PRESETS } from "./presets.ts";
 import {
   createHost,
   deleteHost,
@@ -77,7 +77,7 @@ import {
   revokeToken,
   seedTokensIfEmpty,
 } from "./tokens.ts";
-import { callTool, decideApproval, listApprovals, scopesForRole, toolCatalog, type Principal } from "./tools.ts";
+import { decideApproval, listApprovals, scopesForRole, toolCatalog, type Principal } from "./tools.ts";
 import { createWebhook, deleteWebhook, listWebhooks, subscribe } from "./events.ts";
 import { handleMcp } from "./mcp.ts";
 import {
@@ -156,8 +156,21 @@ function sniffImageType(buf: Buffer): string | null {
   return null;
 }
 
-const currentUser = (req: FastifyRequest): User | null =>
-  userForSession(parseCookie(req.headers.cookie)[SESSION_COOKIE]);
+// Resolving the session costs two SQL lookups + a cookie parse, and currentUser is
+// called many times per request (preHandler, principal, then each handler). Memoize
+// per-request via a WeakMap keyed on the request object so it resolves once. A
+// request's identity never changes mid-flight (login/change-password issue the new
+// cookie and read the user directly, not via currentUser), so this is safe. The
+// WeakMap entry is collected with the request. This also speeds the nginx
+// forward-auth subrequest, which is on the per-request hot path of every gated host.
+const userCache = new WeakMap<FastifyRequest, User | null>();
+const currentUser = (req: FastifyRequest): User | null => {
+  const cached = userCache.get(req);
+  if (cached !== undefined) return cached;
+  const u = userForSession(parseCookie(req.headers.cookie)[SESSION_COOKIE]);
+  userCache.set(req, u);
+  return u;
+};
 /** Resolve the caller to a user (session) or agent (bearer token). A user's tool
  *  scopes come from their role so the MCP/agent path enforces the same RBAC as
  *  REST (a readonly/scoped user can't run control/security tools). */
@@ -220,11 +233,14 @@ function crossOriginBlocked(req: FastifyRequest): boolean {
 app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   if (!req.url.startsWith("/api")) return;
   const path = req.url.split("?")[0];
-  if (OPEN_PATHS.has(path)) return;
   // CSRF applies to EVERY mutating cookie request, including /api/mcp - a malicious
   // page must not be able to drive state-changing MCP tools as the logged-in user.
-  // Bearer-token agents send no Origin, so they're unaffected.
+  // Bearer-token agents send no Origin, so they're unaffected. This runs BEFORE the
+  // open-path short-circuit so even unauthenticated mutating endpoints (login) can't
+  // be driven cross-site (login CSRF / forced-session fixation); a same-origin SPA
+  // POST and any non-mutating / no-Origin request still pass.
   if (crossOriginBlocked(req)) return reply.code(403).send({ error: "Cross-origin request blocked." });
+  if (OPEN_PATHS.has(path)) return;
   const isAgentPath = path === "/api/mcp" || path.startsWith("/api/events") || path.startsWith("/api/logs") || path === "/api/metrics/prometheus";
   if (isAgentPath) {
     if (!principal(req)) return reply.code(401).send({ error: "Valid session or API token required" });
@@ -456,7 +472,7 @@ app.get("/api/presets", async () => Object.values(PRESETS));
 // ---------- settings ----------
 const settingsInput = z.object({
   instanceName: z.string().max(120),
-  baseDomain: z.string().max(253),
+  baseDomain: z.string().max(253).refine((s) => s === "" || isHostname(s), "Invalid base domain."),
   publicUrl: z.string().max(512),
   theme: z.enum(["dark", "medium", "light"]),
   letsEncryptEmail: z.string().max(254),
@@ -906,8 +922,9 @@ app.get("/api/logs/stream", (req, reply) => {
 // ---------- auth ----------
 // Sliding-window in-memory limiter so brute force against the control plane is
 // throttled even when requests bypass nginx and hit port 4600 directly.
-const LOGIN_MAX = 10;          // attempts
-const LOGIN_WINDOW_MS = 60_000; // per minute, per key (ip + username)
+const LOGIN_MAX = 10;          // attempts per minute, per (ip + username)
+const LOGIN_IP_MAX = 30;       // attempts per minute, per IP across all usernames
+const LOGIN_WINDOW_MS = 60_000; // window
 const loginHits = new Map<string, number[]>();
 // Per-account 2FA brute-force lockout + TOTP replay guard (in-memory; the window
 // is short so a restart clearing them is harmless).
@@ -919,8 +936,11 @@ function rateLimited(key: string, max: number, windowMs: number): boolean {
   const hits = (loginHits.get(key) ?? []).filter((t) => now - t < windowMs);
   hits.push(now);
   loginHits.set(key, hits);
-  if (loginHits.size > 5000) { // crude cap so the map can't grow unbounded
+  if (loginHits.size > 5000) { // cap so the map can't grow unbounded
     for (const [k, v] of loginHits) { if (v.every((t) => now - t >= windowMs)) loginHits.delete(k); }
+    // If a distinct-key flood outpaces expiry, hard-evict oldest-inserted keys
+    // (Map preserves insertion order) so memory stays bounded under abuse.
+    while (loginHits.size > 5000) { const k = loginHits.keys().next().value; if (k === undefined) break; loginHits.delete(k); }
   }
   return hits.length > max;
 }
@@ -939,13 +959,24 @@ function authCookieDomain(): string {
   return "";
 }
 
-const loginInput = z.object({ username: z.string(), password: z.string(), token: z.string().optional() });
+// Bound the inputs: username/password are attacker-controlled and each login
+// attempt runs a deliberately-expensive scrypt, so an unbounded password also
+// amplifies CPU. (Length caps are generous; real creds fit easily.)
+const loginInput = z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(200), token: z.string().max(64).optional() });
 app.post("/api/auth/login", async (req, reply) => {
   const parsed = loginInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: "Invalid input" });
   const { username, password, token } = parsed.data;
   const ip = clientIp(req);
 
+  // Per-IP budget, independent of username: the username is attacker-controlled, so
+  // keying the limiter only on ip+username would let one IP get a fresh allowance
+  // per guessed username and force unbounded scrypt work. This caps total attempts
+  // (hence scrypt calls) from a single source regardless of the usernames tried.
+  if (rateLimited(`ipall:${ip}`, LOGIN_IP_MAX, LOGIN_WINDOW_MS)) {
+    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts from this IP - throttled", ip, meta: {} });
+    return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
+  }
   if (rateLimited(`${ip}:${username}`.toLowerCase(), LOGIN_MAX, LOGIN_WINDOW_MS)) {
     logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts - throttled", ip, meta: {} });
     return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
@@ -1011,9 +1042,14 @@ app.get("/api/auth/me", async (req, reply) => {
 // on boot if unset. nginx.ts reads the same value when it stamps the header onto
 // each forward-auth subrequest.
 const forwardSecret = (): string => getSettings().ssoForwardSecret;
+/** Constant-time header-secret check (avoids a byte-by-byte timing oracle). */
+function forwardSecretOk(hdr: unknown, secret: string): boolean {
+  if (!secret) return true; // no secret configured → header not required
+  if (typeof hdr !== "string" || hdr.length !== secret.length) return false;
+  return timingSafeEqual(Buffer.from(hdr), Buffer.from(secret));
+}
 app.get("/api/auth/forward", async (req, reply) => {
-  const secret = forwardSecret();
-  if (secret && req.headers["x-nginux-forward-secret"] !== secret) {
+  if (!forwardSecretOk(req.headers["x-nginux-forward-secret"], forwardSecret())) {
     return reply.code(401).send({ ok: false });
   }
   const u = currentUser(req);
@@ -1484,15 +1520,24 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   if (process.env.NODE_ENV === "production" && !forwardSecret()) {
     app.log.warn("No forward-auth secret set - generate one in Settings → Login gate so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
   }
-  // Render the data plane on boot so nginx serves the managed hosts.
-  const result = await applyConfig();
-  app.log.info(`nginx apply on boot: ${result.message}`);
+  // Render the data plane + replay metrics history on boot. Isolated in its own
+  // try/catch: a failure here (e.g. EACCES/EROFS on the data volume, or an
+  // unreadable access log) must NOT abort the scheduler startup below - otherwise
+  // a single boot hiccup would silently leave the instance with no cert renewal,
+  // uptime monitoring, auto-ban, or log rotation.
+  try {
+    const result = await applyConfig();
+    app.log.info(`nginx apply on boot: ${result.message}`);
+    // Metrics: replay persisted access-log history so it survives restarts.
+    const replayed = replayAccessLog();
+    if (replayed) app.log.info(`metrics: replayed ${replayed} access-log lines from disk (history survives restarts)`);
+  } catch (err) {
+    app.log.error({ err }, "boot data-plane render/replay failed - continuing so schedulers still start");
+  }
   // Daily auto-renewal + cert status refresh.
   startRenewalScheduler();
   // Metrics: tail nginx access logs; only feed synthetic traffic when explicitly
   // asked (NGINUX_DEMO_TRAFFIC=1) or in an explicit dev run - never silently in prod.
-  const replayed = replayAccessLog();
-  if (replayed) app.log.info(`metrics: replayed ${replayed} access-log lines from disk (history survives restarts)`);
   startLogTailer();
   const devRun = process.execArgv.includes("--watch"); // `npm run dev`, never `start`
   if (process.env.NGINUX_DEMO_TRAFFIC === "1" || devRun) {
@@ -1508,6 +1553,11 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   setInterval(() => { try { pruneAuditLog(); } catch { /* ignore */ } }, 24 * 3600_000).unref?.();
   // Keep the on-disk nginx logs bounded (size-based rotation per Settings -> Logs).
   startLogRotation();
+}).catch((err) => {
+  // listen() itself failed (e.g. port in use) - fail fast and loud instead of
+  // lingering as a half-started process that never accepts connections.
+  app.log.fatal({ err }, "failed to start NginUX control plane");
+  process.exit(1);
 });
 
 // ---------- graceful shutdown ----------

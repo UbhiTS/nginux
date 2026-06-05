@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import { db } from "./db.ts";
-import { subscribe } from "./events.ts";
+import { matchesEvent, subscribe } from "./events.ts";
 
 export type ChannelType = "ntfy" | "gotify" | "pushover" | "discord" | "slack" | "telegram" | "webhook" | "email";
 
@@ -142,9 +142,6 @@ export async function testChannel(id: string): Promise<{ ok: boolean; status: st
   return deliver(ch, "NginUX test", "If you can read this, notifications are working. 🎉");
 }
 
-function matches(patterns: string[], type: string): boolean {
-  return patterns.some((p) => p === "*" || p === type || (p.endsWith(".*") && type.startsWith(p.slice(0, -1))));
-}
 
 // Which events are worth a push notification (high-volume ones are excluded).
 function isAlertWorthy(type: string, severity?: string): boolean {
@@ -161,7 +158,7 @@ export function initAlertEngine(): void {
     const message = (e.data?.summary as string) || e.type;
     for (const r of db.prepare("SELECT * FROM channels WHERE enabled = 1").all() as Row[]) {
       const ch = toChannel(r);
-      if (matches(ch.events, e.type)) void deliver(ch, title, message);
+      if (matchesEvent(ch.events, e.type)) void deliver(ch, title, message);
     }
   });
 }

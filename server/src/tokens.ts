@@ -74,6 +74,11 @@ export function bearerFrom(authHeader: string | undefined): string | undefined {
 
 /** Seed demo token records so the UI isn't empty (raw values unknown by design). */
 export function seedTokensIfEmpty(): void {
+  // Dev/screenshots only - never in production, mirroring the user/host/traffic
+  // seeds. These records can't authenticate (their raw token is discarded), but
+  // shipping phantom "trusted" control/security agents into a real Tokens UI is
+  // confusing and contradicts the demo-data-is-dev-only discipline.
+  if (process.env.NODE_ENV === "production") return;
   const n = (db.prepare("SELECT COUNT(*) AS n FROM api_tokens").get() as Row).n as number;
   if (n > 0) return;
   const now = new Date().toISOString();

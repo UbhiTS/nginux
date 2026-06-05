@@ -1,6 +1,6 @@
 import { createHost, getHostByDomain } from "./repo.ts";
 import type { NewProxyHost } from "./types.ts";
-import { isHostname } from "./validate.ts";
+import { isHost, isHostname } from "./validate.ts";
 
 interface Parsed {
   domain: string;
@@ -58,6 +58,13 @@ export function importNginxConf(text: string): { imported: string[]; skipped: st
     // Reject anything that isn't a clean hostname - the domain becomes a config
     // filename and is interpolated into generated nginx config.
     if (!isHostname(p.domain)) {
+      skipped.push(p.domain);
+      continue;
+    }
+    // forwardHost is interpolated into `proxy_pass`/`server` directives. The REST
+    // path runs it through isHost; the importer is the only other writer, so guard
+    // it here too - an unvalidated value would otherwise corrupt the generated conf.
+    if (!isHost(p.forwardHost)) {
       skipped.push(p.domain);
       continue;
     }
