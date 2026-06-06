@@ -157,6 +157,7 @@ export function getTopology(gateway: { publicIp: string; gatewayIp: string }): T
       health: h.health,
       requireLogin: h.requireLogin,
       enabled: h.enabled,
+      ssl: h.ssl,
     });
   }
 

@@ -473,16 +473,16 @@ button { font-family: inherit; cursor: pointer; }
 .topo-legend .lg-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); margin-right: 6px; vertical-align: middle; }
 .topo-legend .lg-bar { display: inline-block; width: 16px; height: 6px; border-radius: 3px; background: var(--text-dim); margin-right: 6px; vertical-align: middle; }
 .topo-tier { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 16px; }
-.node { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 12px; padding: 15px 17px; text-align: center; min-width: 150px; }
+.node { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 12px; padding: 15px 17px; text-align: center; min-width: 164px; display: flex; flex-direction: column; justify-content: center; }
 .node-ico { font-size: 26px; }
 .node-title { font-weight: 700; font-size: 13.5px; margin-top: 4px; }
 .node-sub { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
-.node-gw { text-align: left; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); min-width: 200px; }
+.node-gw { text-align: center; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); min-width: 224px; }
 .node-gw .node-ico { font-size: 24px; }
-.node-gw .node-title { text-align: left; }
-.node-ip { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-top: 6px; display: flex; align-items: center; gap: 7px; }
+.node-gw .node-title { text-align: center; }
+.node-ip { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-top: 6px; display: flex; align-items: center; justify-content: center; gap: 7px; }
 .ip-label { font-family: var(--font); font-size: 9.5px; text-transform: uppercase; letter-spacing: .5px; font-weight: 700; color: var(--text-faint); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; width: 48px; text-align: center; }
-.node-foot { font-size: 11.5px; color: var(--text-dim); margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border-soft); display: flex; align-items: center; gap: 7px; }
+.node-foot { font-size: 11.5px; color: var(--text-dim); margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: center; gap: 7px; }
 .tier-srv { gap: 14px; }
 .srv-card { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 .srv-head { display: flex; align-items: center; gap: 9px; padding: 10px 14px; background: var(--bg); border-bottom: 1px solid var(--border-soft); }
@@ -493,7 +493,8 @@ button { font-family: inherit; cursor: pointer; }
 .svc:last-child { border-bottom: none; }
 .svc:hover { background: var(--accent-soft); }
 .svc-tag { width: 4px; height: 24px; border-radius: 3px; flex-shrink: 0; }
-.svc-emoji { font-size: 17px; width: 22px; text-align: center; }
+.svc-emoji { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex-shrink: 0; border-radius: 7px; cursor: pointer; transition: .12s; }
+.svc-emoji:hover { background: var(--bg-elev2); transform: scale(1.08); }
 .svc-body { flex: 1; min-width: 0; }
 .svc-name { font-weight: 600; font-size: 13px; }
 .svc-name .port { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); font-weight: 500; margin-left: 4px; }

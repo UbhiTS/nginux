@@ -102,6 +102,7 @@ export interface TopologyServer {
     health: HealthStatus;
     requireLogin: boolean;
     enabled: boolean;
+    ssl: boolean;
   }>;
 }
 

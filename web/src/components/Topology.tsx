@@ -121,7 +121,7 @@ export function Topology({
     const netR = net.getBoundingClientRect(), gwR = gw.getBoundingClientRect();
     const netA = anchor(net, "r"), gwLeft = anchor(gw, "l"), gwRight = anchor(gw, "r");
     const usable = Math.min(netR.height, gwR.height) - 14;
-    const gap = n > 1 ? Math.min(18, usable / (n - 1)) : 0;
+    const gap = n > 1 ? Math.min(24, usable / (n - 1)) : 0;
     const yAt = (cy: number, i: number) => cy + (i - (n - 1) / 2) * gap;
     const svcAnchor = (id: string) => { const el = svcRefs.current.get(id); return el ? anchor(el, "l") : null; };
     return { box: { w: r.width, h: r.height }, netA, gwLeft, gwRight, yAt, svcAnchor };
@@ -253,6 +253,15 @@ export function Topology({
     return () => { ro.disconnect(); window.removeEventListener("resize", onResize); };
   }, [startChains]);
 
+  // Grow the Internet + Gateway boxes with the service count so the connection
+  // lines (which attach along each box's height) spread out instead of bunching.
+  // ~24px per service, plus a fixed buffer so the box is taller than the line
+  // span - that leaves ~16px clear above the top line and below the bottom line
+  // instead of them touching the edges. With few services this still falls below
+  // the boxes' natural content height, so they keep their original compact size.
+  const svcCount = data.servers.reduce((a, s) => a + s.services.length, 0);
+  const nodeMinH = Math.min(480, Math.max(0, (svcCount - 1) * 24 + 32));
+
   return (
       <div className="topo" ref={wrapRef}>
         <svg className="topo-lines" viewBox={`0 0 ${box.w} ${box.h}`} preserveAspectRatio="none">
@@ -337,7 +346,7 @@ export function Topology({
         </div>
 
         <div className="topo-tier">
-          <div className="node node-internet" ref={internetRef}>
+          <div className="node node-internet" ref={internetRef} style={{ minHeight: nodeMinH }}>
             <div className="node-ico">🌐</div>
             <div className="node-title">Internet</div>
             <div className="node-sub">incoming visitors</div>
@@ -345,7 +354,7 @@ export function Topology({
         </div>
 
         <div className="topo-tier">
-          <div className="node node-gw" ref={gatewayRef}>
+          <div className="node node-gw" ref={gatewayRef} style={{ minHeight: nodeMinH }}>
             <div className="node-ico">🛡️</div>
             <div className="node-title">Gateway / Router</div>
             <div className="node-ip">
@@ -407,7 +416,17 @@ export function Topology({
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: s.id }); } }}
                   >
                     <span className="svc-tag" style={{ background: PALETTE[idx % PALETTE.length] }} />
-                    <span className="svc-emoji"><ServiceIcon iconUrl={s.iconUrl} size={16} /></span>
+                    <a
+                      className="svc-emoji"
+                      href={`${s.ssl ? "https" : "http"}://${s.domain}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Open ${s.domain} in a new tab`}
+                      aria-label={`Open ${s.name} in a new tab`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ServiceIcon iconUrl={s.iconUrl} size={16} />
+                    </a>
                     <div className="svc-body">
                       <div className="svc-name">
                         {s.name} <span className="port">:{s.port}</span>
