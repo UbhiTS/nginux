@@ -309,7 +309,6 @@ export function rowToHost(r: HostRow): ProxyHost {
 const DEFAULT_SETTINGS: Settings = {
   instanceName: "Home Lab",
   baseDomain: "example.com",
-  publicUrl: "",
   theme: "dark",
   letsEncryptEmail: "",
   homeCountry: "",

@@ -22,25 +22,69 @@
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "SF Mono", "Cascadia Code", Consolas, monospace;
 }
+/* Five themes from dark (:root) to light. dark/less-dark/medium are dark-mode
+ * (light text on a progressively lighter slate); less-light/light are light-mode
+ * (dark text). The text colour flips at the medium→less-light boundary - the
+ * natural dark/light divide, since one text colour can't read on a 50%-grey bg. */
+[data-theme="less-dark"] {
+  --bg: #383e45;
+  --bg-elev: #424954;
+  --bg-elev2: #474e59;
+  --border: #4f5763;
+  --border-soft: #454c56;
+  --text: #edf1f5;
+  --text-dim: #b3bdc8;
+  --text-faint: #8994a1;
+  --accent: #4789f8;
+  --accent-soft: #2c466b;
+  --green: #3aae4d;
+  --green-soft: #213f29;
+  --yellow: #d8a437;
+  --yellow-soft: #44391a;
+  --red: #f6605a;
+  --red-soft: #48242a;
+  --purple: #a877f5;
+  --shadow: 0 8px 24px rgba(0,0,0,.42);
+}
 [data-theme="medium"] {
-  --bg: #1f2933;
-  --bg-elev: #28333f;
-  --bg-elev2: #313d4a;
-  --border: #3c4a59;
-  --border-soft: #354150;
-  --text: #eef2f6;
-  --text-dim: #aab6c2;
-  --text-faint: #7f8c9a;
-  --accent: #4c8dff;
-  --accent-soft: #2b4a73;
-  --green: #3fb950;
-  --green-soft: #1b3a24;
-  --yellow: #e3b341;
-  --yellow-soft: #423414;
-  --red: #ff6b63;
-  --red-soft: #45201f;
-  --purple: #b487f7;
-  --shadow: 0 8px 24px rgba(0,0,0,.35);
+  --bg: #515a66;
+  --bg-elev: #5b6470;
+  --bg-elev2: #5f6975;
+  --border: #67717f;
+  --border-soft: #5c6472;
+  --text: #f1f4f8;
+  --text-dim: #bcc6d2;
+  --text-faint: #94a1ae;
+  --accent: #5a96ff;
+  --accent-soft: #38547d;
+  --green: #46bb59;
+  --green-soft: #2c4a35;
+  --yellow: #e1b146;
+  --yellow-soft: #4f4527;
+  --red: #ff6f67;
+  --red-soft: #56353a;
+  --purple: #b489f7;
+  --shadow: 0 8px 24px rgba(0,0,0,.38);
+}
+[data-theme="less-light"] {
+  --bg: #bcbec1;
+  --bg-elev: #cccdcf;
+  --bg-elev2: #c3c5c8;
+  --border: #a3a9b0;
+  --border-soft: #b0b5bb;
+  --text: #20242a;
+  --text-dim: #444b53;
+  --text-faint: #646b74;
+  --accent: #2360e3;
+  --accent-soft: #c2d2ec;
+  --green: #19803a;
+  --green-soft: #c3ddc8;
+  --yellow: #946400;
+  --yellow-soft: #e8e0b0;
+  --red: #cf2a33;
+  --red-soft: #efcfce;
+  --purple: #7d4ed4;
+  --shadow: 0 8px 24px rgba(120,130,142,.24);
 }
 [data-theme="light"] {
   --bg: #f6f8fa;
@@ -65,6 +109,8 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
+.hint a { color: var(--accent); text-decoration: none; }
+.hint a:hover { text-decoration: underline; }
 button { font-family: inherit; cursor: pointer; }
 /* Visible keyboard focus ring (mouse clicks don't trigger :focus-visible). */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

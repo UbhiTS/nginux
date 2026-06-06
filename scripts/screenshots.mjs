@@ -6,7 +6,7 @@
 // browser download). Logs in with the API, then captures each page to docs/img/.
 //
 // Config via env (all optional):
-//   NGINUX_SHOT_URL   base URL              (default http://localhost:4600)
+//   NGINUX_SHOT_URL   base URL              (default http://localhost:6767)
 //   NGINUX_SHOT_USER  admin username        (default "admin")
 //   NGINUX_SHOT_PASS  admin password        (default "admin")
 //   NGINUX_SHOT_BIN   browser executable    (default: auto-detect Edge/Chrome)
@@ -18,7 +18,7 @@ import puppeteer from "puppeteer-core";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "docs", "img");
-const BASE = process.env.NGINUX_SHOT_URL ?? "http://localhost:4600";
+const BASE = process.env.NGINUX_SHOT_URL ?? "http://localhost:6767";
 const USER = process.env.NGINUX_SHOT_USER ?? "admin";
 const PASS = process.env.NGINUX_SHOT_PASS ?? "admin";
 

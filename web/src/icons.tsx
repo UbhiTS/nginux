@@ -178,6 +178,20 @@ export const Icon = {
       <path d="M12 3a9 9 0 0 0 0 18Z" fill="currentColor" stroke="none" />
     </S>
   ),
+  // A crescent moon with a small sparkle - the "less dark" step.
+  moonStar: (p: P) => (
+    <S {...p}>
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+      <path d="M5 3.6v2.4M3.8 4.8h2.4" />
+    </S>
+  ),
+  // A sun with short rays - the dimmer "less light" step.
+  sunDim: (p: P) => (
+    <S {...p}>
+      <circle cx="12" cy="12" r="4.5" />
+      <path d="M12 4v1.6M12 18.4V20M4 12h1.6M18.4 12H20" />
+    </S>
+  ),
 };
 
 export type IconName = keyof typeof Icon;

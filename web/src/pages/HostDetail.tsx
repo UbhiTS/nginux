@@ -603,7 +603,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
             ))}
           </div>
         )}
-        <div className="hint">Pick a real app logo from the <a href="https://dashboardicons.com" target="_blank" rel="noreferrer noopener">dashboard-icons</a> catalog (2,900+). Clearing it shows a neutral placeholder.</div>
+        <div className="hint">Pick a real app logo from <a href="https://dashboardicons.com" target="_blank" rel="noreferrer noopener">dashboardicons.com</a> (2,900+ app logos). Clearing it shows a neutral placeholder.</div>
       </div>
       <div className="field"><label>Public domain / label</label><input className="input" value={draft.domain} onChange={(e) => set({ domain: e.target.value })} /></div>
       <div className="field">

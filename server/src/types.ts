@@ -88,8 +88,7 @@ export type NewProxyHost = Omit<ProxyHost, ManagedFields | OptionalOnCreate> &
 export interface Settings {
   instanceName: string;
   baseDomain: string;
-  publicUrl: string;
-  theme: "dark" | "medium" | "light";
+  theme: "dark" | "less-dark" | "medium" | "less-light" | "light";
   letsEncryptEmail: string;
   homeCountry: string;
   /** Public IP of the gateway (for the topology map). */

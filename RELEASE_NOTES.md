@@ -39,7 +39,7 @@ view, real metrics, and an agent-ready API.
 
 ```bash
 docker run -d \
-  -p 80:80 -p 443:443 -p 4600:4600 \
+  -p 80:80 -p 443:443 -p 6767:6767 \
   -v nginux-data:/data \
   ghcr.io/ubhits/nginux:latest
 ```
@@ -48,5 +48,5 @@ Multi-arch (amd64 + arm64). The container runs non-root as the owner of your mou
 `/data` volume (set `PUID`/`PGID` to override). First sign-in is `admin` / `admin` — you
 are required to set a new password immediately.
 
-> ⚠️ **Keep the `:4600` control plane off the public internet.** Forward only `80`/`443`
+> ⚠️ **Keep the `:6767` control plane off the public internet.** Forward only `80`/`443`
 > to your proxied services; reach the admin plane over your LAN or VPN.

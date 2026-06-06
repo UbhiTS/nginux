@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type Theme = "dark" | "medium" | "light";
-const ORDER: Theme[] = ["dark", "medium", "light"];
+export type Theme = "dark" | "less-dark" | "medium" | "less-light" | "light";
+const ORDER: Theme[] = ["dark", "less-dark", "medium", "less-light", "light"];
 const KEY = "nginux-theme";
 
 export function useTheme() {

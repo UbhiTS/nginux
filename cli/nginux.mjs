@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // NginUX CLI - manage your reverse proxy from the terminal.
 // Auth: a scoped API token (create one in the UI under Agents & API).
-//   NGINUX_URL    (default http://localhost:4600)
+//   NGINUX_URL    (default http://localhost:6767)
 //   NGINUX_TOKEN  (required for everything except `health`)
 // It speaks the same MCP tools + endpoints as AI agents, so scopes and the
 // human-approval policy apply here too.
 
-const URL = process.env.NGINUX_URL || "http://localhost:4600";
+const URL = process.env.NGINUX_URL || "http://localhost:6767";
 const TOKEN = process.env.NGINUX_TOKEN || "";
 const args = process.argv.slice(2);
 const cmd = args[0];

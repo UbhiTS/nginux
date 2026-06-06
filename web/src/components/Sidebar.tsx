@@ -19,7 +19,16 @@ interface Props {
   open?: boolean;
 }
 
-const themeIcon = { dark: Icon.moon, medium: Icon.contrast, light: Icon.sun };
+const themeIcon: Record<Theme, (p: { className?: string }) => React.ReactNode> = {
+  dark: Icon.moon,
+  "less-dark": Icon.moonStar,
+  medium: Icon.contrast,
+  "less-light": Icon.sunDim,
+  light: Icon.sun,
+};
+const themeLabel: Record<Theme, string> = {
+  dark: "Dark", "less-dark": "Less dark", medium: "Medium", "less-light": "Less light", light: "Light",
+};
 
 export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = false }: Props) {
   const [svcOpen, setSvcOpen] = useState(true);
@@ -117,7 +126,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
           <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{user.username}</div>
           <div style={{ color: "var(--text-faint)", fontSize: 11, textTransform: "capitalize" }}>{user.role}</div>
         </div>
-        <button className="theme-toggle" title="Switch theme (dark / medium / light)" aria-label="Switch theme" onClick={theme.cycleTheme}>
+        <button className="theme-toggle" title={`Theme: ${themeLabel[theme.theme]} — click to switch`} aria-label="Switch theme" onClick={theme.cycleTheme}>
           <ThemeIcon />
         </button>
         <button className="theme-toggle" title="Sign out" aria-label="Sign out" onClick={onLogout}>

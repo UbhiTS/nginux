@@ -125,7 +125,7 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT ?? 4600);
+const PORT = Number(process.env.PORT ?? 6767);
 const HOST = process.env.HOST ?? "0.0.0.0";
 
 seedIfEmpty();
@@ -181,9 +181,9 @@ const principal = (req: FastifyRequest): Principal | null => {
 };
 // Only believe X-Forwarded-For from a trusted hop. NGINUX_TRUST_PROXY=true trusts
 // XFF *only from loopback* - the bundled nginx forwards auth subrequests from
-// 127.0.0.1, so we get real client IPs there, while a browser hitting :4600
+// 127.0.0.1, so we get real client IPs there, while a browser hitting :6767
 // directly (a non-loopback peer) can't spoof XFF to forge audit IPs / dodge bans.
-// Set NGINUX_TRUST_PROXY to a specific IP/CIDR when fronting :4600 with your own
+// Set NGINUX_TRUST_PROXY to a specific IP/CIDR when fronting :6767 with your own
 // reverse proxy. Anything falsy = never trust XFF.
 const TRUST_PROXY: boolean | string | ((addr: string, hop: number) => boolean) =
   process.env.NGINUX_TRUST_PROXY === "1" || process.env.NGINUX_TRUST_PROXY === "true"
@@ -260,7 +260,7 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   }
 });
 
-// Security headers on every control-plane response (the admin UI + API on :4600).
+// Security headers on every control-plane response (the admin UI + API on :6767).
 // frame-ancestors/X-Frame-Options stop the UI being framed (clickjacking); nosniff
 // stops MIME sniffing; the CSP locks script/style/connect to same-origin.
 app.addHook("onSend", async (_req, reply, payload) => {
@@ -473,8 +473,7 @@ app.get("/api/presets", async () => Object.values(PRESETS));
 const settingsInput = z.object({
   instanceName: z.string().max(120),
   baseDomain: z.string().max(253).refine((s) => s === "" || isHostname(s), "Invalid base domain."),
-  publicUrl: z.string().max(512),
-  theme: z.enum(["dark", "medium", "light"]),
+  theme: z.enum(["dark", "less-dark", "medium", "less-light", "light"]),
   letsEncryptEmail: z.string().max(254),
   homeCountry: z.string().max(2),
   publicIp: z.string().max(64),
@@ -540,17 +539,18 @@ function streamPortError(h: { protocol: string; listenPort: number; name?: strin
 /** A host must not claim the control plane's own public hostname (self-hijack). */
 // True when exposing `domain` would hijack the domain NginUX itself runs on
 // (Settings → public URL) away from the control plane. Forwarding that domain TO
-// the control plane (port 4600) is allowed - that's the recommended SSO portal
+// the control plane (port 6767) is allowed - that's the recommended SSO portal
 // setup (expose NginUX on its own subdomain so login-gated services can sign in).
 function isControlPlaneDomain(domain: string, forwardPort?: number): boolean {
-  const raw = getSettings().publicUrl?.trim();
+  // The NginUX public URL (Settings → Instance) doubles as the SSO sign-in URL.
+  const raw = getSettings().ssoLoginUrl?.trim();
   if (!raw) return false;
   let h: string;
   try {
     h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
   } catch { return false; }
   if (h !== domain.toLowerCase()) return false;
-  const controlPort = Number(process.env.PORT ?? 4600);
+  const controlPort = Number(process.env.PORT ?? 6767);
   return forwardPort !== controlPort; // allowed when it points at the control plane
 }
 
@@ -577,7 +577,7 @@ app.post("/api/hosts", async (req, reply) => {
     return reply.code(409).send({ error: `${parsed.data.domain} is already in use.` });
   }
   if (isControlPlaneDomain(parsed.data.domain, parsed.data.forwardPort)) {
-    return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 4600; otherwise pick another domain so you don't lose access to NginUX." });
+    return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 6767; otherwise pick another domain so you don't lose access to NginUX." });
   }
   const spErr = streamPortError(parsed.data);
   if (spErr) return reply.code(400).send({ error: spErr });
@@ -615,7 +615,7 @@ app.put("/api/hosts/:id", async (req, reply) => {
   // Validate the *resulting* host (existing merged with the patch) before writing.
   const merged = { ...existing, ...parsed.data };
   if (parsed.data.domain && parsed.data.domain !== existing.domain && isControlPlaneDomain(parsed.data.domain, merged.forwardPort)) {
-    return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 4600; otherwise pick another domain so you don't lose access to NginUX." });
+    return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 6767; otherwise pick another domain so you don't lose access to NginUX." });
   }
   const spErr = streamPortError(merged, id);
   if (spErr) return reply.code(400).send({ error: spErr });
@@ -841,10 +841,28 @@ async function detectPublicIp(): Promise<{ ip: string | null; country: string | 
     if (r.ok) { const t = (await r.text()).trim(); if (/^\d{1,3}(\.\d{1,3}){3}$/.test(t)) ip = t; }
   } catch { /* offline or blocked */ }
   if (ip) {
-    try {
-      const r = await fetch(`https://ipapi.co/${ip}/country/`, { signal: AbortSignal.timeout(3000) });
-      if (r.ok) { const cc = (await r.text()).trim().toUpperCase(); if (/^[A-Z]{2}$/.test(cc)) country = cc; }
-    } catch { /* country is a best-effort bonus */ }
+    // Country auto-detect from the public IP - no MaxMind DB needed (that's only
+    // for filtering inbound traffic). Try a couple of free, keyless providers in
+    // order so a rate-limit / hiccup on one still fills the field. Fixed,
+    // trusted endpoints (the IP is regex-validated above), so not an SSRF vector.
+    const sources = [
+      `https://ipapi.co/${ip}/country/`, // plain text, 2-letter code
+      `https://api.country.is/${ip}`,    // JSON { country: "US" } - works server-side
+    ];
+    for (const url of sources) {
+      try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
+        if (!r.ok) continue;
+        let cc = "";
+        if ((r.headers.get("content-type") || "").includes("json")) {
+          const j = (await r.json()) as { country?: string; country_code?: string };
+          cc = String(j.country ?? j.country_code ?? "").trim().toUpperCase();
+        } else {
+          cc = (await r.text()).trim().toUpperCase();
+        }
+        if (/^[A-Z]{2}$/.test(cc)) { country = cc; break; }
+      } catch { /* try the next provider */ }
+    }
   }
   return { ip, country };
 }
@@ -921,7 +939,7 @@ app.get("/api/logs/stream", (req, reply) => {
 
 // ---------- auth ----------
 // Sliding-window in-memory limiter so brute force against the control plane is
-// throttled even when requests bypass nginx and hit port 4600 directly.
+// throttled even when requests bypass nginx and hit port 6767 directly.
 const LOGIN_MAX = 10;          // attempts per minute, per (ip + username)
 const LOGIN_IP_MAX = 30;       // attempts per minute, per IP across all usernames
 const LOGIN_WINDOW_MS = 60_000; // window

@@ -52,8 +52,7 @@ export interface ProxyHost {
 export interface Settings {
   instanceName: string;
   baseDomain: string;
-  publicUrl: string;
-  theme: "dark" | "medium" | "light";
+  theme: "dark" | "less-dark" | "medium" | "less-light" | "light";
   letsEncryptEmail: string;
   homeCountry: string;
   publicIp: string;

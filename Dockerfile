@@ -48,7 +48,7 @@ RUN chmod +x /entrypoint.sh
 # writes them there - so baking them in would only duplicate the default and trip
 # the "secret in ENV" image check on the *_KEY name. Override at runtime if needed.
 ENV NODE_ENV=production \
-    PORT=4600 \
+    PORT=6767 \
     HOST=0.0.0.0 \
     NGINUX_DATA_DIR=/data \
     NGINX_CONF_DIR=/data/nginx/conf.d \
@@ -57,13 +57,13 @@ ENV NODE_ENV=production \
     NGINX_ACCESS_LOG=/data/logs/access.log \
     CERT_DIR=/data/certs
 
-# 4600 = control-plane UI/API · 80/443 = proxied traffic (data plane)
-EXPOSE 4600 80 443
+# 6767 = control-plane UI/API · 80/443 = proxied traffic (data plane)
+EXPOSE 6767 80 443
 VOLUME ["/data"]
 
 # Container is healthy only when the control plane answers and the DB is live.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:4600/api/health >/dev/null 2>&1 || exit 1
+    CMD wget -qO- http://127.0.0.1:6767/api/health >/dev/null 2>&1 || exit 1
 
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]

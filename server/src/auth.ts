@@ -286,7 +286,7 @@ export function parseCookie(header: string | undefined): Record<string, string> 
 }
 
 // Whether to mark the session cookie `Secure`. A Secure cookie is dropped by the
-// browser on plain-HTTP pages, which would break LAN access over http://host:4600.
+// browser on plain-HTTP pages, which would break LAN access over http://host:6767.
 // So decide per-request from the actual protocol (HTTPS → Secure), unless an
 // explicit override is set via NGINUX_SECURE_COOKIES (1/true to force, 0/false off).
 const SECURE_OVERRIDE = process.env.NGINUX_SECURE_COOKIES;

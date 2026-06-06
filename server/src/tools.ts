@@ -52,15 +52,15 @@ function sanitizeHostPatch(raw: Record<string, unknown>): Partial<ProxyHost> {
 }
 
 /** Would exposing `domain` hijack the domain NginUX itself runs on away from the
- *  control plane? (Mirror of the REST guard; forwarding TO :4600 is allowed.) */
+ *  control plane? (Mirror of the REST guard; forwarding TO :6767 is allowed.) */
 function wouldHijackControlPlane(domain: string, forwardPort: number): boolean {
-  const raw = getSettings().publicUrl?.trim();
+  const raw = getSettings().ssoLoginUrl?.trim(); // public URL = SSO sign-in URL
   if (!raw) return false;
   let h: string;
   try { h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase(); }
   catch { return false; }
   if (h !== domain.toLowerCase()) return false;
-  return forwardPort !== Number(process.env.PORT ?? 4600);
+  return forwardPort !== Number(process.env.PORT ?? 6767);
 }
 
 export type Tier = "read" | "low" | "medium" | "high";
@@ -113,7 +113,7 @@ export function scopesForRole(role: User["role"]): Scope[] {
 }
 
 const SETTING_KEYS: (keyof Settings)[] = [
-  "instanceName", "baseDomain", "publicUrl", "theme", "letsEncryptEmail", "homeCountry",
+  "instanceName", "baseDomain", "theme", "letsEncryptEmail", "homeCountry",
   "publicIp", "gatewayIp", "dnsProvider", "godaddyApiKey", "godaddySecret", "cloudflareApiToken",
   "maxmindLicenseKey", "acmeStaging", "agentAutoApprove", "gitOpsEnabled",
 ];
@@ -272,7 +272,7 @@ export const TOOLS: Record<string, Tool> = {
       // Mirror the REST guards: clear duplicate-domain error, and don't let an
       // agent repoint NginUX's own portal domain away from the control plane.
       if (getHostByDomain(domain)) throw new Error(`${domain} is already in use.`);
-      if (wouldHijackControlPlane(domain, port)) throw new Error("That domain is where NginUX itself runs; forward it to the control plane on port 4600 or pick another.");
+      if (wouldHijackControlPlane(domain, port)) throw new Error("That domain is where NginUX itself runs; forward it to the control plane on port 6767 or pick another.");
       const host = createHost({
         name: String(a.name), domain,
         forwardScheme: a.forwardScheme === "https" ? "https" : "http", forwardHost, forwardPort: port,

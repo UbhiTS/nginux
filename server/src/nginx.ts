@@ -17,7 +17,7 @@ const CONF_DIR = process.env.NGINX_CONF_DIR ?? join(__dirname, "..", "..", "ngin
 const STREAM_DIR = process.env.NGINX_STREAM_DIR ?? join(__dirname, "..", "..", "nginx", "stream.d");
 const NGINX_BIN = process.env.NGINX_BIN ?? "nginx";
 // Where nginx reaches the control plane for forward-auth (same container).
-const CONTROL_URL = process.env.NGINUX_CONTROL_URL ?? "http://127.0.0.1:4600";
+const CONTROL_URL = process.env.NGINUX_CONTROL_URL ?? "http://127.0.0.1:6767";
 
 /** Generate a stream (TCP/UDP) server block. Lives in the nginx `stream {}` context. */
 export function generateStreamConfig(h: ProxyHost): string {

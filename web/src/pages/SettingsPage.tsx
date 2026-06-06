@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Channel, type ConfigVersion, type GeoipStatus } from "../api.ts";
 import type { Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { COUNTRIES } from "../countries.ts";
 import { BrandLogo } from "../components/BrandLogo.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 
@@ -56,6 +57,10 @@ export function SettingsPage({
     );
   }
 
+  // Derive URL/cookie hints from the configured base domain, so they read e.g.
+  // "nginux.ubhi.io" once it's set instead of a generic "yourdomain.com".
+  const base = (settings.baseDomain || "").trim() || "yourdomain.com";
+
   return (
     <>
       <div className="topbar">
@@ -75,15 +80,39 @@ export function SettingsPage({
             </div>
             <div className="field" style={{ marginBottom: 14 }}>
               <label>Base domain</label>
-              <input className="input" value={settings.baseDomain} onChange={(e) => update({ baseDomain: e.target.value })} />
+              <input className="input" value={settings.baseDomain} onChange={(e) => update({ baseDomain: e.target.value })} placeholder="yourdomain.com" />
             </div>
             <div className="field" style={{ marginBottom: 0 }}>
-              <label>NginUX address</label>
-              <input className="input" value={settings.publicUrl} onChange={(e) => update({ publicUrl: e.target.value })} />
+              <label>NginUX public URL</label>
+              <input className="input" value={settings.ssoLoginUrl} onChange={(e) => update({ ssoLoginUrl: e.target.value })} placeholder={`https://nginux.${base}`} />
+              <div className="hint">The public HTTPS address where you reach NginUX. Services with <b>Require login</b> also send unauthenticated visitors here to sign in, then back. Expose NginUX itself at this address (e.g. <span className="mono">nginux.{base} → 127.0.0.1:6767</span>) and leave that one <b>un-gated</b>.</div>
+              {settings.ssoLoginUrl && (
+                <div className="info-line" style={{ marginTop: 10, alignItems: "flex-start" }}>
+                  <Icon.alert />
+                  <span>The NginUX service at your public URL must <b>not</b> have "Require login" enabled - that would lock you out of the login page itself.</span>
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="section-title">Network &amp; SSL</div>
+          <div className="section-title">Login gate (sign-in for protected services)</div>
+          <div className="card card-pad">
+            <div className="field">
+              <label>Shared cookie domain</label>
+              <input className="input" value={settings.ssoCookieDomain} onChange={(e) => update({ ssoCookieDomain: e.target.value })} placeholder={`.${base} (auto from the NginUX URL if blank)`} />
+              <div className="hint">So one sign-in covers every subdomain. Leave blank to derive it from the NginUX public URL above.</div>
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Forward-auth secret</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input className="input" type="password" autoComplete="new-password" value={settings.ssoForwardSecret} onChange={(e) => update({ ssoForwardSecret: e.target.value })} placeholder="click Generate →" />
+                <button type="button" className="btn" onClick={() => update({ ssoForwardSecret: randomSecret() })}>Generate</button>
+              </div>
+              <div className="hint">A long random value nginx sends with every login check, so it can't be called directly and bypassed. NginUX generates one automatically - you only need this to rotate it: click <b>Generate</b>, then <b>Save</b>, and the protected sites are rewritten for you.</div>
+            </div>
+          </div>
+
+          <div className="section-title" style={{ marginTop: 20 }}>Network &amp; SSL</div>
           <div className="card card-pad">
             <div className="field" style={{ marginBottom: 14 }}>
               <label>Let's Encrypt email (renewal notices)</label>
@@ -98,19 +127,37 @@ export function SettingsPage({
             </div>
             <div className="kv"><span className="k">Public IP (gateway)</span>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input className="input" style={{ maxWidth: 200 }} value={settings.publicIp} onChange={(e) => update({ publicIp: e.target.value })} placeholder="auto-detect or enter manually" />
                 <button className="btn btn-sm" onClick={detectIp} disabled={detecting} title="Detect this host's public IP (and home country) via an outbound lookup. You can still edit it.">
                   {detecting ? <span className="spinner" /> : <Icon.globe />}Detect
                 </button>
+                <input className="input" style={{ maxWidth: 200 }} value={settings.publicIp} onChange={(e) => update({ publicIp: e.target.value })} placeholder="auto-detect or enter manually" />
               </div>
             </div>
             <div className="kv"><span className="k">LAN IP (gateway)</span>
               <input className="input" style={{ maxWidth: 200 }} value={settings.gatewayIp} onChange={(e) => update({ gatewayIp: e.target.value })} />
             </div>
-            <div className="kv" style={{ border: "none" }}><span className="k">Home country (GeoIP)</span>
-              <input className="input" style={{ maxWidth: 200 }} value={settings.homeCountry} onChange={(e) => update({ homeCountry: e.target.value })} />
+            <div className="kv" style={{ border: "none", alignItems: "flex-start", gap: 16 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span className="k">Home country (GeoIP)</span>
+                <span style={{ fontSize: 12, color: "var(--text-faint)", maxWidth: 420 }}>
+                  The one country allowed when a service has <strong>Country lock</strong> on. Needs the GeoIP database below — until then, country lock stays open to all.
+                </span>
+              </div>
+              <select
+                className="input"
+                style={{ maxWidth: 240, flex: "none" }}
+                value={(settings.homeCountry || "").toUpperCase()}
+                onChange={(e) => update({ homeCountry: e.target.value })}
+              >
+                <option value="">None — don't filter by country</option>
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+                ))}
+              </select>
             </div>
           </div>
+
+          <CountryLock settings={settings} update={update} onSave={save} />
 
           <div className="section-title" style={{ marginTop: 20 }}>DNS provider</div>
           <div className="card card-pad">
@@ -157,34 +204,6 @@ export function SettingsPage({
             )}
           </div>
 
-          <div className="section-title" style={{ marginTop: 20 }}>Login gate (sign-in for protected services)</div>
-          <div className="card card-pad">
-            <div className="field">
-              <label>NginUX sign-in URL</label>
-              <input className="input" value={settings.ssoLoginUrl} onChange={(e) => update({ ssoLoginUrl: e.target.value })} placeholder="https://nginux.yourdomain.com" />
-              <div className="hint">Where NginUX's own login page is reachable over HTTPS. Services with <b>Require login</b> send unauthenticated visitors here, then back. Expose NginUX itself as a service on a subdomain of your base domain (e.g. <span className="mono">nginux.yourdomain.com → 127.0.0.1:4600</span>) and leave that one <b>un-gated</b>.</div>
-            </div>
-            <div className="field">
-              <label>Shared cookie domain</label>
-              <input className="input" value={settings.ssoCookieDomain} onChange={(e) => update({ ssoCookieDomain: e.target.value })} placeholder=".yourdomain.com (auto from sign-in URL if blank)" />
-              <div className="hint">So one sign-in covers every subdomain. Leave blank to derive it from the sign-in URL.</div>
-            </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label>Forward-auth secret</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input className="input" type="password" autoComplete="new-password" value={settings.ssoForwardSecret} onChange={(e) => update({ ssoForwardSecret: e.target.value })} placeholder="click Generate →" />
-                <button type="button" className="btn" onClick={() => update({ ssoForwardSecret: randomSecret() })}>Generate</button>
-              </div>
-              <div className="hint">A long random value nginx sends with every login check, so it can't be called directly and bypassed. NginUX generates one automatically - you only need this to rotate it: click <b>Generate</b>, then <b>Save</b>, and the protected sites are rewritten for you.</div>
-            </div>
-            {settings.ssoLoginUrl && (
-              <div className="info-line" style={{ marginTop: 12, alignItems: "flex-start" }}>
-                <Icon.alert />
-                <span>The NginUX service at your sign-in URL must <b>not</b> have "Require login" enabled - that would lock you out of the login page itself.</span>
-              </div>
-            )}
-          </div>
-
           <div className="section-title" style={{ marginTop: 20 }}>Log rotation</div>
           <div className="card card-pad">
             <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -209,7 +228,6 @@ export function SettingsPage({
             </div>
           </div>
 
-          <CountryLock settings={settings} update={update} onSave={save} />
           <Notifications />
           <BackupsGitOps settings={settings} update={update} />
           <About />

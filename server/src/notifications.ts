@@ -69,7 +69,7 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
         message:
           "The proxy is serving on ports 80 and 443 here. For your services to be reachable from outside your " +
           "network, your router/gateway must forward external ports 80 and 443 to NginUX's HTTP/HTTPS ports on " +
-          "this machine. (Keep the control plane on :4600 on your LAN - never forward it.)",
+          "this machine. (Keep the control plane on :6767 on your LAN - never forward it.)",
         dismissible: true,
       });
     }

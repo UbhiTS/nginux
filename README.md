@@ -24,7 +24,7 @@ production. One `docker compose up`, zero nginx config to write or maintain.
 
 ![NginUX dashboard - network topology and live traffic](docs/img/dashboard.png)
 
-> ⚠️ **Keep the control plane (`:4600`) on your LAN - never port-forward it.**
+> ⚠️ **Keep the control plane (`:6767`) on your LAN - never port-forward it.**
 > Only the data plane (`:80`/`:443`) should face the internet, and set a strong
 > admin password before exposing anything. See [Deploying securely](SECURITY.md#deploying-securely).
 
@@ -75,7 +75,7 @@ IPs; click one to filter the log to it or block it across every service.
 
 ```bash
 docker compose up -d          # pulls ghcr.io/ubhits/nginux:latest
-# UI: http://localhost:4600
+# UI: http://localhost:6767
 ```
 
 The image is published publicly to GitHub Container Registry, so no login is
@@ -88,7 +88,7 @@ docker pull ghcr.io/ubhits/nginux:latest
 # in compose:   image: ghcr.io/ubhits/nginux:latest
 ```
 
-Ports: `4600` = control-plane UI/API · `80`/`443` = proxied traffic (data plane).
+Ports: `6767` = control-plane UI/API · `80`/`443` = proxied traffic (data plane).
 State (SQLite DB, generated Nginx config, certs, logs) lives on the `nginux-data`
 volume mounted at `/data`.
 
@@ -102,7 +102,7 @@ npm install
 npm run dev          # api + web with hot reload (concurrently)
 # or run the production build locally:
 npm run build        # builds the web bundle (+ server check)
-npm start            # serves API + built UI on http://localhost:4600
+npm start            # serves API + built UI on http://localhost:6767
 ```
 
 **Default admin login:** `admin` / `admin` - you'll be required to set a new password on first sign-in. (Set `NGINUX_ADMIN_PASSWORD` to skip the default.)
@@ -164,7 +164,7 @@ able to *sign in*, do a one-time setup so the session is shared across your
 domains:
 
 1. **Expose NginUX itself** as a service on a subdomain of your domain - e.g.
-   `nginux.yourdomain.com → 127.0.0.1:4600` - with HTTPS, and **leave that one
+   `nginux.yourdomain.com → 127.0.0.1:6767` - with HTTPS, and **leave that one
    un-gated** (don't tick Require login on it, or you'll lock yourself out of the
    login page).
 2. In **Settings → Login gate**, set **NginUX sign-in URL** to that address
@@ -225,7 +225,7 @@ endpoint can't be called directly; you can rotate it under **Settings → Login 
 
 ```
                          ┌─────────────────────────── Docker image ───────────────────────────┐
- Browser / Agents  ──▶   │  Node control plane (Fastify, :4600)  ──writes/reloads──▶  Nginx    │
+ Browser / Agents  ──▶   │  Node control plane (Fastify, :6767)  ──writes/reloads──▶  Nginx    │
                          │   • REST + MCP + SSE + webhooks                          (data plane)│
                          │   • SQLite (node:sqlite)                                  :80 / :443 │
                          │   • cert manager, DNS, metrics, auth, bans                           │
@@ -291,7 +291,7 @@ Set via environment variables (the Docker image ships sensible defaults):
 | Variable | Purpose | Docker default |
 |----------|---------|----------------|
 | `PUID` / `PGID` | User/group NginUX runs as, so data on the volume is owned by *your* host user (manageable over SMB / a NAS file browser, like other self-hosted containers). **Defaults to the owner of the mounted data directory** - so with a bind-mounted folder NginUX simply runs as whoever owns it, no config needed. nginx still binds `:80`/`:443` via the `NET_BIND_SERVICE` ambient capability. Set both to `0` to run as root. | owner of `/data` |
-| `PORT` / `HOST` | Control-plane bind | `4600` / `0.0.0.0` |
+| `PORT` / `HOST` | Control-plane bind | `6767` / `0.0.0.0` |
 | `NGINUX_DATA_DIR` | SQLite + state root | `/data` |
 | `NGINX_CONF_DIR` | Generated HTTP server blocks | `/data/nginx/conf.d` |
 | `NGINX_STREAM_DIR` | Generated TCP/UDP/SNI stream blocks | `/data/nginx/stream.d` |
@@ -303,7 +303,7 @@ Set via environment variables (the Docker image ships sensible defaults):
 | `NGINUX_ADMIN_PASSWORD` | First-run admin password. If unset, the account is seeded as `admin`/`admin` and must be changed on first login. | - |
 | `NGINUX_TRUST_PROXY` | Trust `X-Forwarded-For` from the proxy in front (set `true` in the container). Off by default to prevent IP spoofing. | `true` (compose) |
 | `NGINUX_SECURE_COOKIES` | Force the `Secure` cookie flag. Defaults on in production. | (prod on) |
-| `NGINUX_CONTROL_URL` | Where nginx reaches the control plane for forward-auth. | `http://127.0.0.1:4600` |
+| `NGINUX_CONTROL_URL` | Where nginx reaches the control plane for forward-auth. | `http://127.0.0.1:6767` |
 | `NGINUX_AUDIT_RETAIN_DAYS` | Audit-log retention before pruning. | `90` |
 | `NGINUX_SSE_MAX` | Max concurrent SSE connections. | `200` |
 | `NGINUX_DEMO_TRAFFIC` | Set `1` to feed synthetic traffic (never auto-on in prod). | - |
