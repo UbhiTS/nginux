@@ -6,15 +6,15 @@ import { TrafficChart } from "../components/TrafficChart.tsx";
 
 const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
 
-const statusColor = (s: number) =>
+export const statusColor = (s: number) =>
   s >= 500 ? "var(--red)" : s >= 400 ? "var(--yellow)" : s >= 300 ? "var(--accent)" : "var(--green)";
 
-const flag = (cc: string) =>
+export const flag = (cc: string) =>
   cc.length === 2 ? String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 127397 + c.charCodeAt(0))) : "🌐";
 
 // ISO 3166 code -> full name via the browser (no data file); falls back to the code.
 const regionNames = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
-const countryName = (cc: string) =>
+export const countryName = (cc: string) =>
   cc && cc.length === 2 && regionNames ? (regionNames.of(cc.toUpperCase()) ?? cc) : cc || "";
 
 // Rough country centroids [lat, lon] for the traffic bubble map.
@@ -51,7 +51,7 @@ const clampView = (v: View): View => ({
   y: Math.min(0, Math.max(H * (1 - v.s), v.y)),
 });
 
-function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: {
+export function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: {
   countries: MetricsSummary["topCountries"];
   emptyHint?: string;
   homeCountry?: string;
@@ -216,7 +216,7 @@ function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBlockIp }: 
   );
 }
 
-function fmtBytes(n: number): string {
+export function fmtBytes(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(1) + " GB";
   if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB";
   if (n >= 1e3) return (n / 1e3).toFixed(1) + " KB";

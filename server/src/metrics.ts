@@ -351,6 +351,83 @@ export function rangeSummary(range: string) {
   };
 }
 
+/** Per-host analytics summary (same shape as rangeSummary, minus topHosts),
+ *  computed ON DEMAND by scanning the host-filtered access log within the range
+ *  window. Kept out of the always-on aggregation so per-host IP/path/country
+ *  breakdowns don't multiply memory by host count - the cost is paid only when a
+ *  service's analytics panel is opened. The on-disk log is chronological, so the
+ *  scan stops as soon as it passes the window's start. */
+export function hostSummary(domain: string, range: string) {
+  const dom = domain.toLowerCase();
+  const minutes = range === "live" ? 5 : (RANGE_MINUTES[range] ?? 1440);
+  const cutoff = Date.now() - minutes * 60_000;
+  let count = 0, out = 0;
+  const status = [0, 0, 0, 0];
+  const lat = new Array(LAT_REPORT.length).fill(0) as number[];
+  const ip = new Map<string, number>(), path = new Map<string, number>(), country = new Map<string, number>();
+  const ipCC = new Map<string, string>(); // ip -> last-seen country, for top-IP labels
+  const seen = new Set<string>();
+  const add = (e: LogEntry) => {
+    const k = `${e.ts}|${e.ip}|${e.path}|${e.status}`;
+    if (seen.has(k)) return; seen.add(k);
+    count++; out += e.bytes;
+    const sci = Math.floor(e.status / 100) - 2; if (sci >= 0 && sci < 4) status[sci]++;
+    lat[latBucket(e.ms)]++;
+    ip.set(e.ip, (ip.get(e.ip) ?? 0) + 1);
+    path.set(e.path, (path.get(e.path) ?? 0) + 1);
+    if (e.country) { country.set(e.country, (country.get(e.country) ?? 0) + 1); ipCC.set(e.ip, e.country); }
+  };
+  // In-memory ring first (covers dev demo traffic, which never hits disk).
+  for (let i = ring.length - 1; i >= 0; i--) {
+    const e = ring[i];
+    if (e.host.toLowerCase() === dom && Date.parse(e.ts) >= cutoff) add(e);
+  }
+  // Then the persisted access log, newest-first, stopping once past the window.
+  try {
+    if (existsSync(ACCESS_LOG)) {
+      const size = statSync(ACCESS_LOG).size;
+      if (size > 0) {
+        const maxBytes = 32 * 1024 * 1024;
+        const startAt = size > maxBytes ? size - maxBytes : 0;
+        const fd = openSync(ACCESS_LOG, "r");
+        const buf = Buffer.allocUnsafe(size - startAt);
+        try { readSync(fd, buf, 0, buf.length, startAt); } finally { closeSync(fd); }
+        const lines = buf.toString("utf8").split("\n");
+        if (startAt > 0) lines.shift();
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const t = lines[i];
+          if (!t || !t.toLowerCase().includes(dom)) continue; // cheap pre-filter before parsing
+          try {
+            const j = JSON.parse(t);
+            const ts = j.time ?? "";
+            if (Date.parse(ts) < cutoff) break; // chronological → everything older is out of window
+            if (String(j.host ?? "").toLowerCase() !== dom) continue; // dom matched a path/IP, not the host
+            add({
+              ts, host: j.host ?? "-", method: j.method ?? "GET", path: j.path ?? "/",
+              status: Number(j.status ?? 0), bytes: Number(j.bytes ?? 0), bytesIn: Number(j.bytes_in ?? 0),
+              ip: j.ip ?? "-", country: j.country ?? "", ua: j.ua ?? "", ms: Math.round(Number(j.ms ?? 0) * 1000) / 1000,
+            });
+          } catch { /* skip malformed line */ }
+        }
+      }
+    }
+  } catch { /* fall back to whatever the ring had */ }
+  const ipsByCountry = (cc: string, n: number) =>
+    [...ip.entries()].filter(([k]) => ipCC.get(k) === cc).sort((a, b) => b[1] - a[1]).slice(0, n).map(([ipx, c]) => ({ ip: ipx, count: c }));
+  return {
+    totalRequests: count,
+    totalBytes: out,
+    statusClass: { "2xx": status[0], "3xx": status[1], "4xx": status[2], "5xx": status[3] },
+    errorRate: count ? +(((status[2] + status[3]) / count) * 100).toFixed(2) : 0,
+    p50: pctFromHist(lat, 50),
+    p95: pctFromHist(lat, 95),
+    topHosts: [] as { key: string; count: number }[],
+    topIps: topN(ip, 8).map((t) => ({ ...t, country: ipCC.get(t.key) ?? "" })),
+    topPaths: topN(path, 8),
+    topCountries: topN(country, MAP_COUNTRIES).map((c) => ({ ...c, topIps: ipsByCountry(c.key, 5) })),
+  };
+}
+
 export function summary() {
   const errors = statusClass["4xx"] + statusClass["5xx"];
   const sorted = sortedMs();

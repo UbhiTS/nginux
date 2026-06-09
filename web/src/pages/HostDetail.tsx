@@ -6,6 +6,7 @@ import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 import { CertDetailModal } from "../components/CertDetailModal.tsx";
 import { ServiceIcon } from "../components/ServiceIcon.tsx";
+import { HostAnalytics } from "../components/HostAnalytics.tsx";
 
 const banner = {
   online: { cls: "", icon: <Icon.check />, title: "Working. Everything looks healthy." },
@@ -212,6 +213,7 @@ export function HostDetail({
         {editing && draft ? (
           <EditForm draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={cancelEdit} saving={saving} error={saveErr} certs={certs} settings={settings} onCertsChanged={() => api.certificates().then(setCerts).catch(() => {})} />
         ) : (
+        <>
         <div className="detail-grid">
           <div>
             <div className="card" style={{ marginBottom: 18 }}>
@@ -371,6 +373,8 @@ export function HostDetail({
             {host.mtls && <ClientCerts hostId={host.id} />}
           </div>
         </div>
+        <HostAnalytics domain={host.domain} />
+        </>
         )}
       </div>
     </>

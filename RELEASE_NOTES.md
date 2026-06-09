@@ -28,6 +28,9 @@ view, real metrics, and an agent-ready API.
   health, with pan and zoom.
 - Multi-range traffic graphs (requests + bandwidth), top IPs/paths/countries, and
   searchable access logs.
+- Per-service analytics on each service's page: requests, bandwidth, p95 latency, error
+  rate, status codes, top clients, a source-country traffic map, and a live access log —
+  every panel loaded on demand when you expand it.
 - Uptime monitoring with incident history, plus notification channels (ntfy, Gotify,
   Pushover, Discord, Slack, Telegram, email, and webhooks).
 

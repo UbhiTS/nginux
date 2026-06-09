@@ -92,6 +92,7 @@ import {
   subscribeLog,
   summary as metricsSummary,
   rangeSummary as metricsRangeSummary,
+  hostSummary as metricsHostSummary,
   trafficSeries,
 } from "./metrics.ts";
 import { getUptime, startUptimeMonitor } from "./uptime.ts";
@@ -791,6 +792,16 @@ app.get("/api/metrics/summary", async (req, reply) => {
   const range = (req.query as { range?: string }).range;
   // A range scopes every panel to that window; no range = cumulative snapshot.
   return range ? metricsRangeSummary(range) : metricsSummary();
+});
+// Per-service analytics summary (requests/bandwidth/p95/error-rate + status,
+// top IPs/paths/countries) for one host, computed on demand. Admin/editor only
+// since it carries client IPs, matching /metrics/summary and /logs.
+app.get("/api/metrics/host/:domain", async (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return undefined;
+  const { domain } = req.params as { domain: string };
+  if (!isHostname(domain)) return reply.code(400).send({ error: "Invalid domain." });
+  const range = (req.query as { range?: string }).range ?? "1d";
+  return metricsHostSummary(domain, range);
 });
 app.get("/api/metrics/hosts", async (req) => {
   const { range = "live", metric = "requests" } = req.query as { range?: string; metric?: string };

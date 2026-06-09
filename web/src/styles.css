@@ -416,6 +416,15 @@ button { font-family: inherit; cursor: pointer; }
 .card-pad { padding: 18px 20px; }
 .card-head { padding: 15px 20px; border-bottom: 1px solid var(--border-soft); font-weight: 650; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }
 
+/* Lazy collapsible sections (service analytics) */
+.collapsible { margin-bottom: 12px; }
+.collapsible-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 18px; background: none; border: none; color: var(--text); font-family: inherit; font-size: 14px; font-weight: 650; cursor: pointer; text-align: left; border-radius: var(--radius); }
+.collapsible-head:hover { background: var(--bg-elev2); }
+.collapsible-caret { width: 15px !important; height: 15px !important; color: var(--text-faint); transition: transform .15s; flex-shrink: 0; }
+.collapsible-caret.open { transform: rotate(90deg); }
+.collapsible-title { flex-shrink: 0; }
+.host-analytics .stat .value { font-size: 22px; }
+
 .adv-toggle { display: flex; align-items: center; gap: 9px; padding: 13px 20px; cursor: pointer; color: var(--text-dim); font-weight: 600; font-size: 13px; user-select: none; }
 .adv-toggle svg { width: 16px; height: 16px; transition: .2s; }
 .adv-toggle.open svg.chev { transform: rotate(90deg); }
