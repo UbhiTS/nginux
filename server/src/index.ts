@@ -59,6 +59,7 @@ import {
   AcmeError,
   deleteCert,
   ensureCert,
+  getAcmeActivity,
   getCert,
   getCertDetails,
   importCertFiles,
@@ -1266,6 +1267,14 @@ app.delete("/api/bans/:ip", async (req, reply) => {
 
 // ---------- certificates ----------
 app.get("/api/certificates", async (req, reply) => requireRole(req, reply, "admin", "editor") ? listCerts() : undefined);
+
+// Live ACME activity feed for the Certificates page - everything NginUX and
+// acme-client did while talking to Let's Encrypt, so failures aren't a black box.
+app.get("/api/acme/log", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  const since = Number((req.query as { since?: string }).since ?? 0) || 0;
+  return getAcmeActivity(since);
+});
 
 app.post("/api/certificates/:domain/issue", async (req, reply) => {
   if (!requireRole(req, reply, "admin", "editor")) return;

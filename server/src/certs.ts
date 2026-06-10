@@ -301,6 +301,35 @@ export async function issueSelfSigned(domain: string): Promise<Certificate> {
 const ACME_TIMEOUT_MS = Number(process.env.ACME_TIMEOUT_MS ?? 120000);
 const ACCOUNT_KEY_PATH = join(CERT_DIR, "acme-account.key");
 
+// ---------- ACME activity log (feeds the live panel on the Certificates page) ----------
+export interface AcmeLogEntry {
+  seq: number;
+  ts: string;
+  domain: string;
+  level: "info" | "warn" | "error" | "debug";
+  msg: string;
+}
+const ACME_LOG_MAX = 400;
+const acmeActivity: AcmeLogEntry[] = [];
+let acmeSeq = 0;
+// Domains with an issuance in flight - tags the acme-client internal log lines.
+const acmeInflight = new Set<string>();
+
+export function acmeLog(domain: string, msg: string, level: AcmeLogEntry["level"] = "info"): void {
+  acmeActivity.push({ seq: ++acmeSeq, ts: new Date().toISOString(), domain, level, msg });
+  if (acmeActivity.length > ACME_LOG_MAX) acmeActivity.splice(0, acmeActivity.length - ACME_LOG_MAX);
+}
+/** Entries after `since` (a seq from a prior poll), plus whether anything is in flight. */
+export function getAcmeActivity(since = 0): { entries: AcmeLogEntry[]; lastSeq: number; busy: boolean } {
+  return { entries: acmeActivity.filter((e) => e.seq > since), lastSeq: acmeSeq, busy: acmeInflight.size > 0 };
+}
+// acme-client's internal trace (directory fetch, order status, challenge polls,
+// retries) - exactly the play-by-play you want when issuance misbehaves.
+acme.setLogger((msg) => {
+  const tag = acmeInflight.size === 1 ? [...acmeInflight][0] : "acme";
+  acmeLog(tag, msg, "debug");
+});
+
 /** A categorized ACME failure so the UI can decide whether a retry is worthwhile. */
 export type AcmeErrorKind = "rate_limit" | "timeout" | "dns" | "unreachable" | "config" | "other";
 export class AcmeError extends Error {
@@ -324,8 +353,12 @@ function classifyAcme(raw: string): { message: string; kind: AcmeErrorKind } {
 
 /** Reuse one ACME account key across issuances instead of registering a fresh
  *  account every time - repeated registrations are themselves rate-limited. */
-async function acmeAccountKey(): Promise<Buffer> {
-  if (existsSync(ACCOUNT_KEY_PATH)) return readFileSync(ACCOUNT_KEY_PATH);
+async function acmeAccountKey(domain: string): Promise<Buffer> {
+  if (existsSync(ACCOUNT_KEY_PATH)) {
+    acmeLog(domain, "Using the existing ACME account key.");
+    return readFileSync(ACCOUNT_KEY_PATH);
+  }
+  acmeLog(domain, "First issuance on this install - creating an ACME account key.");
   const key = await acme.crypto.createPrivateKey();
   mkdirSync(CERT_DIR, { recursive: true });
   writeFileSync(ACCOUNT_KEY_PATH, key); // default perms so the data volume stays host-manageable (see commit 01f8ffa)
@@ -342,14 +375,21 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 // ---------- Let's Encrypt (ACME) - runs with a reachable public domain ----------
 export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-01"): Promise<Certificate> {
   const s = getSettings();
-  if (!s.letsEncryptEmail) throw new AcmeError("Set a Let's Encrypt contact email in Settings first.", "config");
+  if (!s.letsEncryptEmail) {
+    acmeLog(domain, "No Let's Encrypt contact email configured - set one in Settings → Network & SSL.", "error");
+    throw new AcmeError("Set a Let's Encrypt contact email in Settings first.", "config");
+  }
   upsertCert({ domain, status: "pending", method, issuer: "Let's Encrypt" });
 
   const wildcard = domain.startsWith("*.");
+  const directoryUrl = s.acmeStaging ? acme.directory.letsencrypt.staging : acme.directory.letsencrypt.production;
+  acmeInflight.add(domain);
+  acmeLog(domain, `Requesting a certificate via ${method.toUpperCase()} from ${s.acmeStaging ? "Let's Encrypt STAGING (test certs, relaxed rate limits)" : "Let's Encrypt production"}.`);
+  acmeLog(domain, `ACME directory: ${directoryUrl}`, "debug");
   try {
     const client = new acme.Client({
-      directoryUrl: s.acmeStaging ? acme.directory.letsencrypt.staging : acme.directory.letsencrypt.production,
-      accountKey: await acmeAccountKey(),
+      directoryUrl,
+      accountKey: await acmeAccountKey(domain),
     });
     const [key, csr] = await acme.crypto.createCsr({ commonName: domain, altNames: [domain] });
     const dns = getDnsProvider();
@@ -363,12 +403,16 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
         if (challenge.type === "http-01") {
           mkdirSync(ACME_WEBROOT, { recursive: true });
           writeFileSync(join(ACME_WEBROOT, challenge.token), keyAuthorization);
+          acmeLog(domain, `Challenge token staged - Let's Encrypt will fetch http://${domain.replace(/^\*\./, "")}/.well-known/acme-challenge/${challenge.token.slice(0, 12)}… (port 80 must reach this server).`);
         } else {
-          await dns.upsertTxt(s.baseDomain, recordName(`_acme-challenge.${domain.replace(/^\*\./, "")}`, s.baseDomain), keyAuthorization);
+          const rec = recordName(`_acme-challenge.${domain.replace(/^\*\./, "")}`, s.baseDomain);
+          acmeLog(domain, `Creating DNS TXT record "${rec}" in zone ${s.baseDomain} via ${s.dnsProvider} - waiting for it to propagate.`);
+          await dns.upsertTxt(s.baseDomain, rec, keyAuthorization);
         }
       },
       challengeRemoveFn: async (_authz, challenge) => {
         if (challenge.type === "dns-01") {
+          acmeLog(domain, "Validation done - removing the DNS TXT record.", "debug");
           await dns.removeTxt(s.baseDomain, recordName(`_acme-challenge.${domain.replace(/^\*\./, "")}`, s.baseDomain));
         }
       },
@@ -390,14 +434,20 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
       wildcard,
       lastError: null,
     });
+    acmeLog(domain, `Certificate issued${info?.notAfter ? ` - valid until ${new Date(info.notAfter).toDateString()}` : ""}${s.acmeStaging ? " (staging - not browser-trusted)" : ""}. ✓`);
     logEvent({ type: "cert.issued", severity: "info", actor: "system", summary: `Let's Encrypt certificate for ${domain}`, ip: "", meta: { method } });
     return getCert(domain)!;
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
     const { message, kind } = classifyAcme(raw);
+    acmeLog(domain, message, "error");
+    acmeLog(domain, `Detail: ${raw.split("\n")[0]}`, "debug");
+    if (kind === "rate_limit") acmeLog(domain, "Rate-limit reference: https://letsencrypt.org/docs/rate-limits/", "warn");
     upsertCert({ domain, status: "error", lastError: message });
     logEvent({ type: "cert.failed", severity: "warn", actor: "system", summary: `Certificate failed for ${domain}`, ip: "", meta: { error: raw, kind } });
     throw new AcmeError(message, kind);
+  } finally {
+    acmeInflight.delete(domain);
   }
 }
 
@@ -418,6 +468,7 @@ export async function renewDue(): Promise<void> {
   for (const c of listCerts()) {
     if (!c.autoRenew || c.daysRemaining === null) continue;
     if (c.daysRemaining > RENEW_LEAD_DAYS) continue;
+    if (c.method !== "selfsigned") acmeLog(c.domain, `Auto-renewal: ${c.daysRemaining} day${c.daysRemaining === 1 ? "" : "s"} left - renewing now.`);
     try {
       await issue(c.domain, c.method);
       renewed++;

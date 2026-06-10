@@ -11,7 +11,12 @@ view, real metrics, and an agent-ready API.
 - Point a domain at any internal `host:port` in a few clicks — HTTP/HTTPS, WebSocket,
   HTTP/2, gRPC, and TCP/UDP/SNI streams.
 - Automatic certificates via Let's Encrypt (HTTP-01 and DNS-01 for GoDaddy/Cloudflare)
-  or instant self-signed, with daily auto-renewal.
+  or instant self-signed, with daily auto-renewal. ACME challenges are served on
+  every host - ahead of redirects, IP lists, the login gate, and maintenance mode -
+  so issuance and renewal just work.
+- A live Let's Encrypt activity log on the Certificates page: every ACME step
+  (staging/production directory, challenges, validation attempts, errors) streams
+  in as it happens, so a failed issuance is never a black box.
 - Load balancing, per-path routing, custom headers, and a raw-nginx escape hatch when
   you need it.
 

@@ -145,6 +145,7 @@ export const api = {
   deleteCert: (domain: string) => req<{ ok: boolean }>(`/certificates/${encodeURIComponent(domain)}`, { method: "DELETE" }),
   importCerts: (files: { path: string; content: string }[]) =>
     req<CertImportResult>("/certificates/import", { method: "POST", body: JSON.stringify({ files }) }),
+  acmeLog: (since: number) => req<AcmeActivity>(`/acme/log?since=${since}`),
 
   // ---- geoip (country lock) ----
   geoipStatus: () => req<GeoipStatus>("/geoip/status"),
@@ -230,6 +231,19 @@ export interface Reachability {
 export interface CertImportResult {
   imported: { domain: string; notAfter: string; staging: boolean }[];
   skipped: { name: string; reason: string }[];
+}
+
+export interface AcmeLogEntry {
+  seq: number;
+  ts: string;
+  domain: string;
+  level: "info" | "warn" | "error" | "debug";
+  msg: string;
+}
+export interface AcmeActivity {
+  entries: AcmeLogEntry[];
+  lastSeq: number;
+  busy: boolean;
 }
 
 export interface GeoipStatus {

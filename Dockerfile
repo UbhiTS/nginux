@@ -55,7 +55,8 @@ ENV NODE_ENV=production \
     NGINX_STREAM_DIR=/data/nginx/stream.d \
     NGINX_BANNED_FILE=/data/nginx/banned.conf \
     NGINX_ACCESS_LOG=/data/logs/access.log \
-    CERT_DIR=/data/certs
+    CERT_DIR=/data/certs \
+    ACME_WEBROOT=/data/acme-webroot
 
 # 6767 = control-plane UI/API · 80/443 = proxied traffic (data plane)
 EXPOSE 6767 80 443

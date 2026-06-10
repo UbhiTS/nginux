@@ -14,7 +14,7 @@ set -eu
 # fresh named volume) resolves to uid 0 → runs as root.
 
 # Persistent dirs on the mounted volume
-mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs /data/geoip
+mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs /data/geoip /data/acme-webroot
 touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/nginx/banned.conf
 
 # Adopt the data-dir owner unless PUID/PGID were set explicitly.

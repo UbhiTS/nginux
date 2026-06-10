@@ -1,7 +1,83 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type CertDetails, type Certificate, type CertImportResult } from "../api.ts";
+import { api, type AcmeLogEntry, type CertDetails, type Certificate, type CertImportResult } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
+
+const levelColor: Record<AcmeLogEntry["level"], string> = {
+  info: "var(--text)",
+  warn: "var(--yellow)",
+  error: "var(--red)",
+  debug: "var(--text-faint)",
+};
+
+/** Live tail of everything NginUX says to (and hears from) Let's Encrypt.
+ *  Hidden until there's something to show; polls faster while an issuance is
+ *  in flight so failures read like a console instead of a black box. */
+function AcmeActivityPanel({ active, onSettled }: { active: boolean; onSettled: () => void }) {
+  const [lines, setLines] = useState<AcmeLogEntry[]>([]);
+  const [busy, setBusy] = useState(false);
+  const seqRef = useRef(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // the poll callback reads the latest state without re-arming the effect
+  const busyRef = useRef(false);
+  busyRef.current = busy || active;
+  const settledRef = useRef(onSettled);
+  settledRef.current = onSettled;
+
+  useEffect(() => {
+    let alive = true;
+    let timer: number;
+    let wasBusy = false;
+    const pull = async () => {
+      try {
+        const a = await api.acmeLog(seqRef.current);
+        if (!alive) return;
+        seqRef.current = a.lastSeq;
+        setBusy(a.busy);
+        if (a.entries.length) setLines((p) => [...p, ...a.entries].slice(-300));
+        // An issuance just finished (e.g. a background auto-renewal) - refresh
+        // the cert table so the row's status/error reflect the outcome.
+        if (wasBusy && !a.busy) settledRef.current();
+        wasBusy = a.busy;
+      } catch { /* transient; retry next tick */ }
+      timer = window.setTimeout(pull, busyRef.current ? 1200 : 4000);
+    };
+    pull();
+    return () => { alive = false; clearTimeout(timer); };
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+
+  if (lines.length === 0 && !active) return null;
+  const fmtT = (iso: string) => new Date(iso).toLocaleTimeString(undefined, { hour12: false });
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-head">
+        Let's Encrypt activity
+        {(busy || active) && <span className="pill g" style={{ marginLeft: 8 }}><span className="dot g" />working</span>}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 12 }}>
+          <a className="muted" style={{ fontSize: 11.5, fontWeight: 400 }} href="https://letsencrypt.org/docs/rate-limits/" target="_blank" rel="noreferrer">rate limits ↗</a>
+          <a className="muted" style={{ fontSize: 11.5, fontWeight: 400 }} href="https://letsencrypt.org/docs/" target="_blank" rel="noreferrer">ACME docs ↗</a>
+        </span>
+      </div>
+      <div className="card-pad" style={{ paddingTop: 10 }}>
+        <div ref={scrollRef} className="code" style={{ border: "none", padding: 0, background: "none", lineHeight: 1.8, maxHeight: 240, overflow: "auto", fontSize: 12 }}>
+          {lines.length === 0 && <div className="muted"><span className="spinner" /> Contacting Let's Encrypt…</div>}
+          {lines.map((l) => (
+            <div key={l.seq} style={{ display: "flex", gap: 8 }}>
+              <span style={{ color: "var(--text-faint)", flexShrink: 0 }}>{fmtT(l.ts)}</span>
+              <span style={{ color: "var(--accent)", flexShrink: 0 }}>{l.domain}</span>
+              <span style={{ color: levelColor[l.level], wordBreak: "break-word" }}>{l.msg}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const statusPill: Record<Certificate["status"], string> = {
   valid: "g",
@@ -237,6 +313,8 @@ export function Certificates() {
             </div>
           )}
         </div>
+
+        <AcmeActivityPanel active={issuing || busy !== null || certs.some((c) => c.status === "pending")} onSettled={load} />
 
         <div className="info-line" style={{ marginTop: 16 }}>
           <Icon.info />

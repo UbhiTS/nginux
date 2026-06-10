@@ -18,6 +18,21 @@ const STREAM_DIR = process.env.NGINX_STREAM_DIR ?? join(__dirname, "..", "..", "
 const NGINX_BIN = process.env.NGINX_BIN ?? "nginx";
 // Where nginx reaches the control plane for forward-auth (same container).
 const CONTROL_URL = process.env.NGINUX_CONTROL_URL ?? "http://127.0.0.1:6767";
+// Where the control plane drops ACME HTTP-01 challenge tokens (must match
+// certs.ts). Forward slashes: nginx wants them even on a Windows dev box.
+const ACME_WEBROOT = (process.env.ACME_WEBROOT ?? join(__dirname, "..", "data", "acme-webroot")).replace(/\\/g, "/");
+
+// Serve ACME HTTP-01 challenges in every HTTP server block. `^~` beats the
+// regex locations (exploit-block), and the location-level `allow all` overrides
+// any server-level allow/deny list - Let's Encrypt's validators must always
+// reach this path or issuance/renewal breaks. Served straight off :80 (before
+// the HTTPS redirect), so mTLS, auth gates, and maintenance mode never apply.
+const ACME_CHALLENGE_LOCATION = `    location ^~ /.well-known/acme-challenge/ {
+        allow all;
+        alias ${ACME_WEBROOT}/;
+        default_type text/plain;
+    }
+`;
 
 /** Generate a stream (TCP/UDP) server block. Lives in the nginx `stream {}` context. */
 export function generateStreamConfig(h: ProxyHost): string {
@@ -112,12 +127,17 @@ export function generateHostConfig(h: ProxyHost): string {
   const listen = h.ssl ? "443 ssl" : "80";
   const http2 = h.ssl && h.http2 ? "\n    http2 on;" : "";
 
-  // HTTP -> HTTPS redirect when SSL is on.
+  // HTTP -> HTTPS redirect when SSL is on. The redirect lives inside
+  // `location /` (a server-level `return` runs before location matching and
+  // would swallow ACME challenges), so HTTP-01 tokens are served directly off
+  // :80 and everything else still bounces to HTTPS.
   if (h.ssl) {
     lines.push(`server {
     listen 80;
     server_name ${h.domain};
-    return 301 https://$host$request_uri;
+${ACME_CHALLENGE_LOCATION}    location / {
+        return 301 https://$host$request_uri;
+    }
 }`);
   }
 
@@ -276,7 +296,7 @@ ${extra ? extra + "\n" : ""}`;
     listen ${listen};${http2}
     server_name ${h.domain};${sslBlock}${authRedirect}
 ${protections.length ? protections.join("\n") + "\n" : ""}
-${loginLocation}${authLocation}${pathBlocks}    location / {
+${ACME_CHALLENGE_LOCATION}${loginLocation}${authLocation}${pathBlocks}    location / {
 ${locationBody}    }
 }`);
 
