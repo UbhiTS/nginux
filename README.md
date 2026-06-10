@@ -22,7 +22,9 @@ pleasant to run: security-first by default, fully scriptable over MCP/REST, and
 careful enough that a generated config which fails validation never reaches
 production. One `docker compose up`, zero nginx config to write or maintain.
 
-![NginUX dashboard - network topology and live traffic](docs/img/dashboard.png)
+![NginUX feature tour - dashboard topology, per-service analytics, traffic world map, live access log, certificates, Security Center, and all five themes](docs/img/nginux-demo.gif)
+
+<sub>35-second tour: live network topology → per-service analytics → traffic world map → live access log → certificates → Security Center → all five themes. Stills below.</sub>
 
 > ⚠️ **Keep the control plane (`:6767`) on your LAN - never port-forward it.**
 > Only the data plane (`:80`/`:443`) should face the internet, and set a strong
@@ -65,7 +67,7 @@ IPs; click one to filter the log to it or block it across every service.
 | **Services** | **Agents & API** |
 | [![Services](docs/img/services.png)](docs/img/services.png) | [![Agents & API](docs/img/agents.png)](docs/img/agents.png) |
 
-<sub>Regenerate these from a running instance with `node scripts/screenshots.mjs` (uses your installed Chrome/Edge).</sub>
+<sub>Regenerate these from a running instance with `node scripts/screenshots.mjs`, and the demo GIF up top with `node scripts/demo-gif.mjs` (both drive your installed Chrome/Edge; see each script's header for env options).</sub>
 
 ---
 
