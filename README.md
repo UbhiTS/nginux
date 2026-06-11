@@ -22,9 +22,9 @@ pleasant to run: security-first by default, fully scriptable over MCP/REST, and
 careful enough that a generated config which fails validation never reaches
 production. One `docker compose up`, zero nginx config to write or maintain.
 
-![NginUX feature tour - dashboard topology, per-service analytics, traffic world map, live access log, certificates, Security Center, and all five themes](docs/img/nginux-demo.gif)
+[![NginUX feature tour - dashboard topology, per-service analytics, traffic world map, live access log, certificates, Security Center, and all five themes](docs/img/nginux-demo.gif)](docs/img/nginux-demo.mp4)
 
-<sub>35-second tour: live network topology → per-service analytics → traffic world map → live access log → certificates → Security Center → all five themes. Stills below.</sub>
+<sub>The tour: live network topology → per-service analytics → traffic world map → live access log → certificates → Security Center → all five themes. **▶ [Click for the smooth HD version](docs/img/nginux-demo.mp4)** · stills below.</sub>
 
 > ⚠️ **Keep the control plane (`:6767`) on your LAN - never port-forward it.**
 > Only the data plane (`:80`/`:443`) should face the internet, and set a strong

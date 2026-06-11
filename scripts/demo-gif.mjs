@@ -24,19 +24,28 @@
 //   NGINUX_GIF_WIDTH / _FPS / _COLORS   encode tuning (default 1080 / 14 / 200)
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import puppeteer from "puppeteer-core";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const GIF = join(ROOT, "docs", "img", "nginux-demo.gif");
+// NGINUX_GIF_OUT overrides the output path; a .mp4 extension switches the encode
+// to H.264 (smoother and smaller than GIF - right for LinkedIn/social uploads).
+const OUTPUT = process.env.NGINUX_GIF_OUT ? resolve(process.env.NGINUX_GIF_OUT) : GIF;
+const MP4 = OUTPUT.toLowerCase().endsWith(".mp4");
+// NGINUX_GIF_SMOOTH=1: capture at ~30fps with finer cursor interpolation and
+// subdivided SVG motion, and dwell ~1.8x longer per screen (longest on the
+// dashboard). The default profile stays snappy/small for the README GIF.
+const SMOOTH = process.env.NGINUX_GIF_SMOOTH === "1";
 const BASE = process.env.NGINUX_GIF_URL ?? "http://localhost:6767";
 const USER = process.env.NGINUX_GIF_USER ?? "admin";
 const PASS = process.env.NGINUX_GIF_PASS ?? "admin";
 const WIDTH = Number(process.env.NGINUX_GIF_WIDTH ?? 1080);
-const FPS = Number(process.env.NGINUX_GIF_FPS ?? 14);
+const FPS = Number(process.env.NGINUX_GIF_FPS ?? (SMOOTH ? 30 : 14));
 const COLORS = Number(process.env.NGINUX_GIF_COLORS ?? 200);
+const DWELL = SMOOTH ? 1.8 : 1; // static-screen hold multiplier
 const W = 1440, H = 900;
 
 // Chrome first: the x86 Edge stub can exit 0 immediately under puppeteer headless.
@@ -68,6 +77,8 @@ async function shot(durationSec) {
   await page.screenshot({ path: file });
   manifest.push({ file, duration: durationSec });
 }
+// A scene-level hold: scales with the profile so smooth captures linger longer.
+const hold = (durationSec) => shot(durationSec * DWELL);
 // Headless screenshots don't include the OS cursor - draw one that follows the
 // real mouse events, plus a click ripple, so the viewer can see the interaction.
 async function injectCursor() {
@@ -92,7 +103,7 @@ async function injectCursor() {
   await page.mouse.move(curX, curY);
 }
 // Ease the cursor to (x,y), screenshotting each step.
-async function moveTo(x, y, frames = 7, holdSec = 0.045) {
+async function moveTo(x, y, frames = SMOOTH ? 14 : 7, holdSec = SMOOTH ? 1 / 30 : 0.045) {
   const sx = curX, sy = curY;
   for (let i = 1; i <= frames; i++) {
     let t = i / frames; t = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
@@ -114,11 +125,20 @@ async function coords(sel, text) {
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   }, sel, text || null);
 }
-// Deterministic SVG (SMIL) motion: advance every svg clock, snap a frame each step.
+// Deterministic SVG (SMIL) motion: advance every svg clock, snap a frame each
+// step. Smooth profile re-samples the same span at ~30fps (same wall-clock and
+// same SVG-time, just many more in-between frames).
 async function animateSvg(count, stepSec, holdSec, baseSec = 1.0) {
-  for (let i = 0; i < count; i++) {
-    await page.evaluate((t) => { document.querySelectorAll("svg").forEach((s) => { try { s.setCurrentTime(t); } catch { /* static svg */ } }); }, baseSec + i * stepSec);
-    await shot(holdSec);
+  let n = count, step = stepSec, holdF = holdSec;
+  if (SMOOTH) {
+    const svgSpan = count * stepSec, wall = count * holdSec;
+    n = Math.max(count, Math.round(wall * 30));
+    step = svgSpan / n;
+    holdF = wall / n;
+  }
+  for (let i = 0; i < n; i++) {
+    await page.evaluate((t) => { document.querySelectorAll("svg").forEach((s) => { try { s.setCurrentTime(t); } catch { /* static svg */ } }); }, baseSec + i * step);
+    await shot(holdF);
   }
 }
 // Real-time frames (for SSE-driven content like the live access log).
@@ -190,7 +210,7 @@ try {
   await page.evaluate(() => { window.location.hash = "#/dashboard"; window.scrollTo(0, 0); });
   await sleep(700);
   try { await page.waitForSelector(".toast", { timeout: 5000 }); } catch { /* none - fine */ }
-  await shot(0.8); await shot(0.7);
+  await hold(0.8); await hold(0.7);
   for (let k = 0; k < 3; k++) {
     const d = await page.evaluate(() => {
       const b = [...document.querySelectorAll(".toast .toast-btn")].find((x) => /Dismiss/.test(x.textContent || ""));
@@ -202,27 +222,29 @@ try {
     await page.evaluate(() => { const b = [...document.querySelectorAll(".toast .toast-btn")].find((x) => /Dismiss/.test(x.textContent || "")); if (b) b.click(); });
     await sleep(320);
   }
-  await shot(0.7); // clean dashboard, KPIs revealed
-  await moveTo(560, 430, 6, 0.05); // glide over the topology while traffic flows
-  await animateSvg(14, 0.16, 0.16);
+  await hold(0.7); // clean dashboard, KPIs revealed
+  await moveTo(560, 430); // glide over the topology while traffic flows
+  // The home screen is the hero - the smooth profile lets the topology's live
+  // traffic flow for ~6s instead of ~2s.
+  await animateSvg(SMOOTH ? 36 : 14, 0.16, 0.16);
 
   // ---- SCENE 2: Services ----
   console.log("services…");
   await navClick(".nav-parent", "Services", "#/services", "Services");
   await page.evaluate(() => window.scrollTo(0, 0));
-  await shot(1.0); await shot(0.9);
+  await hold(1.0); await hold(0.9);
 
   // ---- SCENE 3: Service detail → Traffic & errors ----
   console.log(`service analytics (${svc.name})…`);
   await navClick(".nav-child", svc.name, `#/host/${svc.id}`, "Traffic & logs");
   await page.evaluate(() => window.scrollTo(0, 0));
-  await shot(1.2);
+  await hold(1.2);
   await expandWithCursor("Traffic & errors");
   try { await page.waitForFunction(() => { const v = document.querySelector(".host-analytics .stat .value"); return v && /\d/.test(v.textContent || ""); }, { timeout: 9000 }); } catch { /* still shows */ }
   await sleep(700);
   await scrollToText(".section-title", "Traffic & logs", -10);
   await sleep(300);
-  await shot(1.2); await shot(1.1);
+  await hold(1.2); await hold(1.1);
 
   // ---- SCENE 4: Geography map ----
   console.log("geography…");
@@ -236,8 +258,8 @@ try {
   await sleep(1100);
   await scrollToText(".card-head", "Traffic map", -14);
   await sleep(250);
-  await moveTo(620, 360, 6, 0.05);
-  await animateSvg(16, 0.15, 0.15);
+  await moveTo(620, 360);
+  await animateSvg(SMOOTH ? 24 : 16, 0.15, 0.15);
 
   // ---- SCENE 5: Live access log ----
   console.log("live log…");
@@ -246,26 +268,26 @@ try {
   await sleep(700);
   await scrollToText(".collapsible-title", "Live access log", -14);
   await sleep(300);
-  await animateReal(9, 230);
+  await animateReal(SMOOTH ? 14 : 9, 230);
 
   // ---- SCENE 6: Logs (instance-wide traffic map) ----
   console.log("logs…");
   await navClick(".nav-item", "Logs", "#/logs", "Traffic");
   await scrollToText(".card-head", "Traffic map", -14);
   await sleep(250);
-  await animateSvg(12, 0.16, 0.16);
+  await animateSvg(SMOOTH ? 18 : 12, 0.16, 0.16);
 
   // ---- SCENE 7: Certificates ----
   console.log("certificates…");
   await navClick(".nav-item", "Certificates", "#/certs", "ertificate");
   await page.evaluate(() => window.scrollTo(0, 0));
-  await shot(1.0); await shot(0.9);
+  await hold(1.0); await hold(0.9);
 
   // ---- SCENE 8: Security Center ----
   console.log("security…");
   await navClick(".nav-item", "Security Center", "#/security", "Security");
   await page.evaluate(() => window.scrollTo(0, 0));
-  await shot(1.0); await shot(0.9);
+  await hold(1.0); await hold(0.9);
 
   // ---- SCENE 9: Theme showcase (dark → … → light → back to dark) ----
   console.log("themes…");
@@ -274,44 +296,53 @@ try {
   const tc = await coords('button[aria-label="Switch theme"]');
   if (tc) await moveTo(tc.x, tc.y);
   await page.evaluate((t) => { document.querySelectorAll("svg").forEach((s) => { try { s.setCurrentTime(t); } catch { /* static */ } }); }, 1.0);
-  await shot(0.7);
+  await hold(0.7);
   for (let t = 0; t < 4; t++) {
     await clickFx();
     await page.click('button[aria-label="Switch theme"]');
     await sleep(320);
     await page.evaluate((tm) => { document.querySelectorAll("svg").forEach((s) => { try { s.setCurrentTime(tm); } catch { /* static */ } }); }, 1.4 + t);
-    await shot(0.7); await shot(0.4);
+    await hold(0.7); await hold(0.4);
   }
   await clickFx(); // wrap back to dark for a clean loop
   await page.click('button[aria-label="Switch theme"]');
   await sleep(320);
-  await shot(0.8);
+  await hold(0.8);
   console.log(`captured ${manifest.length} frames`);
 } finally {
   await browser.close();
 }
 
-// ---- ENCODE: two-pass palette GIF, honoring per-frame durations ----
+// ---- ENCODE: honoring per-frame durations via the concat demuxer ----
+// GIF: two-pass palette. MP4: H.264 (yuv420p + faststart - what LinkedIn,
+// X, and other social uploaders expect; -2 keeps the height even).
 const ff = await ffmpegBin();
 const lines = [];
 for (const m of manifest) { lines.push(`file '${m.file.split(/[\\/]/).pop()}'`); lines.push(`duration ${m.duration}`); }
 lines.push(`file '${manifest[manifest.length - 1].file.split(/[\\/]/).pop()}'`); // repeat last so its duration sticks
 const framesTxt = join(OUT, "frames.txt");
 writeFileSync(framesTxt, lines.join("\n"));
-const palette = join(OUT, "palette.png");
-const vf = `fps=${FPS},scale=${WIDTH}:-1:flags=lanczos`;
-mkdirSync(dirname(GIF), { recursive: true });
-console.log(`encoding @ ${WIDTH}px ${FPS}fps ${COLORS} colors…`);
+mkdirSync(dirname(OUTPUT), { recursive: true });
+console.log(`encoding ${MP4 ? "mp4" : "gif"} @ ${WIDTH}px ${FPS}fps…`);
 try {
-  execFileSync(ff, ["-y", "-f", "concat", "-safe", "0", "-i", framesTxt,
-    "-vf", `${vf},palettegen=max_colors=${COLORS}:stats_mode=diff`, palette], { stdio: ["ignore", "ignore", "pipe"] });
-  execFileSync(ff, ["-y", "-f", "concat", "-safe", "0", "-i", framesTxt, "-i", palette,
-    "-lavfi", `${vf}[x];[x][1:v]paletteuse=dither=floyd_steinberg:diff_mode=rectangle`,
-    "-loop", "0", GIF], { stdio: ["ignore", "ignore", "pipe"] });
+  if (MP4) {
+    execFileSync(ff, ["-y", "-f", "concat", "-safe", "0", "-i", framesTxt,
+      "-vf", `fps=${FPS},scale=${WIDTH}:-2:flags=lanczos`,
+      "-c:v", "libx264", "-crf", "20", "-preset", "slow", "-pix_fmt", "yuv420p",
+      "-movflags", "faststart", OUTPUT], { stdio: ["ignore", "ignore", "pipe"] });
+  } else {
+    const palette = join(OUT, "palette.png");
+    const vf = `fps=${FPS},scale=${WIDTH}:-1:flags=lanczos`;
+    execFileSync(ff, ["-y", "-f", "concat", "-safe", "0", "-i", framesTxt,
+      "-vf", `${vf},palettegen=max_colors=${COLORS}:stats_mode=diff`, palette], { stdio: ["ignore", "ignore", "pipe"] });
+    execFileSync(ff, ["-y", "-f", "concat", "-safe", "0", "-i", framesTxt, "-i", palette,
+      "-lavfi", `${vf}[x];[x][1:v]paletteuse=dither=floyd_steinberg:diff_mode=rectangle`,
+      "-loop", "0", OUTPUT], { stdio: ["ignore", "ignore", "pipe"] });
+  }
 } catch (e) {
   throw new Error(`ffmpeg failed (${ff}). Install it on PATH or run: npm i --no-save ffmpeg-static\n${e.stderr ?? e.message}`);
 } finally {
   rmSync(OUT, { recursive: true, force: true });
 }
 const dur = manifest.reduce((a, m) => a + m.duration, 0);
-console.log(`=> ${GIF}\n   ${(statSync(GIF).size / 1e6).toFixed(2)} MB · ~${dur.toFixed(1)}s · ${WIDTH}px · ${FPS}fps`);
+console.log(`=> ${OUTPUT}\n   ${(statSync(OUTPUT).size / 1e6).toFixed(2)} MB · ~${dur.toFixed(1)}s · ${WIDTH}px · ${FPS}fps`);
