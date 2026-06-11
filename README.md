@@ -24,7 +24,7 @@ production. One `docker compose up`, zero nginx config to write or maintain.
 
 [![NginUX feature tour - dashboard topology, per-service analytics, traffic world map, live access log, certificates, Security Center, and all five themes](docs/img/nginux-demo.gif)](docs/img/nginux-demo.mp4)
 
-<sub>The tour: live network topology → per-service analytics → traffic world map → live access log → certificates → Security Center → all five themes. **▶ [Click for the smooth HD version](docs/img/nginux-demo.mp4)** · stills below.</sub>
+<sub>The tour: live network topology → per-service analytics → traffic world map → live access log → certificates → Security Center → all five themes. **▶ [Click for the HD video](docs/img/nginux-demo.mp4)** · stills below.</sub>
 
 > ⚠️ **Keep the control plane (`:6767`) on your LAN - never port-forward it.**
 > Only the data plane (`:80`/`:443`) should face the internet, and set a strong

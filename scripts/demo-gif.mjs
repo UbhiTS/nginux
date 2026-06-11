@@ -1,14 +1,19 @@
-// Regenerate the README demo GIF (docs/img/nginux-demo.gif) from a running
-// NginUX instance: a ~35s dark-theme feature tour with a visible cursor -
-// dashboard topology, per-service analytics, traffic map, live log, certs,
-// Security Center - ending with a spin through all five themes.
+// Regenerate the README demo media from a running NginUX instance: a dark-theme
+// feature tour with a visible cursor - dashboard topology, per-service
+// analytics, traffic map, live log, certs, Security Center - ending with a spin
+// through all five themes.
 //
-//   node scripts/demo-gif.mjs
+// The two published artifacts and how to reproduce them:
+//   docs/img/nginux-demo.gif  (README hero, ~57s @ 30fps, 880px - GitHub's
+//                              README column displays ~880px, so wider only costs bytes)
+//     NGINUX_GIF_SMOOTH=1 NGINUX_GIF_WIDTH=880 node scripts/demo-gif.mjs
+//   docs/img/nginux-demo.mp4  (HD click-through + social uploads, 1080px H.264)
+//     NGINUX_GIF_SMOOTH=1 NGINUX_GIF_OUT=docs/img/nginux-demo.mp4 node scripts/demo-gif.mjs
 //
 // Drives your installed Edge/Chrome headlessly via puppeteer-core, captures
-// frames to a temp dir, then encodes with ffmpeg (two-pass palette). Uses
-// `ffmpeg-static` if installed (npm i --no-save ffmpeg-static), else `ffmpeg`
-// on PATH.
+// frames to a temp dir, then encodes with ffmpeg (two-pass palette for GIF,
+// H.264 for .mp4 outputs). Uses `ffmpeg-static` if installed
+// (npm i --no-save ffmpeg-static), else `ffmpeg` on PATH.
 //
 // Config via env (all optional):
 //   NGINUX_GIF_URL           base URL            (default http://localhost:6767)
@@ -21,7 +26,9 @@
 //                            "MAP *.example.com 127.0.0.1")
 //   NGINUX_GIF_HOME_COUNTRY  if set, writes Settings → home country first so the
 //                            traffic-map arcs have somewhere to converge (e.g. "US")
-//   NGINUX_GIF_WIDTH / _FPS / _COLORS   encode tuning (default 1080 / 14 / 200)
+//   NGINUX_GIF_OUT           output path; .mp4 switches the encode to H.264
+//   NGINUX_GIF_SMOOTH        "1" = ~30fps capture with longer per-screen dwell
+//   NGINUX_GIF_WIDTH / _FPS / _COLORS   encode tuning (default 1080 / 14, 30 when smooth / 200)
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
