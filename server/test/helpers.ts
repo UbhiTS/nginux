@@ -31,8 +31,12 @@ export function setupTestEnv(): { dir: string; cleanup: () => void } {
     NGINX_BANNED_FILE: p("banned.conf"),
     NGINX_DEFAULT_CERT: p("selfsigned.crt"),
     NGINX_DEFAULT_KEY: p("selfsigned.key"),
-    // Not production, so applyConfig() no-ops cleanly when nginx isn't installed
-    // (it writes the config files but skips validate/reload) instead of erroring.
+    // Force the "nginx not installed" path so applyConfig() is a deterministic
+    // no-op (writes config, skips validate/reload) on EVERY runner. Without this,
+    // a CI host that ships nginx (e.g. ubuntu-latest) would actually run `nginx -t`
+    // against the test's generated config and flip host create/update to the 422
+    // rollback path - a false failure that has nothing to do with the code.
+    NGINX_BIN: "nginux-tests-no-nginx-binary",
     NODE_ENV: "test",
     LOG_LEVEL: "silent", // keep Fastify's request logs out of the test output
   });
