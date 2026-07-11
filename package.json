@@ -1,6 +1,6 @@
 {
   "name": "nginux",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "NginUX - a security-first, container-native control plane for an Nginx reverse proxy.",
   "workspaces": [

@@ -17,6 +17,12 @@ export function Dashboard({
   const [topology, setTopology] = useState<TopologyData | null>(null);
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
   const [certs, setCerts] = useState<Certificate[]>([]);
+  const [version, setVersion] = useState("");
+
+  // The running NginUX version, shown top-right of the header.
+  useEffect(() => {
+    api.health().then((h) => setVersion(h.version)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     api.topology().then(setTopology).catch(() => setTopology(null));
@@ -53,6 +59,7 @@ export function Dashboard({
       <>
         <div className="topbar">
           <h1>Dashboard</h1>
+          {version && <span className="pill n" style={{ marginLeft: "auto" }} title="Running NginUX version">v{version}</span>}
         </div>
         <div className="content">
           <div className="card" style={{ textAlign: "center", padding: "52px 24px" }}>
@@ -76,6 +83,7 @@ export function Dashboard({
     <>
       <div className="topbar">
         <h1>Dashboard</h1>
+        {version && <span className="pill n" style={{ marginLeft: "auto" }} title="Running NginUX version">v{version}</span>}
       </div>
       <div className="content">
         <div className="stats">
