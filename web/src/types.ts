@@ -55,6 +55,7 @@ export interface Settings {
   theme: "dark" | "less-dark" | "medium" | "less-light" | "light";
   letsEncryptEmail: string;
   homeCountry: string;
+  allowedCountries: string;
   publicIp: string;
   gatewayIp: string;
   dnsProvider: "none" | "godaddy" | "cloudflare";

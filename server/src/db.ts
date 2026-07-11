@@ -312,6 +312,7 @@ const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   letsEncryptEmail: "",
   homeCountry: "",
+  allowedCountries: "",
   publicIp: "",
   gatewayIp: "192.168.1.1",
   dnsProvider: "none",

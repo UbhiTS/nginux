@@ -3,8 +3,19 @@ import { db, getSettings } from "./db.ts";
 import { listHosts } from "./repo.ts";
 import { generateSecret } from "./totp.ts";
 import { emitEvent } from "./events.ts";
+import type { ProxyHost } from "./types.ts";
 
 export type Role = "admin" | "editor" | "readonly" | "scoped";
+
+/** The ONE canonical scope-membership rule: does a scoped user's scope list cover
+ *  this host (by id, name, or domain, case-insensitively)? Imported by the REST
+ *  layer, the MCP tool dispatch, AND the MCP resource reads so a scoped principal
+ *  sees exactly the same hosts on every path - the three enforcement surfaces
+ *  cannot silently drift. Non-scoped roles are gated by feature-scope elsewhere. */
+export function scopedAllows(user: User, host: Pick<ProxyHost, "id" | "name" | "domain">): boolean {
+  const keys = user.scope.split(/[\s,]+/).map((s) => s.toLowerCase()).filter(Boolean);
+  return keys.includes(host.id.toLowerCase()) || keys.includes(host.name.toLowerCase()) || keys.includes(host.domain.toLowerCase());
+}
 
 export interface User {
   id: string;

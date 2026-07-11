@@ -138,8 +138,9 @@ export function replaceAllHosts(hosts: ProxyHost[]): void {
 }
 
 /** Build the Internet → gateway → servers → services tree for the dashboard. */
-export function getTopology(gateway: { publicIp: string; gatewayIp: string }): Topology {
-  const hosts = listHosts();
+// `hosts` defaults to every host; callers pass a scope-filtered list so a scoped
+// principal's topology only shows the services it's allowed to see.
+export function getTopology(gateway: { publicIp: string; gatewayIp: string }, hosts: ProxyHost[] = listHosts()): Topology {
   const byServer = new Map<string, TopologyServer>();
 
   for (const h of hosts) {

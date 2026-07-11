@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { db, getSettings, redactSettings, saveSettings } from "./db.ts";
-import { listEvents, listUsers, logEvent, securityExposure, securityOverview, type User } from "./auth.ts";
+import { listEvents, listUsers, logEvent, scopedAllows, securityExposure, securityOverview, type User } from "./auth.ts";
 import { createHost, deleteHost, getHost, getHostByDomain, getTopology, listHosts, updateHost } from "./repo.ts";
 import { deleteCert, ensureCert, getCert, getCertDetails, issue, listCerts, setAutoRenew } from "./certs.ts";
-import { applyConfig, generateHostConfig, generateSniPassthrough, generateStreamConfig } from "./nginx.ts";
+import { applyConfig, generateHostConfig, generateSniPassthrough, generateStreamConfig, redactConfig } from "./nginx.ts";
 import { deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
 import { addBan, listBans, removeBan } from "./bans.ts";
 import { issueClientCert, listClientCerts, revokeClientCert, writeClientCrl } from "./clientcerts.ts";
@@ -87,10 +87,8 @@ const obj = (props: Record<string, unknown>, required: string[] = []) => ({
 });
 
 // ---------- host visibility (scoped users only see hosts in their scope) ----------
-function scopedAllows(user: User, host: Pick<ProxyHost, "id" | "name" | "domain">): boolean {
-  const keys = user.scope.split(/[\s,]+/).map((s) => s.toLowerCase()).filter(Boolean);
-  return keys.includes(host.id.toLowerCase()) || keys.includes(host.name.toLowerCase()) || keys.includes(host.domain.toLowerCase());
-}
+// scopedAllows is the shared canonical predicate from auth.ts (imported above) so
+// REST, MCP tools, and MCP resources cannot drift.
 function canSeeHost(p: Principal | undefined, host: Pick<ProxyHost, "id" | "name" | "domain">): boolean {
   if (p?.kind === "user" && p.user.role === "scoped") return scopedAllows(p.user, host);
   return true; // tokens & non-scoped users: feature-scope already gates the tool
@@ -123,6 +121,20 @@ const hostConfigFor = (h: ProxyHost): string =>
     : h.protocol === "tcp" || h.protocol === "udp" ? generateStreamConfig(h)
       : generateHostConfig(h);
 
+/** Apply after a host mutation; if nginx REJECTS the config (the whole conf.d is
+ *  validated atomically), run `revert` to undo the DB change, re-apply the now
+ *  last-good state, and throw. Without this an agent-created bad host stays in the
+ *  DB and poisons EVERY future apply (bans, cert renewals, unrelated edits all
+ *  regenerate + re-fail `nginx -t`). Mirrors the revert the REST routes do. */
+async function applyOrRevert(revert: () => void): Promise<void> {
+  const apply = await applyConfig();
+  if (!apply.ok && apply.nginxAvailable) {
+    revert();
+    await applyConfig(); // re-apply the reverted, last-good config
+    throw new Error(apply.message || "nginx rejected the change, so it was rolled back.");
+  }
+}
+
 export const TOOLS: Record<string, Tool> = {
   // ---------------- read: basic (readonly/scoped-visible) ----------------
   list_services: {
@@ -143,7 +155,7 @@ export const TOOLS: Record<string, Tool> = {
     description: "The nginx config NginUX generates for one host.",
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `config for service ${a.id}`,
-    handler: (a, p) => { const h = getHost(String(a.id)); if (!h || !canSeeHost(p, h)) return null; return { domain: h.domain, config: hostConfigFor(h) }; },
+    handler: (a, p) => { const h = getHost(String(a.id)); if (!h || !canSeeHost(p, h)) return null; return { domain: h.domain, config: redactConfig(hostConfigFor(h)) }; },
   },
   get_service_uptime: {
     name: "get_service_uptime", title: "Service uptime", scope: "read", tier: "read",
@@ -163,7 +175,7 @@ export const TOOLS: Record<string, Tool> = {
     name: "get_topology", title: "Network topology", scope: "read", tier: "read",
     description: "Servers, services and the gateway, for the network map.",
     inputSchema: obj({}), summarize: () => "topology",
-    handler: () => { const s = getSettings(); return getTopology({ publicIp: s.publicIp, gatewayIp: s.gatewayIp }); },
+    handler: (_a, p) => { const s = getSettings(); return getTopology({ publicIp: s.publicIp, gatewayIp: s.gatewayIp }, visibleHosts(p)); },
   },
   list_presets: {
     name: "list_presets", title: "List app presets", scope: "read", tier: "read",
@@ -281,7 +293,7 @@ export const TOOLS: Record<string, Tool> = {
         countryLock: false, serverGroup: forwardHost, serverIp: forwardHost, enabled: true,
       } as NewProxyHost);
       if (host.ssl) { try { await ensureCert(host.domain); } catch { /* non-fatal */ } }
-      await applyConfig();
+      await applyOrRevert(() => deleteHost(host.id));
       return host;
     },
   },
@@ -290,21 +302,21 @@ export const TOOLS: Record<string, Tool> = {
     description: "Edit a host's routing or options (cannot set raw nginx directives).",
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `update service ${a.id}`,
-    handler: async (a) => { const { id, ...patch } = a; const h = updateHost(String(id), sanitizeHostPatch(patch)); await applyConfig(); return h; },
+    handler: async (a) => { const { id, ...patch } = a; const prev = getHost(String(id)); const h = updateHost(String(id), sanitizeHostPatch(patch)); await applyOrRevert(() => { if (prev) updateHost(String(id), prev); }); return h; },
   },
   set_service_enabled: {
     name: "set_service_enabled", title: "Enable/pause a service", scope: "control", tier: "low",
     description: "Serve (enabled=true) or pause (enabled=false) a host without deleting it.",
     inputSchema: obj({ id: { type: "string" }, enabled: { type: "boolean" } }, ["id", "enabled"]),
     summarize: (a) => `${a.enabled === false ? "pause" : "serve"} service ${a.id}`,
-    handler: async (a) => { const h = updateHost(String(a.id), { enabled: a.enabled !== false }); await applyConfig(); return h; },
+    handler: async (a) => { const prev = getHost(String(a.id)); const h = updateHost(String(a.id), { enabled: a.enabled !== false }); await applyOrRevert(() => { if (prev) updateHost(String(a.id), prev); }); return h; },
   },
   enable_login: {
     name: "enable_login", title: "Require login on a host", scope: "control", tier: "low",
     description: "Add the NginUX login gate back to a host (raises protection).",
     inputSchema: obj({ id: { type: "string" }, require2fa: { type: "boolean" } }, ["id"]),
     summarize: (a) => `require login on service ${a.id}`,
-    handler: async (a) => { const h = updateHost(String(a.id), { requireLogin: true, require2fa: a.require2fa === true }); await applyConfig(); return h; },
+    handler: async (a) => { const prev = getHost(String(a.id)); const h = updateHost(String(a.id), { requireLogin: true, require2fa: a.require2fa === true }); await applyOrRevert(() => { if (prev) updateHost(String(a.id), prev); }); return h; },
   },
 
   // ---------------- control: certificates ----------------

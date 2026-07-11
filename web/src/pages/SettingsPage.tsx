@@ -13,6 +13,13 @@ function randomSecret(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** ISO codes (comma/space list) → clean uppercase 2-letter array. Mirrors the server. */
+function parseCodes(raw: string): string[] {
+  return (raw || "").split(/[,\s]+/).map((c) => c.trim().toUpperCase()).filter((c) => /^[A-Z]{2}$/.test(c));
+}
+const COUNTRY_NAME = new Map(COUNTRIES.map((c) => [c.code, c.name]));
+const countryName = (code: string): string => COUNTRY_NAME.get(code) ?? code;
+
 export function SettingsPage({
   reload,
 }: {
@@ -140,7 +147,7 @@ export function SettingsPage({
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <span className="k">Home country (GeoIP)</span>
                 <span style={{ fontSize: 12, color: "var(--text-faint)", maxWidth: 420 }}>
-                  The one country allowed when a service has <strong>Country lock</strong> on. Needs the GeoIP database below — until then, country lock stays open to all.
+                  Where you normally are — always allowed under <strong>Country lock</strong>, and the anchor for the traffic map. Add travel countries below. Needs the GeoIP database; until then, country lock stays open to all.
                 </span>
               </div>
               <select
@@ -154,6 +161,35 @@ export function SettingsPage({
                   <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
                 ))}
               </select>
+            </div>
+            <div className="kv" style={{ border: "none", alignItems: "flex-start", gap: 16 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span className="k">Also allow these countries</span>
+                <span style={{ fontSize: 12, color: "var(--text-faint)", maxWidth: 420 }}>
+                  Extra countries allowed while <strong>Country lock</strong> is on — add wherever you're travelling so you don't lock yourself out. Home country and your LAN are always allowed on top of these.
+                </span>
+              </div>
+              <div style={{ flex: 1, maxWidth: 340, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                {parseCodes(settings.allowedCountries).length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+                    {parseCodes(settings.allowedCountries).map((code) => (
+                      <span key={code} className="pill n" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        {countryName(code)} ({code})
+                        <button type="button" title={`Remove ${countryName(code)}`}
+                          onClick={() => update({ allowedCountries: parseCodes(settings.allowedCountries).filter((c) => c !== code).join(",") })}
+                          style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontSize: 15, lineHeight: 1 }}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <select className="input" style={{ maxWidth: 240, flex: "none" }} value=""
+                  onChange={(e) => { const v = e.target.value; if (v) update({ allowedCountries: [...new Set([...parseCodes(settings.allowedCountries), v])].join(",") }); }}>
+                  <option value="">＋ Add a country…</option>
+                  {COUNTRIES.filter((c) => c.code !== (settings.homeCountry || "").toUpperCase() && !parseCodes(settings.allowedCountries).includes(c.code)).map((c) => (
+                    <option key={c.code} value={c.code}>{c.name} ({c.code})</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 

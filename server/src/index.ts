@@ -18,7 +18,7 @@ import {
   listHosts,
   updateHost,
 } from "./repo.ts";
-import { applyConfig, generateHostConfig, generateStreamConfig } from "./nginx.ts";
+import { applyConfig, generateHostConfig, generateStreamConfig, redactConfig } from "./nginx.ts";
 import { buildNotifications } from "./notifications.ts";
 import { deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
 import {
@@ -41,6 +41,7 @@ import {
   listUsers,
   logEvent,
   parseCookie,
+  scopedAllows,
   seedAuthIfEmpty,
   securityExposure,
   securityOverview,
@@ -77,6 +78,7 @@ import {
   resolveToken,
   revokeToken,
   seedTokensIfEmpty,
+  type Scope,
 } from "./tokens.ts";
 import { decideApproval, listApprovals, scopesForRole, toolCatalog, type Principal } from "./tools.ts";
 import { createWebhook, deleteWebhook, listWebhooks, subscribe } from "./events.ts";
@@ -293,11 +295,8 @@ function requireRole(req: FastifyRequest, reply: FastifyReply, ...roles: Role[])
   return u;
 }
 
-/** Does a `scoped` user's scope list cover this host? (matches id, name, or domain) */
-function scopedAllows(user: User, host: Pick<ProxyHost, "id" | "name" | "domain">): boolean {
-  const keys = user.scope.split(/[\s,]+/).map((s) => s.toLowerCase()).filter(Boolean);
-  return keys.includes(host.id.toLowerCase()) || keys.includes(host.name.toLowerCase()) || keys.includes(host.domain.toLowerCase());
-}
+// scopedAllows is imported from auth.ts (the one canonical scope-membership rule
+// shared by REST, MCP tools, and MCP resources).
 
 /**
  * Gate a host-mutating request: admin/editor may touch any host; scoped may
@@ -357,6 +356,29 @@ function userRoleAtLeast(req: FastifyRequest, reply: FastifyReply, ...roles: Rol
   const u = currentUser(req);
   if (u && !roles.includes(u.role)) {
     reply.code(403).send({ error: `This action requires one of: ${roles.join(", ")}.` });
+    return false;
+  }
+  return true;
+}
+
+/** Gate a route reachable by users AND tokens so it enforces the SAME RBAC as the
+ *  equivalent MCP tool: a cookie user must hold one of `roles`; a token principal
+ *  must hold `scope`. userRoleAtLeast() alone lets EVERY valid token through
+ *  regardless of scope - use THIS on token-reachable routes that expose sensitive
+ *  data (access logs with client IPs, the audit stream, metrics) so a low-scope
+ *  token can't read what the matching MCP tool would deny it. */
+function requireRoleOrScope(req: FastifyRequest, reply: FastifyReply, roles: Role[], scope: Scope): boolean {
+  const u = currentUser(req);
+  if (u) {
+    if (!roles.includes(u.role)) {
+      reply.code(403).send({ error: `This action requires one of: ${roles.join(", ")}.` });
+      return false;
+    }
+    return true;
+  }
+  const p = principal(req);
+  if (!p || !p.scopes.includes(scope)) {
+    reply.code(403).send({ error: `This action requires the '${scope}' scope.` });
     return false;
   }
   return true;
@@ -478,6 +500,10 @@ const settingsInput = z.object({
   theme: z.enum(["dark", "less-dark", "medium", "less-light", "light"]),
   letsEncryptEmail: z.string().max(254),
   homeCountry: z.string().max(2),
+  // Comma/space-separated ISO-3166-1 alpha-2 codes; geoip.ts filters to valid
+  // 2-letter tokens, so we only bound length + charset here (no injection into
+  // the generated nginx map - each code is re-validated against /^[A-Z]{2}$/).
+  allowedCountries: z.string().max(512).regex(/^[A-Za-z ,]*$/, "Only letters, spaces and commas."),
   publicIp: z.string().max(64),
   gatewayIp: z.string().max(64),
   dnsProvider: z.enum(["none", "godaddy", "cloudflare"]),
@@ -505,8 +531,15 @@ app.put("/api/settings", async (req, reply) => {
   const parsed = settingsInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   const saved = saveSettings(parsed.data);
-  // Changing the allowed country re-derives the geo config.
-  if (parsed.data.homeCountry !== undefined) writeGeoipConf();
+  // Audit which settings changed (keys only - values may be secrets). Security-
+  // relevant toggles like agentAutoApprove / ssoForwardSecret must leave a trail.
+  const changedKeys = Object.keys(parsed.data);
+  if (changedKeys.length) {
+    logEvent({ type: "settings.updated", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Updated settings: ${changedKeys.join(", ")}`, ip: clientIp(req), meta: { keys: changedKeys } });
+  }
+  // Changing the allowed countries (home or travel allowlist) re-derives the geo config.
+  const geoChanged = parsed.data.homeCountry !== undefined || parsed.data.allowedCountries !== undefined;
+  if (geoChanged) writeGeoipConf();
   // Apply new log-rotation limits right away instead of waiting for the timer.
   if (parsed.data.logMaxMb !== undefined || parsed.data.logKeepFiles !== undefined) {
     try { rotateLogsNow(); } catch { /* best-effort */ }
@@ -514,7 +547,7 @@ app.put("/api/settings", async (req, reply) => {
   // Several settings are baked into generated nginx config (the geo include, the
   // login-gate 401→login redirect, and the forward-auth secret header) - re-apply
   // so a change here takes effect immediately instead of on the next host edit.
-  if (parsed.data.homeCountry !== undefined || parsed.data.ssoLoginUrl !== undefined || parsed.data.ssoForwardSecret !== undefined) {
+  if (geoChanged || parsed.data.ssoLoginUrl !== undefined || parsed.data.ssoForwardSecret !== undefined) {
     await applyConfig();
   }
   return saved;
@@ -713,7 +746,7 @@ app.get("/api/hosts/:id/config", async (req, reply) => {
   if (host.protocol === "sni") conf = generateSniPassthrough([host]);
   else if (host.protocol === "tcp" || host.protocol === "udp") conf = generateStreamConfig(host);
   else conf = generateHostConfig(host);
-  return reply.type("text/plain").send(conf);
+  return reply.type("text/plain").send(redactConfig(conf)); // never expose the forward-auth secret in the config preview
 });
 
 // "Test connection" before proceeding (PRD wizard step 2)
@@ -735,13 +768,17 @@ app.post("/api/test-connection", async (req, reply) => {
 });
 
 // ---------- config versioning / backup / restore / export ----------
-app.get("/api/config/versions", async () => listVersions());
+app.get("/api/config/versions", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return; // restore points expose every host domain + who changed what
+  return listVersions();
+});
 app.post("/api/config/versions", async (req, reply) => {
   if (!requireRole(req, reply, "admin", "editor")) return;
   const { label } = z.object({ label: z.string().max(120).default("Manual snapshot") }).parse(req.body ?? {});
   return snapshot(label, currentUser(req)?.username ?? "admin");
 });
 app.get("/api/config/versions/:id/diff", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return; // diffs expose full host configs
   const { id } = req.params as { id: string };
   const d = diffVersion(id);
   if (!d) return reply.code(404).send({ error: "Version not found" });
@@ -774,12 +811,18 @@ app.post("/api/config/import", async (req, reply) => {
   logEvent({ type: "config.imported", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Imported ${result.imported.length} host(s) from nginx.conf`, ip: clientIp(req), meta: result });
   return { ...result, apply };
 });
-app.get("/api/gitops/log", async () => gitLog());
+app.get("/api/gitops/log", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  return gitLog();
+});
 
 // ---------- topology + traffic (dashboard) ----------
-app.get("/api/topology", async () => {
+app.get("/api/topology", async (req) => {
   const s = getSettings();
-  return getTopology({ publicIp: s.publicIp, gatewayIp: s.gatewayIp });
+  // Scoped users only see their own services in the map (mirrors /api/hosts).
+  const u = currentUser(req);
+  const hosts = u?.role === "scoped" ? listHosts().filter((h) => scopedAllows(u, h)) : listHosts();
+  return getTopology({ publicIp: s.publicIp, gatewayIp: s.gatewayIp }, hosts);
 });
 
 app.get("/api/traffic", async (req) => {
@@ -921,14 +964,15 @@ app.get("/api/metrics/traffic", async (req) => {
   const { range = "1d" } = req.query as { range?: string };
   return trafficSeries(range);
 });
-app.get("/api/metrics/prometheus", async (_req, reply) => {
+app.get("/api/metrics/prometheus", async (req, reply) => {
+  if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return;
   return reply.type("text/plain; version=0.0.4").send(prometheus());
 });
 const clampLimit = (raw?: string): number | undefined =>
   raw ? Math.min(1000, Math.max(1, Number(raw) || 1)) : undefined;
 
 app.get("/api/logs/recent", async (req, reply) => {
-  if (!userRoleAtLeast(req, reply, "admin", "editor")) return; // access logs carry client IPs
+  if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return; // access logs carry client IPs; token needs 'report' (mirrors the recent_logs MCP tool)
   const { filter, limit } = req.query as { filter?: string; limit?: string };
   // A filter (e.g. clicking an IP on the traffic map) searches the persisted log
   // on disk so older IPs still resolve; an unfiltered tail uses the live ring.
@@ -938,7 +982,7 @@ let sseClients = 0;
 const SSE_MAX = Number(process.env.NGINUX_SSE_MAX ?? 200);
 
 app.get("/api/logs/stream", (req, reply) => {
-  if (!userRoleAtLeast(req, reply, "admin", "editor")) return; // live access logs carry client IPs
+  if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return; // live access logs carry client IPs; token needs 'report'
   if (sseClients >= SSE_MAX) return reply.code(503).send({ error: "Too many open streams." });
   sseClients++;
   reply.hijack();
@@ -1084,6 +1128,10 @@ app.get("/api/auth/forward", async (req, reply) => {
   }
   const u = currentUser(req);
   if (!u) return reply.code(401).send({ ok: false });
+  // A temporary/default-credential session (admin/admin on a fresh install) is
+  // confined to the change-password flow on the control plane; it must NOT satisfy
+  // per-host login gates either, or default creds would reach every backend app.
+  if (u.mustChangePassword) return reply.code(401).send({ ok: false });
   // If we can identify the target host, enforce its per-host requirements.
   const originalHost = (req.headers["x-original-host"] as string) || (req.headers["x-forwarded-host"] as string);
   if (originalHost) {
@@ -1409,6 +1457,7 @@ app.delete("/api/tokens/:id", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   revokeToken(id);
+  logEvent({ type: "token.revoked", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Revoked API token ${id}`, ip: clientIp(req), meta: { id } });
   return { ok: true };
 });
 
@@ -1452,12 +1501,14 @@ app.post("/api/webhooks", async (req, reply) => {
   try { assertSafeOutboundUrl(parsed.data.url); }
   catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid URL." }); }
   const { webhook, secret } = createWebhook(parsed.data.url, parsed.data.events);
+  logEvent({ type: "webhook.created", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Created webhook → ${parsed.data.url}`, ip: clientIp(req), meta: { id: webhook.id, events: parsed.data.events } });
   return reply.code(201).send({ webhook, secret }); // secret shown once
 });
 app.delete("/api/webhooks/:id", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
   deleteWebhook(id);
+  logEvent({ type: "webhook.deleted", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Deleted webhook ${id}`, ip: clientIp(req), meta: { id } });
   return { ok: true };
 });
 
@@ -1520,6 +1571,11 @@ app.post("/api/mcp", async (req, reply) => {
 
 // ---------- SSE event stream ----------
 app.get("/api/events/sse", (req, reply) => {
+  // The live audit/security feed (login-failure client IPs, bans, user changes) -
+  // same sensitivity as the pull endpoint /api/audit, so gate it identically
+  // (admin/editor session, or a 'report'-scoped token). Without this any session
+  // or token gets the full security event stream.
+  if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return;
   if (sseClients >= SSE_MAX) return reply.code(503).send({ error: "Too many open streams." });
   sseClients++;
   reply.hijack();

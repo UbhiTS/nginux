@@ -90,7 +90,13 @@ export interface Settings {
   baseDomain: string;
   theme: "dark" | "less-dark" | "medium" | "less-light" | "light";
   letsEncryptEmail: string;
+  /** Primary country (ISO-3166-1 alpha-2): the traffic-map anchor, and always
+   *  allowed under country lock. Single code. */
   homeCountry: string;
+  /** Extra countries allowed under country lock (comma/space-separated ISO
+   *  codes), e.g. where you're travelling. Home country + LAN are always allowed
+   *  on top of these. Break-glass: NGINUX_ALLOWED_COUNTRIES env is unioned in. */
+  allowedCountries: string;
   /** Public IP of the gateway (for the topology map). */
   publicIp: string;
   /** LAN IP of the gateway/router. */

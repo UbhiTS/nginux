@@ -117,6 +117,11 @@ async function deliver(ch: Channel, title: string, message: string): Promise<{ o
           port: Number(c.port || 587),
           secure: c.port === "465",
           auth: c.user ? { user: c.user, pass: c.pass } : undefined,
+          // Bound every phase so a black-holed SMTP host can't hang the alert path
+          // (every other channel already uses a 5s abort). Alerts are time-sensitive.
+          connectionTimeout: 5000,
+          greetingTimeout: 5000,
+          socketTimeout: 8000,
         });
         await transport.sendMail({ from: c.from || c.user, to: c.to, subject: title, text: message });
         const status = "ok";

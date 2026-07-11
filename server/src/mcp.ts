@@ -1,11 +1,11 @@
-import { listEvents, securityExposure, securityOverview, listUsers, type User } from "./auth.ts";
+import { listEvents, scopedAllows, securityExposure, securityOverview, listUsers } from "./auth.ts";
 import { getTopology, listHosts } from "./repo.ts";
 import { listCerts } from "./certs.ts";
 import { listBans } from "./bans.ts";
 import { summary as metricsSummary } from "./metrics.ts";
 import { PRESETS } from "./presets.ts";
 import { getSettings, redactSettings } from "./db.ts";
-import { callTool, toolCatalogFor, type Principal } from "./tools.ts";
+import { callTool, canCallTool, toolCatalogFor, type Principal } from "./tools.ts";
 import type { Scope } from "./tokens.ts";
 import { VERSION } from "./version.ts";
 
@@ -18,29 +18,28 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-// Read-only resource views. Each carries the feature-scope a caller needs - the
-// same gating as the equivalent read tool, so resources can't be a bypass.
+// Read-only resource views. Each carries the feature-scope a caller needs AND an
+// optional adminOnly flag - the SAME gating (scope + adminOnly) as the equivalent
+// read tool, enforced via canCallTool, so a resource can't be an RBAC bypass.
 interface ResourceDef {
   uri: string;
   name: string;
   description: string;
   scope: Scope;
+  adminOnly?: boolean;
   read: (p: Principal) => unknown;
 }
 
 function visibleHosts(p: Principal) {
   const hosts = listHosts();
   return p.kind === "user" && p.user.role === "scoped"
-    ? hosts.filter((h) => {
-        const keys = (p.user as User).scope.split(/[\s,]+/).map((s) => s.toLowerCase()).filter(Boolean);
-        return keys.includes(h.id.toLowerCase()) || keys.includes(h.name.toLowerCase()) || keys.includes(h.domain.toLowerCase());
-      })
+    ? hosts.filter((h) => scopedAllows(p.user, h))
     : hosts;
 }
 
 const RESOURCES: ResourceDef[] = [
   { uri: "hosts://list", name: "Host list", description: "All proxy hosts + state", scope: "read", read: (p) => visibleHosts(p) },
-  { uri: "topology://current", name: "Network topology", description: "Servers, services and gateway", scope: "read", read: () => { const s = getSettings(); return getTopology({ publicIp: s.publicIp, gatewayIp: s.gatewayIp }); } },
+  { uri: "topology://current", name: "Network topology", description: "Servers, services and gateway", scope: "read", read: (p) => { const s = getSettings(); return getTopology({ publicIp: s.publicIp, gatewayIp: s.gatewayIp }, visibleHosts(p)); } },
   { uri: "presets://list", name: "App presets", description: "Built-in app presets", scope: "read", read: () => Object.values(PRESETS) },
   { uri: "settings://current", name: "Settings", description: "Instance settings (secrets redacted)", scope: "read", read: () => redactSettings(getSettings()) },
   { uri: "certificates://list", name: "Certificates", description: "All certificates + status", scope: "report", read: () => listCerts() },
@@ -49,7 +48,7 @@ const RESOURCES: ResourceDef[] = [
   { uri: "metrics://overview", name: "Security overview", description: "Posture score + counts", scope: "report", read: () => ({ overview: securityOverview(), exposure: securityExposure() }) },
   { uri: "metrics://traffic", name: "Traffic metrics", description: "Requests, bandwidth, top talkers", scope: "report", read: () => metricsSummary() },
   { uri: "bans://list", name: "IP bans", description: "Active IP bans", scope: "report", read: () => listBans() },
-  { uri: "users://list", name: "Users", description: "Accounts (no secrets) - admin only", scope: "report", read: () => listUsers() },
+  { uri: "users://list", name: "Users", description: "Accounts (no secrets) - admin only", scope: "report", adminOnly: true, read: () => listUsers() },
 ];
 
 const PROMPTS = [
@@ -109,9 +108,10 @@ export async function handleMcp(principal: Principal, msg: JsonRpcRequest): Prom
     }
 
     case "resources/list":
-      // Only list resources the caller's scope permits.
+      // Only list resources the caller may actually read (scope + adminOnly),
+      // so an admin-only resource isn't even advertised to a non-admin.
       return ok(id, {
-        resources: RESOURCES.filter((r) => principal.scopes.includes(r.scope)).map((r) => ({
+        resources: RESOURCES.filter((r) => canCallTool(principal, r)).map((r) => ({
           uri: r.uri, name: r.name, description: r.description, mimeType: "application/json",
         })),
       });
@@ -120,7 +120,9 @@ export async function handleMcp(principal: Principal, msg: JsonRpcRequest): Prom
       const uri = String(params.uri);
       const res = RESOURCES.find((r) => r.uri === uri);
       if (!res) return err(id, -32602, `Unknown resource: ${uri}`);
-      if (!principal.scopes.includes(res.scope)) return err(id, -32603, `This caller lacks the "${res.scope}" scope for ${uri}.`);
+      // Enforce scope AND adminOnly (mirrors the equivalent read tool) - without
+      // the adminOnly check a report-scoped editor could read users://list.
+      if (!canCallTool(principal, res)) return err(id, -32603, `This caller may not read ${uri}.`);
       return ok(id, { contents: [{ uri, mimeType: "application/json", text: JSON.stringify(res.read(principal), null, 2) }] });
     }
 

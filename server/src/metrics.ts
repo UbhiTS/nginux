@@ -237,8 +237,11 @@ export function searchLog(filter: string, limit = 200): LogEntry[] {
   // is ingested in memory and never written to disk).
   for (let i = ring.length - 1; i >= 0 && out.length < limit; i--) if (matches(ring[i])) take(ring[i]);
   // Then the persisted access log - full history up to retention, newest-first.
+  // Skip the (blocking, up-to-32MB) disk read entirely when the in-memory ring
+  // already produced `limit` matches - otherwise every filtered lookup re-reads
+  // and re-decodes the tail on the event loop even when it's not needed.
   try {
-    if (existsSync(ACCESS_LOG)) {
+    if (out.length < limit && existsSync(ACCESS_LOG)) {
       const size = statSync(ACCESS_LOG).size;
       if (size > 0) {
         const maxBytes = 32 * 1024 * 1024;
@@ -672,7 +675,10 @@ export function startLogTailer(): void {
         .on("error", () => {})
         .on("data", (c) => (buf += c))
         .on("end", () => {
-          offset = end + 1; // createReadStream end is inclusive
+          // `end` was set to the file size, and the stream reads bytes
+          // [offset, size-1] (clamped at EOF), so the next unread byte is `size`.
+          // (The old `end + 1` skipped one byte - the first of each new chunk.)
+          offset = end;
           const text = carry + buf;
           const lines = text.split("\n");
           carry = lines.pop() ?? ""; // keep the trailing partial line for next read

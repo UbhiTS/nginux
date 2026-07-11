@@ -10,6 +10,11 @@ import { writeGeoipConf } from "./geoip.ts";
 import type { ProxyHost } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
+// Every nginx invocation reads cert/key files off the (possibly network/SMB-backed)
+// /data volume. Without a timeout a stalled read hangs forever, and because
+// applyConfig() serialises on a shared lock, ONE stuck `nginx -t` would wedge all
+// future config management (bans, renewals, edits) until restart. Bound them.
+const NGINX_EXEC_OPTS = { timeout: 15_000, killSignal: "SIGKILL" as const };
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Where generated per-host config lands. Mounted into the nginx container.
@@ -94,6 +99,14 @@ server {
 }`);
   }
   return blocks.join("\n\n") + "\n";
+}
+
+/** Mask secrets baked into a generated config before showing it to a viewer.
+ *  The forward-auth shared secret is injected as an nginx header value; the
+ *  config-preview (REST + the read-scoped get_service_config tool) must not hand
+ *  it to a non-admin/low-scope caller. */
+export function redactConfig(conf: string): string {
+  return conf.replace(/(X-NginUX-Forward-Secret\s+")[^"]*(")/g, "$1********$2");
 }
 
 /** Generate the nginx server block for one host. Human-readable on purpose. */
@@ -277,7 +290,15 @@ ${ACME_CHALLENGE_LOCATION}    location / {
         proxy_set_header X-Forwarded-Proto $scheme;${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${customNginx}
 ${extra ? extra + "\n" : ""}`;
 
-  // Per-path routing: send specific paths to different backends.
+  // Per-path routing: send specific paths to different backends. These are
+  // SIBLING locations to `location /`, and nginx does not inherit location-scoped
+  // directives across siblings - so the login gate, country lock, and rate/
+  // bandwidth limits MUST be replicated here or a path route silently bypasses
+  // them (a longer-prefix `location /grafana` wins over `/` and would otherwise
+  // reach the backend unauthenticated). We deliberately do NOT hoist these to
+  // server scope: auth_request there would recurse the /__nginux_auth subrequest
+  // and, with the geo `if`, would also block Let's Encrypt's ACME challenge.
+  const pathProtections = `${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}`;
   const pathBlocks = splitLines(h.pathRules).map((line) => {
     const [p, t] = line.split(/\s+/);
     if (!p || !t) return "";
@@ -287,7 +308,7 @@ ${extra ? extra + "\n" : ""}`;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $scheme;${pathProtections}
     }
 `;
   }).join("");
@@ -369,7 +390,7 @@ export function writeAllConfigs(): WriteResult {
 
 async function nginxInstalled(): Promise<boolean> {
   try {
-    await execFileAsync(NGINX_BIN, ["-v"]);
+    await execFileAsync(NGINX_BIN, ["-v"], NGINX_EXEC_OPTS);
     return true;
   } catch {
     return false;
@@ -415,7 +436,7 @@ async function applyConfigInner(): Promise<ApplyResult> {
   }
 
   try {
-    await execFileAsync(NGINX_BIN, ["-t"]);
+    await execFileAsync(NGINX_BIN, ["-t"], NGINX_EXEC_OPTS);
   } catch (err) {
     // Validation failed: nginx was never reloaded (live traffic is safe), but the
     // invalid files are on disk. Restore the prior valid set so a later restart or
@@ -430,7 +451,7 @@ async function applyConfigInner(): Promise<ApplyResult> {
   }
 
   try {
-    await execFileAsync(NGINX_BIN, ["-s", "reload"]);
+    await execFileAsync(NGINX_BIN, ["-s", "reload"], NGINX_EXEC_OPTS);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { ok: false, nginxAvailable: true, message: `Nginx reload failed: ${detail}` };
