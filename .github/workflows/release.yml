@@ -25,7 +25,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  # Gate publishing on a green typecheck + web build so broken code never ships.
+  # Gate publishing on a green typecheck + server tests + web build, so a broken
+  # or regressed build never ships. The test step fails the release on any red.
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -36,6 +37,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck --workspace server
+      - run: npm run test --workspace server
       - run: npx tsc --noEmit
         working-directory: web
       - run: npm run build --workspace web

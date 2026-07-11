@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "node --watch --experimental-sqlite --disable-warning=ExperimentalWarning src/index.ts",
     "start": "node --experimental-sqlite --disable-warning=ExperimentalWarning src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-sqlite --disable-warning=ExperimentalWarning \"test/**/*.test.ts\"",
+    "test:coverage": "node --test --experimental-test-coverage --experimental-sqlite --disable-warning=ExperimentalWarning \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@fastify/static": "^9.1.3",

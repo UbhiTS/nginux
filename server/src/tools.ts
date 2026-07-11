@@ -30,8 +30,9 @@ const FORBIDDEN_TOOL_FIELDS = new Set([
 const splitList = (s: string) => String(s).split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
 const splitLines = (s: string) => String(s).split("\n").map((x) => x.trim()).filter(Boolean);
 
-/** Strip forbidden fields and validate injection-prone ones; throws on bad input. */
-function sanitizeHostPatch(raw: Record<string, unknown>): Partial<ProxyHost> {
+/** Strip forbidden fields and validate injection-prone ones; throws on bad input.
+ *  Exported for regression tests - this is the agent-path security boundary. */
+export function sanitizeHostPatch(raw: Record<string, unknown>): Partial<ProxyHost> {
   const patch: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (FORBIDDEN_TOOL_FIELDS.has(k)) continue;

@@ -1606,6 +1606,12 @@ if (existsSync(webDist)) {
   });
 }
 
+export { app }; // exported so tests can drive routes via app.inject() (no listener)
+
+// Bind the port + start the schedulers ONLY when this file is the entry point
+// (npm start / the container). When a test imports index.ts, the app + routes are
+// built but stay inert - no port bound, no background timers running.
+if (import.meta.main) {
 app.listen({ port: PORT, host: HOST }).then(async () => {
   app.log.info(`NginUX control plane on http://${HOST}:${PORT}`);
   if (seeded.usingDefault) {
@@ -1653,6 +1659,7 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   app.log.fatal({ err }, "failed to start NginUX control plane");
   process.exit(1);
 });
+}
 
 // ---------- graceful shutdown ----------
 let shuttingDown = false;
