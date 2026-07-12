@@ -133,6 +133,57 @@ test("maintenance mode HTML-escapes the service name (no XSS in the 503 page)", 
   assert.ok(html.includes("&lt;script&gt;x"), "the name must be HTML-escaped in the maintenance page");
 });
 
+// --- 7b. REGRESSION: ipDeny is emitted BEFORE ipAllow so it isn't dead ---
+// nginx access rules are first-match-wins. If `deny <ip>` is placed AFTER a
+// covering `allow <range>` (or after `deny all`), the host is already allowed and
+// the explicit deny silently never applies - it was even INVERTED to an allow.
+// The fix emits per-IP denies first, then the allow-range, then `deny all`.
+test("ipDeny is emitted before ipAllow (deny-specific wins; not dead code)", () => {
+  const conf = generateHostConfig(makeHost({ ipAllow: "192.168.1.0/24", ipDeny: "192.168.1.66" }));
+  const iDeny = conf.indexOf("deny 192.168.1.66;");
+  const iAllow = conf.indexOf("allow 192.168.1.0/24;");
+  const iDenyAll = conf.indexOf("deny all;");
+  assert.notEqual(iDeny, -1, "the explicit deny must be present");
+  assert.notEqual(iAllow, -1, "the allow range must be present");
+  assert.ok(iDeny < iAllow, "the specific deny must come BEFORE the allow range (else it's dead)");
+  assert.ok(iAllow < iDenyAll, "the allow range must come before the closing deny all");
+});
+
+test("ipDeny alone (no allow-list) does not emit a deny-all that would block everyone", () => {
+  const conf = generateHostConfig(makeHost({ ipDeny: "10.0.0.5", ipAllow: "" }));
+  assert.ok(conf.includes("deny 10.0.0.5;"), "the explicit deny must be present");
+  assert.ok(!conf.includes("deny all;"), "with no allow-list there must be no deny all (default is allow)");
+});
+
+// --- 7c. REGRESSION: maintenance mode short-circuits path routes ---
+// If pathRules keep emitting their own `location` blocks in maintenance mode,
+// a longer-prefix path route keeps serving LIVE traffic while `location /`
+// returns the 503 - so "maintenance" only half-applies. Fix: no path blocks
+// while maintenanceMode is on.
+test("maintenance mode suppresses path-route location blocks", () => {
+  const conf = generateHostConfig(makeHost({
+    maintenanceMode: true,
+    pathRules: "/grafana 192.168.1.70:3000",
+  }));
+  assert.ok(conf.includes("return 503"), "maintenance page must be served");
+  assert.ok(!conf.includes("location /grafana {"), "no path route may keep serving live traffic during maintenance");
+  assert.ok(!conf.includes("192.168.1.70:3000"), "the path backend must not be reachable during maintenance");
+});
+
+// --- 7d. REGRESSION: path routes replicate the websocket upgrade block ---
+// location / gets the websocket upgrade headers when websockets is on; a path
+// route that omits them silently breaks WS on that path (the fix added wsBlock
+// to the per-path protections).
+test("path route includes the websocket upgrade headers when websockets is on", () => {
+  const conf = generateHostConfig(makeHost({
+    websockets: true,
+    pathRules: "/live 192.168.1.80:9001",
+  }));
+  const block = pathBlock(conf, "/live");
+  assert.ok(block.includes("proxy_set_header Upgrade $http_upgrade;"), "path route must upgrade websocket connections");
+  assert.ok(block.includes('proxy_set_header Connection "upgrade";'), "path route must set the Connection: upgrade header");
+});
+
 // --- 8. stream (TCP) config ---
 test("generateStreamConfig emits a listen + proxy_pass for a TCP service", () => {
   const conf = generateStreamConfig(makeHost({

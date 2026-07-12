@@ -6,17 +6,29 @@ import { BrandLogo } from "../components/BrandLogo.tsx";
 // A login-gated service redirects unauthenticated visitors here with the original
 // URL as ?rd=. After sign-in we bounce back to it - but only if it's on this same
 // domain family (this host or a sibling subdomain), to avoid an open redirect.
+// Common multi-part public suffixes. If stripping the leftmost label of the
+// current host lands on one of these (e.g. nginux.co.uk -> co.uk), we must NOT
+// treat it as a registrable base, or `rd=https://evil.co.uk` would be accepted.
+const PUBLIC_SUFFIX_2LD = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "or", "ne", "go", "gob", "gouv"]);
+
 function safeReturnUrl(): string | null {
   const m = window.location.search.match(/[?&]rd=(.*)$/);
   if (!m) return null;
   let target: URL;
   try { target = new URL(decodeURIComponent(m[1])); } catch { try { target = new URL(m[1]); } catch { return null; } }
   if (target.protocol !== "https:" && target.protocol !== "http:") return null;
-  const here = window.location.hostname;
-  const labels = here.split(".");
-  const base = labels.slice(labels.length > 2 ? 1 : 0).join(".");
-  const h = target.hostname;
-  return h === here || h === base || h.endsWith("." + base) ? target.href : null;
+  const here = window.location.hostname.toLowerCase();
+  const h = target.hostname.toLowerCase();
+  if (h === here) return target.href; // same host is always safe
+  // Sibling-subdomain bounce (login at nginux.example.com -> back to plex.example.com):
+  // strip the leftmost label to get the registrable base, but refuse if that base is
+  // itself a public suffix (co.uk, com.au) - which would otherwise allow *any* sibling.
+  const parts = here.split(".");
+  if (parts.length < 3) return null; // not on a subdomain -> only exact same-host
+  const base = parts.slice(1).join(".");
+  const baseParts = base.split(".");
+  if (baseParts.length === 2 && PUBLIC_SUFFIX_2LD.has(baseParts[0])) return null; // base collapsed to a public suffix
+  return h === base || h.endsWith("." + base) ? target.href : null;
 }
 
 export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {

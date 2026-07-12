@@ -448,6 +448,28 @@ export function summary() {
   };
 }
 
+/** Sum the per-host Stat buckets over `range` into `add`, at the right
+ *  granularity: live=seconds, ≤1d=minute buckets, >1d=HOUR rollups. Minute
+ *  buckets only retain ~25h, so 7d/30d MUST read the hour rollups or the window
+ *  is silently truncated to ~25h. Shared by hostTraffic + hostStats so the two
+ *  can't drift (that drift was exactly the 7d/30d Network-Map truncation bug). */
+function forEachHostBucket(range: string, add: (host: string, v: Stat) => void): void {
+  if (range === "live") {
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (let s = 0; s < 60; s++) { const hs = hostSecond.get(nowSec - s); if (hs) for (const [h, v] of hs) add(h, v); }
+    return;
+  }
+  const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
+  const minutes = spans[range] ?? 60;
+  if (minutes > 1440) {
+    const nowHr = Math.floor(Date.now() / 3600_000);
+    for (let hr = 0; hr < Math.ceil(minutes / 60); hr++) { const hh = hostStatHour.get(nowHr - hr); if (hh) for (const [h, v] of hh) add(h, v); }
+  } else {
+    const nowMin = Math.floor(Date.now() / 60000);
+    for (let m = 0; m < minutes; m++) { const hm = hostMinute.get(nowMin - m); if (hm) for (const [h, v] of hm) add(h, v); }
+  }
+}
+
 /** Per-host request counts over a time window (drives the Network Map dots).
  *  "live" is a short rolling window so the map reacts to current load; longer
  *  ranges aggregate more. Falls back to all-time counts if the window is empty. */
@@ -457,21 +479,7 @@ export function hostTraffic(range: string, metric: "requests" | "bandwidth" = "r
   const acc = new Map<string, number>();
   const add = (h: string, v: Stat) => acc.set(h, (acc.get(h) ?? 0) + val(v));
 
-  if (range === "live") {
-    const nowSec = Math.floor(Date.now() / 1000);
-    for (let s = 0; s < 60; s++) {
-      const hs = hostSecond.get(nowSec - s);
-      if (hs) for (const [h, v] of hs) add(h, v);
-    }
-  } else {
-    const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
-    const minutes = spans[range] ?? 60;
-    const nowMin = Math.floor(Date.now() / 60000);
-    for (let m = 0; m < minutes; m++) {
-      const hm = hostMinute.get(nowMin - m);
-      if (hm) for (const [h, v] of hm) add(h, v);
-    }
-  }
+  forEachHostBucket(range, add);
   if (acc.size === 0) for (const [h, v] of byHostStat) acc.set(h, val(v)); // fallback to all-time
   return [...acc.entries()].sort((a, b) => b[1] - a[1]).map(([key, count]) => ({ key, count }));
 }
@@ -486,15 +494,7 @@ export function hostStats(range: string): HostStat[] {
     a.count += v.count; a.out += v.out; a.in += v.in;
     acc.set(h, a);
   };
-  if (range === "live") {
-    const nowSec = Math.floor(Date.now() / 1000);
-    for (let s = 0; s < 60; s++) { const hs = hostSecond.get(nowSec - s); if (hs) for (const [h, v] of hs) add(h, v); }
-  } else {
-    const spans: Record<string, number> = { "1h": 60, "4h": 240, "1d": 1440, "7d": 10080, "30d": 43200 };
-    const minutes = spans[range] ?? 60;
-    const nowMin = Math.floor(Date.now() / 60000);
-    for (let m = 0; m < minutes; m++) { const hm = hostMinute.get(nowMin - m); if (hm) for (const [h, v] of hm) add(h, v); }
-  }
+  forEachHostBucket(range, add);
   if (acc.size === 0) for (const [h, v] of byHostStat) add(h, v); // fallback to all-time
   return [...acc.entries()].map(([key, v]) => ({ key, requests: v.count, bytesIn: v.in, bytesOut: v.out }));
 }
@@ -527,7 +527,9 @@ export function trafficSeries(
       // Long ranges (7d/30d) bucket by hour - minute buckets only span ~25h.
       const hours = Math.ceil(minutes / 60);
       const nowHr = Math.floor(Date.now() / 3600_000);
-      const per = Math.max(1, Math.floor(hours / points));
+      // ceil (not floor): 7d = 168h / 30 pts floors to 5h/pt = only 150h shown,
+      // dropping the oldest ~18h; ceil overshoots slightly but covers the window.
+      const per = Math.max(1, Math.ceil(hours / points));
       unit = per === 1 ? "/h" : `/${per}h`;
       const getHr = (h: number): Stat | undefined => (host ? hostStatHour.get(h)?.get(host) : statHour.get(h));
       stepGet = (i) => Array.from({ length: per }, (_, m) => getHr(nowHr - (points - 1 - i) * per - m)).filter(Boolean) as Stat[];

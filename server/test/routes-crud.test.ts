@@ -145,6 +145,68 @@ test("POST /api/hosts: unauthenticated request is 401", async () => {
   assert.equal(r.statusCode, 401, "an unauthenticated create must be rejected");
 });
 
-// Keep the linter/test-runner happy about the (intentionally imported per the
-// harness contract) saveSettings binding without exercising it here.
-void saveSettings;
+const get = (url: string, cookie: string) => app.inject({ method: "GET", url, headers: { cookie } });
+
+// ---------------------------------------------------------------------------
+// (8) REGRESSION (audit): a scoped user manages their service but may not change
+// its ROUTING/POSTURE. Repointing to a different host, hijacking the domain, or
+// flipping TLS is forbidden; moving to a new PORT on the same box is allowed
+// (legitimate management, and can't pivot to a different machine).
+// ---------------------------------------------------------------------------
+test("PUT /api/hosts/:id: scoped owner may change forwardPort but NOT forwardHost/domain/ssl", async () => {
+  const svc = createHost(makeHost({ id: "scoped-fields", name: "scopedfields", domain: "scoped-fields.example.com" }));
+  const owner = cookieFor(makeUser("scoped", "scopedfields"));
+
+  const port = await put(`/api/hosts/${svc.id}`, owner, { forwardPort: 3001 });
+  assert.equal(port.statusCode, 200, "a scoped owner may move their app to a new port on the same box");
+
+  for (const [field, patch] of [
+    ["forwardHost", { forwardHost: "10.9.9.9" }],   // repoint to a different machine (SSRF pivot)
+    ["forwardScheme", { forwardScheme: "https" }],   // routing/posture
+    ["domain", { domain: "admin.example.com" }],     // domain hijack
+    ["ssl", { ssl: false }],                          // TLS posture
+  ] as const) {
+    const r = await put(`/api/hosts/${svc.id}`, owner, patch);
+    assert.equal(r.statusCode, 403, `a scoped user must not change ${field}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// (9) REGRESSION (audit): the per-host metrics endpoints reveal which services
+// exist + their volume, so they're admin/editor-only. A scoped user must not be
+// able to enumerate out-of-scope hosts through the Network Map data feeds.
+// ---------------------------------------------------------------------------
+test("GET metrics/traffic feeds are denied to a scoped user (host enumeration guard)", async () => {
+  const scoped = cookieFor(makeUser("scoped", "grafana"));
+  for (const url of ["/api/metrics/hosts", "/api/metrics/host-stats", "/api/traffic", "/api/metrics/summary"]) {
+    const r = await get(url, scoped);
+    assert.equal(r.statusCode, 403, `${url} must be forbidden to a scoped user`);
+  }
+  // …but an admin can read them.
+  const admin = cookieFor(makeUser("admin"));
+  const ok = await get("/api/metrics/hosts", admin);
+  assert.equal(ok.statusCode, 200, "an admin may read the per-host traffic feed");
+});
+
+// ---------------------------------------------------------------------------
+// (10) REGRESSION (audit): the control-plane-domain hijack guard must fire on a
+// PORT-ONLY update, not just a domain change. A host already on the sign-in
+// portal domain, repointed off :6767, would break sign-in for every gated
+// service - so a port-only PUT that creates that state must be refused.
+// ---------------------------------------------------------------------------
+test("PUT /api/hosts/:id: port-only edit that repoints the portal domain off the control plane is 409", async () => {
+  saveSettings({ ssoLoginUrl: "https://portal.example.com" });
+  // A host correctly forwarding the portal domain to the control plane (:6767).
+  const portal = createHost(makeHost({ id: "portal-host", name: "portal", domain: "portal.example.com", forwardPort: 6767 }));
+  const admin = cookieFor(makeUser("admin"));
+
+  // Changing ONLY the port to something other than 6767 would break the sign-in
+  // portal - the guard must reject it even though the domain is unchanged.
+  const bad = await put(`/api/hosts/${portal.id}`, admin, { forwardPort: 8080 });
+  assert.equal(bad.statusCode, 409, "a port-only edit that breaks the sign-in portal must be refused");
+
+  // An unrelated edit that leaves domain + port intact is still allowed.
+  const ok = await put(`/api/hosts/${portal.id}`, admin, { name: "Portal (renamed)" });
+  assert.equal(ok.statusCode, 200, "an unrelated field edit on the portal host must still succeed");
+  saveSettings({ ssoLoginUrl: "" }); // restore default so later tests aren't affected
+});

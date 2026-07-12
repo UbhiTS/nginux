@@ -192,6 +192,13 @@ export const Icon = {
       <path d="M12 4v1.6M12 18.4V20M4 12h1.6M18.4 12H20" />
     </S>
   ),
+  // Circular arrows - retry / reload.
+  refresh: (p: P) => (
+    <S {...p}>
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v5h-5" />
+    </S>
+  ),
 };
 
 export type IconName = keyof typeof Icon;

@@ -59,6 +59,9 @@ export function App() {
   const [route, setRoute] = useState<Route>(() => parseHash());
   const [hosts, setHosts] = useState<ProxyHost[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  // true when the last data load failed - lets the Dashboard show a retry instead
+  // of the "expose your first service" hero (which would be a lie on a fetch error).
+  const [loadError, setLoadError] = useState(false);
   // Mobile drawer (no effect above the CSS breakpoint, where the sidebar is always shown).
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -81,7 +84,8 @@ export function App() {
       const [h, s] = await Promise.all([api.listHosts(), api.settings()]);
       setHosts(h);
       setSettings(s);
-    } catch { /* keep previous state; individual pages surface their own errors */ }
+      setLoadError(false);
+    } catch { setLoadError(true); /* keep previous state; the Dashboard surfaces a retry, not a false empty state */ }
   }, []);
 
   // Load app data once signed in.
@@ -140,7 +144,7 @@ export function App() {
       <Sidebar open={drawerOpen} hosts={hosts} route={route} navigate={navigate} theme={theme} user={user} onLogout={logout} />
       <div className="main">
         <Notifications />
-        {route.name === "dashboard" && <Dashboard hosts={hosts} navigate={navigate} />}
+        {route.name === "dashboard" && <Dashboard hosts={hosts} navigate={navigate} loadError={loadError} onRetry={reload} />}
         {route.name === "services" && <Services hosts={hosts} navigate={navigate} reload={reload} />}
         {route.name === "host" && route.hostId && <HostDetail hostId={route.hostId} navigate={navigate} reload={reload} tab={route.tab} />}
         {route.name === "wizard" && <Wizard settings={settings} navigate={navigate} reload={reload} />}

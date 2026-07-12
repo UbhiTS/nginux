@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Route } from "../App.tsx";
 import { api, type Certificate, type Uptime } from "../api.ts";
 import type { Preset, ProxyHost, Settings } from "../types.ts";
@@ -44,11 +44,17 @@ export function HostDetail({
   const [certDetail, setCertDetail] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
 
+  // Each refetch bumps a generation id; a response only applies if it's still the
+  // latest. Otherwise switching services while a fetch is in flight could render
+  // service A's config/cert/uptime on service B's page.
+  const gen = useRef(0);
   const refetch = () => {
-    api.getHost(hostId).then(setHost).catch(() => setHost(null));
-    api.hostConfig(hostId).then(setConfig).catch(() => setConfig(""));
-    api.uptime(hostId).then(setUptime).catch(() => setUptime(null));
-    api.certificates().then(setCerts).catch(() => {});
+    const my = ++gen.current;
+    const live = () => my === gen.current;
+    api.getHost(hostId).then((h) => { if (live()) setHost(h); }).catch(() => { if (live()) setHost(null); });
+    api.hostConfig(hostId).then((c) => { if (live()) setConfig(c); }).catch(() => { if (live()) setConfig(""); });
+    api.uptime(hostId).then((u) => { if (live()) setUptime(u); }).catch(() => { if (live()) setUptime(null); });
+    api.certificates().then((c) => { if (live()) setCerts(c); }).catch(() => {});
   };
   // Switching services must reset transient view state - otherwise clicking a
   // different service in the sidebar while editing would leave the edit form

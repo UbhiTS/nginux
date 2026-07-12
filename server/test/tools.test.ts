@@ -15,7 +15,8 @@ import assert from "node:assert/strict";
 import { setupTestEnv } from "./helpers.ts";
 
 setupTestEnv();
-const { sanitizeHostPatch, canCallTool, scopesForRole } = await import("../src/tools.ts");
+const { sanitizeHostPatch, canCallTool, scopesForRole, needsApproval } = await import("../src/tools.ts");
+const { saveSettings } = await import("../src/db.ts");
 
 // ---- principal builders (match the real Principal shape from tools.ts) ----
 type Role = "admin" | "editor" | "readonly" | "scoped";
@@ -123,4 +124,39 @@ test("sanitizeHostPatch passes a valid patch through", () => {
   assert.equal(out.forwardPort, 8080);
   assert.equal(out.customHeaders, "X-Foo: bar");
   assert.equal(out.pathRules, "/api 10.0.0.1:3000");
+});
+
+// -------------------------------------------------------------------------
+// 6. needsApproval - the agent auto-approval gate (coverage gap).
+// PINNED SECURITY INVARIANT: a destructive (high-tier) tool ALWAYS needs a human;
+// an UNTRUSTED agent always needs approval for a write; auto-approve only ever
+// spares a TRUSTED agent from low/medium writes, and only when the admin opted in.
+// -------------------------------------------------------------------------
+test("needsApproval: read-tier never needs approval, for anyone", () => {
+  assert.equal(needsApproval("read", userPrincipal("readonly")), false);
+  assert.equal(needsApproval("read", tokenPrincipal(["read"], "untrusted")), false);
+});
+
+test("needsApproval: a human user is their own approver (no gate)", () => {
+  assert.equal(needsApproval("high", userPrincipal("admin")), false);
+  assert.equal(needsApproval("medium", userPrincipal("editor")), false);
+});
+
+test("needsApproval: high (destructive) tier ALWAYS gates an agent, even trusted + policy on", () => {
+  saveSettings({ agentAutoApprove: true });
+  assert.equal(needsApproval("high", tokenPrincipal(["control"], "trusted")), true, "destructive must never auto-run");
+});
+
+test("needsApproval: with auto-approve OFF, every agent write needs approval", () => {
+  saveSettings({ agentAutoApprove: false });
+  assert.equal(needsApproval("low", tokenPrincipal(["control"], "trusted")), true);
+  assert.equal(needsApproval("medium", tokenPrincipal(["control"], "trusted")), true);
+});
+
+test("needsApproval: with auto-approve ON, only a TRUSTED agent skips low/medium", () => {
+  saveSettings({ agentAutoApprove: true });
+  assert.equal(needsApproval("low", tokenPrincipal(["control"], "trusted")), false, "trusted + policy on -> auto-run low");
+  assert.equal(needsApproval("medium", tokenPrincipal(["control"], "trusted")), false, "trusted + policy on -> auto-run medium");
+  assert.equal(needsApproval("low", tokenPrincipal(["control"], "untrusted")), true, "untrusted always needs approval");
+  saveSettings({ agentAutoApprove: false }); // restore default for any later test
 });

@@ -242,9 +242,14 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   if (h.hsts && h.ssl) {
     protections.push(`    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;`);
   }
+  // Order matters: nginx's access module is first-match-wins. Emit the specific
+  // denies FIRST, then the allow-range, then `deny all` - so "allow this range but
+  // block these hosts" works. A `deny <ip>` placed AFTER a covering `allow` (or
+  // after `deny all`) is dead: the host is already allowed by the range / matched
+  // the earlier rule, so the explicit deny would silently never apply.
+  for (const ip of splitList(h.ipDeny)) protections.push(`    deny ${ip};`);
   for (const ip of splitList(h.ipAllow)) protections.push(`    allow ${ip};`);
   if (h.ipAllow.trim()) protections.push(`    deny all;`);
-  for (const ip of splitList(h.ipDeny)) protections.push(`    deny ${ip};`);
   // Scanner / attack-tool user agents are never a real browser - block them on
   // every service, regardless of the per-host exploit toggle.
   protections.push(`    if ($http_user_agent ~* (sqlmap|nikto|masscan|nmap|fimap)) { return 403; }`);
@@ -298,8 +303,13 @@ ${extra ? extra + "\n" : ""}`;
   // reach the backend unauthenticated). We deliberately do NOT hoist these to
   // server scope: auth_request there would recurse the /__nginux_auth subrequest
   // and, with the geo `if`, would also block Let's Encrypt's ACME challenge.
-  const pathProtections = `${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}`;
-  const pathBlocks = splitLines(h.pathRules).map((line) => {
+  // Path routes get the same login gate / country lock / limits AND the websocket
+  // upgrade as `location /`, so a WebSocket-backed sub-path (or a limited/gated
+  // one) behaves identically to the root. Maintenance mode short-circuits the
+  // WHOLE host, so skip path routes entirely then (else /grafana keeps serving
+  // live traffic while `/` shows the "be right back" page).
+  const pathProtections = `${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}`;
+  const pathBlocks = h.maintenanceMode ? "" : splitLines(h.pathRules).map((line) => {
     const [p, t] = line.split(/\s+/);
     if (!p || !t) return "";
     const target = /^https?:\/\//.test(t) ? t : `http://${t}`;

@@ -10,9 +10,13 @@ const fmtCount = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e
 export function Dashboard({
   hosts,
   navigate,
+  loadError = false,
+  onRetry,
 }: {
   hosts: ProxyHost[];
   navigate: (r: Route) => void;
+  loadError?: boolean;
+  onRetry?: () => void;
 }) {
   const [topology, setTopology] = useState<TopologyData | null>(null);
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
@@ -62,18 +66,37 @@ export function Dashboard({
           {version && <span className="pill n" style={{ marginLeft: "auto" }} title="Running NginUX version">v{version}</span>}
         </div>
         <div className="content">
-          <div className="card" style={{ textAlign: "center", padding: "52px 24px" }}>
-            <div style={{ fontSize: 40 }}>🚀</div>
-            <h2 style={{ marginTop: 12 }}>Welcome to NginUX</h2>
-            <p className="muted" style={{ maxWidth: 460, margin: "10px auto 22px", lineHeight: 1.6 }}>
-              Let's get your first service online. Point a domain at an app on your network and
-              NginUX sets up the reverse proxy and a free HTTPS certificate for you - about a minute, no nginx config required.
-            </p>
-            <button className="btn btn-primary" onClick={() => navigate({ name: "wizard" })}>
-              <Icon.plus />
-              Expose your first service
-            </button>
-          </div>
+          {loadError ? (
+            // A fetch failure must not masquerade as "no services yet" - that would nudge
+            // the user to re-create hosts they already have. Show the truth + a retry.
+            <div className="card" style={{ textAlign: "center", padding: "52px 24px" }}>
+              <div style={{ fontSize: 40 }}>⚠️</div>
+              <h2 style={{ marginTop: 12 }}>Couldn't reach the server</h2>
+              <p className="muted" style={{ maxWidth: 460, margin: "10px auto 22px", lineHeight: 1.6 }}>
+                We couldn't load your services just now. This is usually a brief backend hiccup -
+                your configuration is safe. Try again in a moment.
+              </p>
+              {onRetry && (
+                <button className="btn btn-primary" onClick={onRetry}>
+                  <Icon.refresh />
+                  Retry
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="card" style={{ textAlign: "center", padding: "52px 24px" }}>
+              <div style={{ fontSize: 40 }}>🚀</div>
+              <h2 style={{ marginTop: 12 }}>Welcome to NginUX</h2>
+              <p className="muted" style={{ maxWidth: 460, margin: "10px auto 22px", lineHeight: 1.6 }}>
+                Let's get your first service online. Point a domain at an app on your network and
+                NginUX sets up the reverse proxy and a free HTTPS certificate for you - about a minute, no nginx config required.
+              </p>
+              <button className="btn btn-primary" onClick={() => navigate({ name: "wizard" })}>
+                <Icon.plus />
+                Expose your first service
+              </button>
+            </div>
+          )}
         </div>
       </>
     );

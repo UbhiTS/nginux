@@ -498,7 +498,7 @@ export interface ToolResult {
   message?: string;
 }
 
-function needsApproval(tier: Tier, principal: Principal): boolean {
+export function needsApproval(tier: Tier, principal: Principal): boolean {
   if (tier === "read") return false;
   if (principal.kind === "user") return false; // a human in the UI is the approver
   if (tier === "high") return true; // never auto-approve destructive

@@ -170,3 +170,67 @@ test("reconcileImportedCerts re-registers an on-disk cert whose DB row was dropp
   assert.match(back.issuer, /self-signed/i, "issuer must be classified as self-signed");
   assert.ok(back.notAfter && Date.parse(back.notAfter) > Date.now(), "reconciled expiry must be future-dated");
 });
+
+// --- 5. renewDue: re-issues certs inside the 30-day lead window (coverage gap) ---
+// Only the self-signed path is exercised (no ACME network). PINNED: a cert with
+// plenty of runway is left alone; one inside the renewal window is re-issued so
+// its expiry moves forward and the live cert can't silently lapse.
+test("renewDue renews a self-signed cert inside the lead window but leaves a healthy one alone", async () => {
+  await certs.issueSelfSigned("renew-soon.example.com");
+  await certs.issueSelfSigned("renew-later.example.com");
+
+  // Force one cert to look near-expiry (5 days left, inside the 30-day lead) and
+  // leave the other future-dated. autoRenew defaults on for issued certs.
+  const soon = new Date(Date.now() + 5 * 86400_000).toISOString();
+  db.prepare("UPDATE certificates SET notAfter = ? WHERE domain = ?").run(soon, "renew-soon.example.com");
+  const laterBefore = certs.getCert("renew-later.example.com")?.notAfter ?? null;
+
+  await certs.renewDue();
+
+  const soonAfter = certs.getCert("renew-soon.example.com")?.notAfter ?? null;
+  assert.ok(soonAfter && Date.parse(soonAfter) > Date.parse(soon), "a cert inside the lead window must be re-issued with a later expiry");
+  const laterAfter = certs.getCert("renew-later.example.com")?.notAfter ?? null;
+  assert.equal(laterAfter, laterBefore, "a cert with ample runway must NOT be touched");
+});
+
+test("renewDue skips a cert with autoRenew disabled even if it's expiring", async () => {
+  await certs.issueSelfSigned("no-renew.example.com");
+  const soon = new Date(Date.now() + 3 * 86400_000).toISOString();
+  db.prepare("UPDATE certificates SET notAfter = ?, autoRenew = 0 WHERE domain = ?").run(soon, "no-renew.example.com");
+
+  await certs.renewDue();
+
+  assert.equal(certs.getCert("no-renew.example.com")?.notAfter, soon, "autoRenew=0 must opt the cert out of renewal");
+});
+
+// --- 6. recoverStuckPending: rescue a first-issuance interrupted mid-ACME ---
+// REGRESSION (audit finding): a "pending" row with null notAfter + no cert file
+// is a dead state the daily refresh / renewDue both skip. It must be flipped to
+// "error" so it surfaces and can be retried.
+test("recoverStuckPending flips an orphaned pending cert (no file, null expiry) to error", () => {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO certificates (domain, status, issuer, method, notBefore, notAfter, sans, wildcard, autoRenew, updatedAt)
+     VALUES (?,?,?,?,?,?,?,0,1,?)`,
+  ).run("stuck.example.com", "pending", "Let's Encrypt", "http-01", null, null, JSON.stringify(["stuck.example.com"]), now);
+
+  const recovered = certs.recoverStuckPending();
+  assert.ok(recovered >= 1, "the orphaned pending row must be recovered");
+
+  const c = certs.getCert("stuck.example.com");
+  assert.ok(c, "the row must still exist");
+  assert.equal(c.status, "error", "a stuck pending cert must be flipped to error");
+  assert.ok(c.lastError && /interrupted/i.test(c.lastError), "lastError must explain the interrupted issuance");
+});
+
+test("recoverStuckPending leaves a mid-flight pending cert (with an expiry) untouched", () => {
+  const now = new Date().toISOString();
+  const future = new Date(Date.now() + 60 * 86400_000).toISOString();
+  db.prepare(
+    `INSERT INTO certificates (domain, status, issuer, method, notBefore, notAfter, sans, wildcard, autoRenew, updatedAt)
+     VALUES (?,?,?,?,?,?,?,0,1,?)`,
+  ).run("midflight.example.com", "pending", "Let's Encrypt", "http-01", now, future, JSON.stringify(["midflight.example.com"]), now);
+
+  certs.recoverStuckPending();
+  assert.equal(certs.getCert("midflight.example.com")?.status, "pending", "a pending cert that already has an expiry must be left alone");
+});

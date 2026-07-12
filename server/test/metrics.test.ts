@@ -255,3 +255,45 @@ test("hostSummary aggregates one host's recent traffic within the range window",
   assert.equal(empty.totalRequests, 0);
   assert.equal(empty.errorRate, 0);
 });
+
+// ---------------------------------------------------------------------------
+// REGRESSION (audit): long ranges must read HOUR rollups, not just the ~25h
+// minute buckets. hostStats/hostTraffic previously scanned only hostMinute for
+// every range, so 7d/30d silently truncated the Network Map to the last ~25h.
+// ---------------------------------------------------------------------------
+test("hostStats/hostTraffic 7d consults hour rollups (data older than ~25h is not dropped)", () => {
+  const oldHost = "old-rollup.example.com", freshHost = "fresh-rollup.example.com";
+  const now = Date.now();
+  const e = (host: string, tsMs: number) => metrics.ingest({
+    ts: new Date(tsMs).toISOString(), host, method: "GET", path: "/", status: 200,
+    bytes: 500, bytesIn: 100, ip: "203.0.113.9", country: "US", ua: "curl", ms: 5,
+  });
+  e(freshHost, now - 60_000);        // 1 min ago → keeps the 1d window non-empty (avoids all-time fallback)
+  e(oldHost, now - 72 * 3600_000);   // 3 days ago → survives only in the hour rollups
+
+  // A 1d range scans minute buckets → the 3-day-old host must be ABSENT.
+  const day = metrics.hostStats("1d");
+  assert.ok(day.some((h) => h.key === freshHost), "sanity: the fresh host is inside the 1d window");
+  assert.ok(!day.some((h) => h.key === oldHost), "a 1d range must not surface a 3-day-old host (minute buckets only span ~25h)");
+
+  // A 7d range scans hour rollups → the 3-day-old host MUST appear (the bug hid it).
+  const oldWeek = metrics.hostStats("7d").find((h) => h.key === oldHost);
+  assert.ok(oldWeek && oldWeek.requests >= 1, "a 7d range must surface the 3-day-old host via hour rollups");
+  const oldWeekTraffic = metrics.hostTraffic("7d").find((h) => h.key === oldHost);
+  assert.ok(oldWeekTraffic && oldWeekTraffic.count >= 1, "hostTraffic 7d must also surface it via hour rollups");
+});
+
+// REGRESSION (audit): trafficSeries 7d used floor rounding (168h/30 → 5h/pt), so
+// it only reached back ~150h and dropped the oldest ~18h. ceil covers the window.
+test("trafficSeries 7d covers the full window (ceil rounding), including ~155h-old data", () => {
+  const host = "series-window.example.com";
+  const now = Date.now();
+  // 155h ago is inside the 7d (168h) window but beyond the old floor-rounded ~150h reach.
+  metrics.ingest({
+    ts: new Date(now - 155 * 3600_000).toISOString(), host, method: "GET", path: "/", status: 200,
+    bytes: 700, bytesIn: 100, ip: "203.0.113.10", country: "US", ua: "curl", ms: 5,
+  });
+  const series = metrics.trafficSeries("7d", "requests", host);
+  const sum = series.data.reduce((a, b) => a + b, 0);
+  assert.ok(sum >= 1, "a ~155h-old point must fall inside the ceil-rounded 7d series (floor rounding dropped it)");
+});

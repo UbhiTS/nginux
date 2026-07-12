@@ -151,3 +151,60 @@ test("checkCredentials returns the row for the right password and null otherwise
   assert.equal(await auth.checkCredentials("cred_frank", "wrong-password"), null);
   assert.equal(await auth.checkCredentials("nobody-unknown", "whatever"), null);
 });
+
+// ---------- 4. 2FA backup codes (single-use consumption) ----------
+// PINNED SECURITY INVARIANT: a backup code is a one-time skeleton key. It must
+// verify exactly once, then be burned so a captured/reused code can't sign in
+// again. (Coverage gap - audit finding.)
+
+test("useBackupCode accepts a real code exactly once, then rejects the reuse", async () => {
+  const user = await auth.createUser({ username: "bk_alice", password: "pw" });
+  const codes = auth.enableTwofa(user.id);
+  assert.equal(codes.length, 8, "enableTwofa should mint 8 codes");
+
+  assert.equal(auth.useBackupCode(user.id, codes[0]), true, "a valid code must be accepted once");
+  assert.equal(auth.useBackupCode(user.id, codes[0]), false, "the SAME code must not work a second time");
+  // A different, still-unused code must still work (only the spent one is burned).
+  assert.equal(auth.useBackupCode(user.id, codes[1]), true, "an unused sibling code must still verify");
+});
+
+test("useBackupCode rejects an unknown code, whitespace tolerance aside, and an unknown user", async () => {
+  const user = await auth.createUser({ username: "bk_bob", password: "pw" });
+  const codes = auth.enableTwofa(user.id);
+  assert.equal(auth.useBackupCode(user.id, "deadbeefdeadbeefdead"), false, "a code that was never issued must fail");
+  assert.equal(auth.useBackupCode("no-such-user", codes[0]), false, "an unknown user must fail, not throw");
+  // Surrounding whitespace is trimmed (users paste codes with stray spaces).
+  assert.equal(auth.useBackupCode(user.id, `  ${codes[0]}  `), true, "a valid code with stray whitespace must still verify");
+  assert.equal(auth.useBackupCode(user.id, codes[0]), false, "…and that trimmed code is now burned");
+});
+
+test("useBackupCode returns false when 2FA was never enabled (no codes stored)", async () => {
+  const user = await auth.createUser({ username: "bk_carol", password: "pw" });
+  assert.equal(auth.useBackupCode(user.id, "anything-at-all-1234"), false, "no stored codes -> always false");
+});
+
+// ---------- 5. TOTP replay guard (monotonic counter) ----------
+// PINNED SECURITY INVARIANT: once a TOTP time-step is consumed it must never be
+// accepted again, even across a restart (persisted). The counter only moves
+// forward, so a captured code from an already-used step is rejected. (Coverage gap.)
+
+test("TOTP counter starts at -1 and only ever advances forward", async () => {
+  const user = await auth.createUser({ username: "totp_dave", password: "pw" });
+  assert.equal(auth.getLastTotpCounter(user.id), -1, "a fresh user has consumed no step");
+
+  auth.setLastTotpCounter(user.id, 100);
+  assert.equal(auth.getLastTotpCounter(user.id), 100, "consuming step 100 must persist");
+
+  // Replay of an OLDER (or equal) step must not move the watermark backward.
+  auth.setLastTotpCounter(user.id, 50);
+  assert.equal(auth.getLastTotpCounter(user.id), 100, "a lower step must not roll the counter back (replay guard)");
+  auth.setLastTotpCounter(user.id, 100);
+  assert.equal(auth.getLastTotpCounter(user.id), 100, "re-consuming the same step is a no-op");
+
+  auth.setLastTotpCounter(user.id, 101);
+  assert.equal(auth.getLastTotpCounter(user.id), 101, "the next fresh step advances the watermark");
+});
+
+test("getLastTotpCounter returns -1 for an unknown user", () => {
+  assert.equal(auth.getLastTotpCounter("nobody"), -1);
+});

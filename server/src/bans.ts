@@ -76,16 +76,30 @@ export function writeBannedConf(): void {
 // ---- auto-ban engine ----
 const failures = new Map<string, number[]>();
 
+/** Loopback + private LAN + link-local + ULA. Auto-ban exists to stop INTERNET
+ *  brute force; a LAN user (or family member) fat-fingering their password must
+ *  not self-ban their device from every proxied service for 24h. Manual bans are
+ *  unaffected - an admin can still ban a LAN IP explicitly. */
+export function isLocalIp(ip: string): boolean {
+  const h = ip.replace(/^::ffff:/i, "").toLowerCase(); // unwrap IPv4-mapped IPv6
+  if (h === "::1" || h.startsWith("127.")) return true;
+  if (/^(10\.|192\.168\.|169\.254\.)/.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true; // 172.16.0.0/12
+  if (/^(fe80:|f[cd])/.test(h)) return true; // IPv6 link-local + ULA
+  return false;
+}
+
 export function startBanEngine(): void {
   writeBannedConf();
-  // Periodically drop expired rows and, if any went away, refresh the deny-list.
+  // Prune expired rows every minute (not hourly) so a lifted ban stops denying at
+  // nginx promptly - the deny-list is only rewritten when a row actually expires.
   setInterval(() => {
     try { if (pruneExpired() > 0) { writeBannedConf(); scheduleBannedApply(); } } catch { /* ignore */ }
-  }, 3600_000).unref?.();
+  }, 60_000).unref?.();
   subscribe((e) => {
     if (e.type !== "login.failed") return;
     const ip = String(e.data?.ip ?? "").trim();
-    if (!ip || ip === "127.0.0.1") return;
+    if (!ip || isLocalIp(ip)) return; // never auto-ban loopback/LAN (internet brute-force only)
     const now = Date.now();
     const hits = (failures.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
     hits.push(now);

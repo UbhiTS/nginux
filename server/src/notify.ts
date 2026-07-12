@@ -149,21 +149,57 @@ export async function testChannel(id: string): Promise<{ ok: boolean; status: st
 
 
 // Which events are worth a push notification (high-volume ones are excluded).
-function isAlertWorthy(type: string, severity?: string): boolean {
+export function isAlertWorthy(type: string, severity?: string): boolean {
   if (type === "agent.tool_called" || type === "login.success" || type.startsWith("host.")) return false;
   if (severity === "warn" || severity === "danger") return true;
   return /^(service\.|cert\.|security\.|agent\.approval)/.test(type);
+}
+
+// Coalesce alert storms: at most one alert per (channel,type) per window; repeats
+// inside the window are counted and folded into a single trailing "+N more" summary
+// when the window closes. Without this a password-guessing client or a flapping host
+// fires one outbound message per event to every channel (Slack/Discord/email) - and
+// the login limiter doesn't help, since the 429 path itself re-emits login.failed.
+const ALERT_WINDOW_MS = 60_000;
+interface AlertBucket { count: number; timer: ReturnType<typeof setTimeout> | null; lastMessage: string }
+const alertBuckets = new Map<string, AlertBucket>();
+
+function flushAlertBucket(channelId: string, type: string, key: string): void {
+  const b = alertBuckets.get(key);
+  alertBuckets.delete(key);
+  if (!b || b.count === 0) return; // nothing was suppressed during the window
+  const ch = getChannelRaw(channelId);
+  if (!ch || !ch.enabled) return; // channel removed/disabled since the window opened
+  const noun = b.count === 1 ? "event" : "events";
+  void deliver(ch, `NginUX: ${type} (+${b.count})`, `${b.count} more "${type}" ${noun} in the last ${ALERT_WINDOW_MS / 1000}s. Latest: ${b.lastMessage}`);
 }
 
 export function initAlertEngine(): void {
   subscribe((e) => {
     const severity = (e.data?.severity as string) || "info";
     if (!isAlertWorthy(e.type, severity)) return;
+    // Throttled (429) login attempts are already the limiter doing its job - don't
+    // let them amplify into one alert per rejected request.
+    if (e.data?.throttled) return;
     const title = `NginUX: ${e.type}`;
     const message = (e.data?.summary as string) || e.type;
     for (const r of db.prepare("SELECT * FROM channels WHERE enabled = 1").all() as Row[]) {
       const ch = toChannel(r);
-      if (matchesEvent(ch.events, e.type)) void deliver(ch, title, message);
+      if (!matchesEvent(ch.events, e.type)) continue;
+      const key = `${ch.id}|${e.type}`;
+      const bucket = alertBuckets.get(key);
+      if (!bucket) {
+        // First of its kind in this window: deliver now, open the coalescing window.
+        void deliver(ch, title, message);
+        const b: AlertBucket = { count: 0, timer: null, lastMessage: message };
+        b.timer = setTimeout(() => flushAlertBucket(ch.id, e.type, key), ALERT_WINDOW_MS);
+        b.timer.unref?.();
+        alertBuckets.set(key, b);
+      } else {
+        // Within the window: count it and remember the latest summary for the flush.
+        bucket.count++;
+        bucket.lastMessage = message;
+      }
     }
   });
 }

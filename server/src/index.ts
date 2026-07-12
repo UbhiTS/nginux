@@ -323,6 +323,14 @@ function requireHostAccess(
 const SCOPED_FORBIDDEN_FIELDS = [
   "requireLogin", "require2fa", "mtls", "countryLock", "securityHeaders", "hsts",
   "blockExploits", "ipAllow", "ipDeny", "customHeaders", "pathRules", "upstreams",
+  // Repointing to a DIFFERENT machine, hijacking the domain, or flipping TLS is
+  // routing/posture - not "managing" the service - and would let a scoped user turn
+  // NginUX into an SSRF pivot to any internal target or shadow another host's domain.
+  // `upstreams` is already forbidden; the primary forward HOST/scheme and the domain
+  // must be too, or the rule is trivially bypassed. `forwardPort` is deliberately NOT
+  // here: moving your own app to a new port on the same box is legitimate management
+  // (they still can't point at a different host), so the SSRF-pivot door stays shut.
+  "forwardHost", "forwardScheme", "domain", "ssl",
 ] as const;
 
 function rejectPrivilegedFields(req: FastifyRequest, reply: FastifyReply, body: Record<string, unknown>): boolean {
@@ -649,7 +657,13 @@ app.put("/api/hosts/:id", async (req, reply) => {
   if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
   // Validate the *resulting* host (existing merged with the patch) before writing.
   const merged = { ...existing, ...parsed.data };
-  if (parsed.data.domain && parsed.data.domain !== existing.domain && isControlPlaneDomain(parsed.data.domain, merged.forwardPort)) {
+  // Guard the control-plane-domain hijack against the MERGED result, not just a
+  // domain change: a host already sitting on the portal domain can be broken by a
+  // port-only edit (6767 -> 8080), repointing the sign-in server block and locking
+  // everyone out. Fire whenever the result is a hijack AND domain or port actually
+  // moved (a no-op re-PUT of an unrelated field must not be punished).
+  const domainOrPortChanged = merged.domain !== existing.domain || merged.forwardPort !== existing.forwardPort;
+  if (domainOrPortChanged && isControlPlaneDomain(merged.domain, merged.forwardPort)) {
     return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 6767; otherwise pick another domain so you don't lose access to NginUX." });
   }
   const spErr = streamPortError(merged, id);
@@ -825,7 +839,8 @@ app.get("/api/topology", async (req) => {
   return getTopology({ publicIp: s.publicIp, gatewayIp: s.gatewayIp }, hosts);
 });
 
-app.get("/api/traffic", async (req) => {
+app.get("/api/traffic", async (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return undefined; // per-host traffic (host param) - admin/editor like the other metrics
   const { range = "live", metric = "requests", host } = req.query as { range?: string; metric?: string; host?: string };
   return trafficSeries(range, metric === "bandwidth" ? "bandwidth" : "requests", host || undefined);
 });
@@ -847,11 +862,16 @@ app.get("/api/metrics/host/:domain", async (req, reply) => {
   const range = (req.query as { range?: string }).range ?? "1d";
   return metricsHostSummary(domain, range);
 });
-app.get("/api/metrics/hosts", async (req) => {
+app.get("/api/metrics/hosts", async (req, reply) => {
+  // Per-host traffic reveals which services exist + their volume; gate it to
+  // admin/editor like every other metrics route, so a scoped/readonly user can't
+  // enumerate out-of-scope hosts through the Network Map.
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return undefined;
   const { range = "live", metric = "requests" } = req.query as { range?: string; metric?: string };
   return hostTraffic(range, metric === "bandwidth" ? "bandwidth" : "requests");
 });
-app.get("/api/metrics/host-stats", async (req) => {
+app.get("/api/metrics/host-stats", async (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return undefined;
   const { range = "live" } = req.query as { range?: string };
   return hostStats(range);
 });
@@ -960,7 +980,8 @@ app.get("/api/icons", async (req, reply) => {
   } catch { return reply.code(502).send({ error: "Couldn't reach the icon catalog." }); }
 });
 
-app.get("/api/metrics/traffic", async (req) => {
+app.get("/api/metrics/traffic", async (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return undefined;
   const { range = "1d" } = req.query as { range?: string };
   return trafficSeries(range);
 });
@@ -1048,11 +1069,11 @@ app.post("/api/auth/login", async (req, reply) => {
   // per guessed username and force unbounded scrypt work. This caps total attempts
   // (hence scrypt calls) from a single source regardless of the usernames tried.
   if (rateLimited(`ipall:${ip}`, LOGIN_IP_MAX, LOGIN_WINDOW_MS)) {
-    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts from this IP - throttled", ip, meta: {} });
+    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts from this IP - throttled", ip, meta: { throttled: true } });
     return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
   }
   if (rateLimited(`${ip}:${username}`.toLowerCase(), LOGIN_MAX, LOGIN_WINDOW_MS)) {
-    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts - throttled", ip, meta: {} });
+    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts - throttled", ip, meta: { throttled: true } });
     return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
   }
 

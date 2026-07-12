@@ -486,10 +486,30 @@ export async function renewDue(): Promise<void> {
   }
 }
 
+/** A "pending" cert with no cert file on disk and no expiry is a first-issuance
+ *  attempt that was interrupted (container restart / OOM mid-ACME, before any
+ *  cert was written). It would otherwise sit as an invisible dead state forever:
+ *  the daily status refresh only runs `if (c.notAfter)`, reconcile skips it (no
+ *  fullchain.pem), and renewDue skips it (daysRemaining is null). Flip it to
+ *  "error" so it surfaces in the UI and is eligible for a manual re-issue.
+ *  Returns how many rows were recovered. */
+export function recoverStuckPending(): number {
+  let recovered = 0;
+  for (const c of listCerts()) {
+    if (c.status !== "pending" || c.notAfter) continue; // mid-flight rows have an expiry; leave them
+    if (existsSync(join(CERT_DIR, c.domain, "fullchain.pem"))) continue; // cert did land - reconcile will adopt it
+    upsertCert({ domain: c.domain, status: "error", lastError: "Issuance was interrupted before a certificate was written. Re-issue to retry." });
+    acmeLog(c.domain, "Previous issuance was interrupted before a certificate was written; marked as error. Re-issue to retry.", "error");
+    recovered++;
+  }
+  return recovered;
+}
+
 export function startRenewalScheduler(): void {
   // check daily; also refresh status flags from expiry
   const tick = () => {
     try {
+      recoverStuckPending(); // rescue certs orphaned in "pending" by an interrupted issuance
       for (const c of listCerts()) {
         if (c.notAfter) {
           const st = statusFromExpiry(new Date(c.notAfter));
@@ -501,6 +521,9 @@ export function startRenewalScheduler(): void {
       /* a transient DB error in one tick must not kill the daily interval */
     }
   };
+  // Run once at startup so an interrupted issuance is rescued immediately, not up
+  // to 24h later on the first daily tick.
+  try { recoverStuckPending(); } catch { /* best effort; the daily tick retries */ }
   setInterval(tick, 24 * 3600_000).unref?.();
 }
 

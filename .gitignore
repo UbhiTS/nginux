@@ -29,6 +29,7 @@ Thumbs.db
 # internal design artifacts (kept local, not published)
 mockup.html
 NginUI-PRD.md
+nginux-demo-linkedin.mp4
 
 # NginUX runtime data (sqlite db, password hashes, 2FA secrets, certs, client CAs)
 data/

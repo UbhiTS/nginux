@@ -29,24 +29,37 @@ function closeIncident(hostId: string) {
   );
 }
 
+// Require this many CONSECUTIVE failed probes before declaring a host down, so a
+// single transient blip (a GC pause, a momentary packet drop) doesn't open a false
+// incident + fire a danger alert + flap. Recovery is immediate (one good probe) -
+// being fast to say "back online" is harmless; being fast to cry "down" is not.
+const DOWN_STREAK = 2;
+const failStreak = new Map<string, number>();
+
 export function recordCheck(hostId: string, up: boolean, ms: number) {
   const host = getHost(hostId);
   if (!host) return;
   push(hostId, up, ms);
-  const next = up ? "online" : "down";
-  if (host.health === next) return; // no change - leave it (and don't re-log)
-  const wasDown = host.health === "down";
-  updateHost(hostId, { health: next });
-  // Reflect the probe result whatever the previous state (including the initial
-  // "unknown" of a freshly-created host - it must resolve to online/down, not
-  // stay unknown). Only fire incident/alert events on a real up<->down flip.
-  if (!up) {
-    openIncident(hostId, host.domain);
-    logEvent({ type: "service.upstream_down", severity: "danger", actor: "monitor", summary: `${host.name} is unreachable`, ip: "", meta: { host: host.domain } });
-  } else if (wasDown) {
-    closeIncident(hostId);
-    logEvent({ type: "service.upstream_up", severity: "info", actor: "monitor", summary: `${host.name} is back online`, ip: "", meta: { host: host.domain } });
+
+  if (up) {
+    failStreak.delete(hostId);
+    if (host.health === "online") return; // already up, nothing to do
+    const wasDown = host.health === "down";
+    updateHost(hostId, { health: "online" }); // resolves the initial "unknown" too
+    if (wasDown) {
+      closeIncident(hostId);
+      logEvent({ type: "service.upstream_up", severity: "info", actor: "monitor", summary: `${host.name} is back online`, ip: "", meta: { host: host.domain } });
+    }
+    return;
   }
+
+  // Failed probe: only act once we've seen DOWN_STREAK failures in a row.
+  const streak = (failStreak.get(hostId) ?? 0) + 1;
+  failStreak.set(hostId, streak);
+  if (streak < DOWN_STREAK || host.health === "down") return;
+  updateHost(hostId, { health: "down" });
+  openIncident(hostId, host.domain);
+  logEvent({ type: "service.upstream_down", severity: "danger", actor: "monitor", summary: `${host.name} is unreachable`, ip: "", meta: { host: host.domain } });
 }
 
 export function getUptime(hostId: string) {
