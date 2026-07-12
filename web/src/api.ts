@@ -220,6 +220,8 @@ export const api = {
   restoreVersion: (id: string) => req<{ restored: number }>(`/config/versions/${id}/restore`, { method: "POST" }),
   exportConfig: () => req<unknown>("/config/export"),
   importConfig: (conf: string) => req<{ imported: string[]; skipped: string[] }>("/config/import", { method: "POST", body: JSON.stringify({ conf }) }),
+  previewImportConfig: (conf: string) =>
+    req<{ toImport: { domain: string; forwardHost: string; forwardPort: number; ssl: boolean }[]; skipped: { domain: string; reason: string }[] }>("/config/import/preview", { method: "POST", body: JSON.stringify({ conf }) }),
   // Portable backup bundle: hosts + settings + bans + channels. With a passphrase
   // the whole bundle is AES-256-GCM encrypted and may carry real secrets.
   backupConfig: (passphrase?: string, includeSecrets = false) =>

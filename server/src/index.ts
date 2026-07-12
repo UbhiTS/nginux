@@ -106,7 +106,7 @@ import { getUptime, startUptimeMonitor } from "./uptime.ts";
 import { rotateLogsNow, startLogRotation } from "./logrotate.ts";
 import { diffVersion, listVersions, restoreVersion, snapshot } from "./versioning.ts";
 import { gitLog, syncGitOps } from "./gitops.ts";
-import { importNginxConf } from "./importer.ts";
+import { importNginxConf, previewNginxConf } from "./importer.ts";
 import { buildBundle, restoreBundle } from "./backup.ts";
 import { encryptJson, decryptJson, isEncryptedEnvelope } from "./cryptobox.ts";
 import { addBan, listBans, removeBan, startBanEngine } from "./bans.ts";
@@ -866,6 +866,14 @@ app.get("/api/config/export", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const b = buildBundle(new Date().toISOString(), false);
   return { version: b.version, exportedAt: b.createdAt, hosts: b.hosts, settings: b.settings };
+});
+// Dry-run: parse an nginx.conf and show what WOULD be imported (+ skip reasons)
+// without creating anything, so the user can review before committing.
+app.post("/api/config/import/preview", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  const parsed = z.object({ conf: z.string().min(1).max(1_000_000) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  return previewNginxConf(parsed.data.conf);
 });
 app.post("/api/config/import", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;

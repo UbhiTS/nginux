@@ -397,14 +397,20 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
   const [msg, setMsg] = useState("");
   const [importConf, setImportConf] = useState("");
   const [importMsg, setImportMsg] = useState("");
+  const [importPreview, setImportPreview] = useState<{ toImport: { domain: string; forwardHost: string; forwardPort: number; ssl: boolean }[]; skipped: { domain: string; reason: string }[] } | null>(null);
   const [restoreId, setRestoreId] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
 
+  const doPreview = async () => {
+    if (!importConf.trim()) return;
+    try { setImportPreview(await api.previewImportConfig(importConf)); setImportMsg(""); }
+    catch { setImportMsg("Couldn't parse that config."); }
+  };
   const doImport = async () => {
     if (!importConf.trim()) return;
     const r = await api.importConfig(importConf);
     setImportMsg(`Imported ${r.imported.length} (${r.imported.join(", ") || "none"}), skipped ${r.skipped.length}.`);
-    setImportConf("");
+    setImportConf(""); setImportPreview(null);
   };
 
   const load = () => {
@@ -510,11 +516,36 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
       <div className="card card-pad">
         <div style={{ fontWeight: 650, marginBottom: 6, fontSize: 13 }}>Import an existing nginx.conf</div>
         <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>Paste a config - NginUX parses each proxy <span className="mono">server</span> block into a managed host (duplicates skipped).</div>
-        <textarea className="input mono" rows={4} value={importConf} onChange={(e) => setImportConf(e.target.value)} placeholder={"server {\n  server_name app.example.com;\n  location / { proxy_pass http://192.168.1.10:8080; }\n}"} />
+        <textarea className="input mono" rows={4} value={importConf} onChange={(e) => { setImportConf(e.target.value); setImportPreview(null); }} placeholder={"server {\n  server_name app.example.com;\n  location / { proxy_pass http://192.168.1.10:8080; }\n}"} />
         <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
-          <button className="btn btn-primary btn-sm" onClick={doImport}>Import</button>
+          <button className="btn btn-sm" onClick={doPreview}>Preview</button>
+          {importPreview && importPreview.toImport.length > 0 && (
+            <button className="btn btn-primary btn-sm" onClick={doImport}>Import {importPreview.toImport.length} service{importPreview.toImport.length === 1 ? "" : "s"}</button>
+          )}
           {importMsg && <span className="info-line"><Icon.check />{importMsg}</span>}
         </div>
+        {importPreview && (
+          <div style={{ marginTop: 12, fontSize: 12.5 }}>
+            {importPreview.toImport.length > 0 ? (
+              <div>
+                <div className="muted" style={{ marginBottom: 4 }}>Will import:</div>
+                {importPreview.toImport.map((d) => (
+                  <div key={d.domain} className="mono" style={{ padding: "2px 0" }}>
+                    <Icon.check /> {d.domain} → {d.forwardHost}:{d.forwardPort}{d.ssl ? " (https)" : ""}
+                  </div>
+                ))}
+              </div>
+            ) : <div className="muted">Nothing new to import.</div>}
+            {importPreview.skipped.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div className="muted" style={{ marginBottom: 4 }}>Skipped:</div>
+                {importPreview.skipped.map((s, i) => (
+                  <div key={i} className="mono" style={{ padding: "2px 0", color: "var(--text-dim)" }}>{s.domain} — {s.reason}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {restoreId && (
