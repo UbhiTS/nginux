@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { Route } from "../App.tsx";
 import { api, certForHost, type Certificate } from "../api.ts";
-import type { ProxyHost } from "../types.ts";
+import type { ProxyHost, SecurityProfile } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ServiceIcon } from "../components/ServiceIcon.tsx";
@@ -48,7 +48,9 @@ export function Services({
   const [certs, setCerts] = useState<Certificate[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [profiles, setProfiles] = useState<SecurityProfile[]>([]);
   useEffect(() => { api.certificates().then(setCerts).catch(() => {}); }, []);
+  useEffect(() => { api.securityProfiles().then(setProfiles).catch(() => {}); }, []);
 
   // Flip a service between served (enabled) and paused (disabled). Disabling
   // removes its nginx server block so the site stops responding publicly.
@@ -104,6 +106,17 @@ export function Services({
             <button className="btn btn-sm" disabled={busy} onClick={() => runBulk("maintenance-on")}>Maintenance on</button>
             <button className="btn btn-sm" disabled={busy} onClick={() => runBulk("maintenance-off")}>Maintenance off</button>
             <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => runBulk("delete")}>Delete</button>
+            {profiles.length > 0 && (
+              <select className="input" style={{ maxWidth: 200, height: 30, padding: "0 8px", fontSize: 12 }} disabled={busy} value=""
+                onChange={async (e) => {
+                  const pid = e.target.value; if (!pid) return;
+                  const ids = [...selected]; setBusy(true);
+                  try { await api.applySecurityProfile(pid, ids); setSelected(new Set()); await reload(); } finally { setBusy(false); }
+                }}>
+                <option value="">Apply profile…</option>
+                {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            )}
             <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setSelected(new Set())}>Clear</button>
           </div>
         )}

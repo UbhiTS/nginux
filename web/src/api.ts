@@ -3,6 +3,7 @@ import type {
   ConfigPreview,
   Preset,
   ProxyHost,
+  SecurityProfile,
   Settings,
   Topology,
   Traffic,
@@ -58,6 +59,13 @@ export const api = {
   // Apply one action to many services with a single reload.
   batchHosts: (ids: string[], action: "enable" | "disable" | "maintenance-on" | "maintenance-off" | "delete") =>
     req<{ affected: number; apply: ApplyResult }>("/hosts/batch", { method: "POST", body: JSON.stringify({ ids, action }) }),
+  // Security profiles: reusable named bundles of security fields.
+  securityProfiles: () => req<SecurityProfile[]>("/security-profiles"),
+  createSecurityProfile: (name: string, description: string, fields: Record<string, unknown>) =>
+    req<SecurityProfile>("/security-profiles", { method: "POST", body: JSON.stringify({ name, description, fields }) }),
+  deleteSecurityProfile: (id: string) => req<{ ok: boolean }>(`/security-profiles/${id}`, { method: "DELETE" }),
+  applySecurityProfile: (id: string, ids: string[]) =>
+    req<{ affected: number; apply: ApplyResult }>(`/security-profiles/${id}/apply`, { method: "POST", body: JSON.stringify({ ids }) }),
   // Dry-run the nginx-config change a create/update/delete would produce, without
   // writing or reloading. Powers the "see exactly what changes" preview.
   previewConfig: (body: { mode: "create" | "update" | "delete"; id?: string; host?: Partial<ProxyHost> }) =>

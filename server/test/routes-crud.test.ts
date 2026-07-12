@@ -359,6 +359,35 @@ test("POST /api/config/backup + /restore round-trip an encrypted bundle (admin-o
   assert.equal(bad.statusCode, 400, "wrong passphrase -> 400");
 });
 
+// ---------------------------------------------------------------------------
+// (16) Security profiles (feature 4.4): create + apply a named security bundle
+// to services, admin/editor only.
+// ---------------------------------------------------------------------------
+test("POST /api/security-profiles + apply sets the profile's fields on target hosts", async () => {
+  const admin = cookieFor(makeUser("admin"));
+  const svc = createHost(makeHost({ id: "prof-svc", name: "prof", domain: "prof.example.com", requireLogin: false, hsts: false }));
+
+  // Readonly can't manage profiles.
+  const ro = await app.inject({ method: "GET", url: "/api/security-profiles", headers: { cookie: cookieFor(makeUser("readonly")) } });
+  assert.equal(ro.statusCode, 403);
+
+  // Create a profile.
+  const create = await post("/api/security-profiles", admin, { name: "Strict", fields: { requireLogin: true, hsts: true, blockExploits: true } });
+  assert.equal(create.statusCode, 201);
+  const profId = (create.json() as { id: string }).id;
+
+  // Apply it to the service.
+  const apply = await post(`/api/security-profiles/${profId}/apply`, admin, { ids: [svc.id] });
+  assert.equal(apply.statusCode, 200);
+  assert.equal((apply.json() as { affected: number }).affected, 1);
+
+  // The host now has the profile's security fields.
+  const after = await app.inject({ method: "GET", url: `/api/hosts/${svc.id}`, headers: { cookie: admin } });
+  const host = after.json() as { requireLogin: boolean; hsts: boolean };
+  assert.equal(host.requireLogin, true, "profile applied requireLogin");
+  assert.equal(host.hsts, true, "profile applied hsts");
+});
+
 test("require2faForManagers leaves read-only/scoped users and enrolled managers alone", async () => {
   saveSettings({ require2faForManagers: true });
   // A readonly user is not a manager -> unaffected.

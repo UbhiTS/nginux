@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, type AuditEvent, type Ban, type Exposure, type SecurityOverview } from "../api.ts";
+import type { SecurityProfile } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ServiceIcon } from "../components/ServiceIcon.tsx";
 
-type Tab = "overview" | "exposure" | "logins" | "failures" | "denylist";
+type Tab = "overview" | "exposure" | "logins" | "failures" | "denylist" | "profiles";
 
 const sevPill: Record<AuditEvent["severity"], string> = {
   info: "g",
@@ -12,7 +13,7 @@ const sevPill: Record<AuditEvent["severity"], string> = {
   danger: "r",
 };
 
-const TABS: Tab[] = ["overview", "denylist", "exposure", "logins", "failures"];
+const TABS: Tab[] = ["overview", "denylist", "exposure", "logins", "failures", "profiles"];
 
 export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab: (t: string) => void }) {
   // Active tab lives in the URL (#/security/<tab>) so refresh / deep links keep it.
@@ -57,7 +58,10 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
           <button type="button" role="tab" aria-selected={tab === "failures"} className={`sectab${tab === "failures" ? " active" : ""}`} onClick={() => setTab("failures")}>
             Login failures {failures.length > 0 && <span className="badge">{failures.length}</span>}
           </button>
+          <button type="button" role="tab" aria-selected={tab === "profiles"} className={`sectab${tab === "profiles" ? " active" : ""}`} onClick={() => setTab("profiles")}>Profiles</button>
         </div>
+
+        {tab === "profiles" && <ProfilesPanel />}
 
         {tab === "overview" && overview && (
           <>
@@ -210,4 +214,69 @@ function EventTable({ rows, kind }: { rows: AuditEvent[]; kind: "login" | "failu
 function fmt(iso: string) {
   const d = new Date(iso);
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+const PROFILE_TOGGLES: { key: string; label: string }[] = [
+  { key: "requireLogin", label: "Require login" },
+  { key: "require2fa", label: "Require 2FA" },
+  { key: "securityHeaders", label: "Security headers" },
+  { key: "hsts", label: "HSTS" },
+  { key: "blockExploits", label: "Block exploits" },
+  { key: "rateLimit", label: "Rate limit" },
+];
+
+/** Manage reusable security profiles. Apply them to services from the Services
+ *  page (select rows -> "Apply profile"). */
+function ProfilesPanel() {
+  const [profiles, setProfiles] = useState<SecurityProfile[]>([]);
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [fields, setFields] = useState<Record<string, boolean>>({});
+  const [msg, setMsg] = useState("");
+
+  const load = () => { api.securityProfiles().then(setProfiles).catch(() => {}); };
+  useEffect(load, []);
+
+  const create = async () => {
+    if (!name.trim()) return;
+    await api.createSecurityProfile(name.trim(), desc.trim(), fields);
+    setName(""); setDesc(""); setFields({});
+    load();
+  };
+
+  return (
+    <>
+      <div className="card card-pad" style={{ marginBottom: 12 }}>
+        <div className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
+          A security profile is a reusable bundle of security settings. Create one here, then apply it to services from the Services page (select rows → “Apply profile”).
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <input className="input" style={{ maxWidth: 180 }} placeholder="Profile name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="input" style={{ maxWidth: 280 }} placeholder="Description (optional)" value={desc} onChange={(e) => setDesc(e.target.value)} />
+        </div>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 12 }}>
+          {PROFILE_TOGGLES.map((t) => (
+            <label key={t.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <input type="checkbox" checked={!!fields[t.key]} onChange={(e) => setFields((f) => ({ ...f, [t.key]: e.target.checked }))} />
+              {t.label}
+            </label>
+          ))}
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={create}>Create profile</button>
+        {msg && <div className="info-line" style={{ marginTop: 10 }}><Icon.info />{msg}</div>}
+      </div>
+      <div className="card atable">
+        {profiles.map((p) => (
+          <div key={p.id} className="arow" style={{ gridTemplateColumns: "1fr 1.4fr auto auto", gap: 12 }}>
+            <div><b>{p.name}</b> {p.builtin && <span className="pill n" style={{ marginLeft: 6 }}>built-in</span>}</div>
+            <div className="muted" style={{ fontSize: 12.5 }}>{p.description || Object.keys(p.fields).filter((k) => p.fields[k]).join(", ") || "—"}</div>
+            <div className="muted mono" style={{ fontSize: 11 }}>{Object.keys(p.fields).length} field{Object.keys(p.fields).length === 1 ? "" : "s"}</div>
+            <button className="btn btn-ghost btn-sm" disabled={p.builtin} title={p.builtin ? "Built-in profiles can't be deleted" : ""}
+              onClick={async () => { await api.deleteSecurityProfile(p.id); load(); }}>Delete</button>
+          </div>
+        ))}
+        {profiles.length === 0 && <div className="placeholder"><p>No security profiles yet.</p></div>}
+      </div>
+    </>
+  );
 }

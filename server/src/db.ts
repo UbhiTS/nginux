@@ -189,6 +189,16 @@ db.exec(`
     createdAt  TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS security_profiles (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    fields      TEXT NOT NULL DEFAULT '{}',
+    builtin     INTEGER NOT NULL DEFAULT 0,
+    createdAt   TEXT NOT NULL,
+    updatedAt   TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS client_certs (
     id          TEXT PRIMARY KEY,
     hostId      TEXT NOT NULL,

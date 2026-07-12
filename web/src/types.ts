@@ -134,6 +134,16 @@ export interface ApplyResult {
   nginxAvailable: boolean;
 }
 
+export interface SecurityProfile {
+  id: string;
+  name: string;
+  description: string;
+  fields: Record<string, unknown>;
+  builtin: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ConfigFileDiff {
   name: string;
   status: "added" | "modified" | "removed";
