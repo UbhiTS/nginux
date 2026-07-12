@@ -284,12 +284,27 @@ function topN(map: Map<string, number>, n: number) {
   return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, n).map(([key, count]) => ({ key, count }));
 }
 
-/** Top source IPs whose GeoIP country is `country` (busiest first). Derived from
- *  byIp + ipCountry so it costs nothing extra to maintain. */
-function topIpsForCountry(country: string, n: number): { ip: string; count: number }[] {
-  const out: { ip: string; count: number }[] = [];
-  for (const [ip, count] of byIp) if (ipCountry.get(ip) === country) out.push({ ip, count });
-  return out.sort((a, b) => b.count - a.count).slice(0, n);
+/** Top-N source IPs per country, from ONE sorted pass over the merged IP map.
+ *  The old approach re-scanned + re-sorted the whole IP set once per country
+ *  (O(countries x IPs log IPs)); this sorts once and buckets by country in a
+ *  single descending walk, so each country's list is already busiest-first and
+ *  capped at n with no per-country sort. `cc(ip)` returns "" for unknown-country
+ *  IPs, which are skipped (identical membership to the old per-country filter). */
+function groupTopIpsByCountry(
+  ipCounts: Map<string, number>,
+  cc: (ip: string) => string,
+  n: number,
+): Map<string, { ip: string; count: number }[]> {
+  const entries = [...ipCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const byCC = new Map<string, { ip: string; count: number }[]>();
+  for (const [ip, count] of entries) {
+    const c = cc(ip);
+    if (!c) continue;
+    let arr = byCC.get(c);
+    if (!arr) { arr = []; byCC.set(c, arr); }
+    if (arr.length < n) arr.push({ ip, count });
+  }
+  return byCC;
 }
 
 /** Approximate percentile (ms) from a latency histogram. */
@@ -338,8 +353,7 @@ export function rangeSummary(range: string) {
     for (let i = 0; i < lat.length; i++) lat[i] += lb.lat[i];
     merge(ip, lb.ip); merge(path, lb.path); merge(country, lb.country); merge(host, lb.host);
   }
-  const ipsByCountry = (cc: string, n: number) =>
-    [...ip.entries()].filter(([k]) => ipCountry.get(k) === cc).sort((a, b) => b[1] - a[1]).slice(0, n).map(([ipx, c]) => ({ ip: ipx, count: c }));
+  const ipTop = groupTopIpsByCountry(ip, (k) => ipCountry.get(k) ?? "", 5);
   return {
     totalRequests: count,
     totalBytes: out,
@@ -350,7 +364,7 @@ export function rangeSummary(range: string) {
     topHosts: topN(host, 6),
     topIps: topN(ip, 6).map((t) => ({ ...t, country: ipCountry.get(t.key) ?? "" })),
     topPaths: topN(path, 6),
-    topCountries: topN(country, MAP_COUNTRIES).map((c) => ({ ...c, topIps: ipsByCountry(c.key, 5) })),
+    topCountries: topN(country, MAP_COUNTRIES).map((c) => ({ ...c, topIps: ipTop.get(c.key) ?? [] })),
   };
 }
 
@@ -415,8 +429,7 @@ export function hostSummary(domain: string, range: string) {
       }
     }
   } catch { /* fall back to whatever the ring had */ }
-  const ipsByCountry = (cc: string, n: number) =>
-    [...ip.entries()].filter(([k]) => ipCC.get(k) === cc).sort((a, b) => b[1] - a[1]).slice(0, n).map(([ipx, c]) => ({ ip: ipx, count: c }));
+  const ipTop = groupTopIpsByCountry(ip, (k) => ipCC.get(k) ?? "", 5);
   return {
     totalRequests: count,
     totalBytes: out,
@@ -427,13 +440,14 @@ export function hostSummary(domain: string, range: string) {
     topHosts: [] as { key: string; count: number }[],
     topIps: topN(ip, 8).map((t) => ({ ...t, country: ipCC.get(t.key) ?? "" })),
     topPaths: topN(path, 8),
-    topCountries: topN(country, MAP_COUNTRIES).map((c) => ({ ...c, topIps: ipsByCountry(c.key, 5) })),
+    topCountries: topN(country, MAP_COUNTRIES).map((c) => ({ ...c, topIps: ipTop.get(c.key) ?? [] })),
   };
 }
 
 export function summary() {
   const errors = statusClass["4xx"] + statusClass["5xx"];
   const sorted = sortedMs();
+  const ipTop = groupTopIpsByCountry(byIp, (k) => ipCountry.get(k) ?? "", 5);
   return {
     totalRequests,
     totalBytes,
@@ -444,7 +458,7 @@ export function summary() {
     topHosts: topN(byHost, 6),
     topIps: topN(byIp, 6).map((t) => ({ ...t, country: ipCountry.get(t.key) ?? "" })),
     topPaths: topN(byPath, 6),
-    topCountries: topN(byCountry, MAP_COUNTRIES).map((c) => ({ ...c, topIps: topIpsForCountry(c.key, 5) })),
+    topCountries: topN(byCountry, MAP_COUNTRIES).map((c) => ({ ...c, topIps: ipTop.get(c.key) ?? [] })),
   };
 }
 

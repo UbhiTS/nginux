@@ -91,6 +91,21 @@ test("summary() top-country list carries both countries", () => {
   assert.equal(cc.get("CA"), 3);
 });
 
+// Per-country top-IP grouping (single-pass, replaces the O(countries x IPs) scan).
+test("summary() groups the busiest IPs under their OWN country, busiest-first", () => {
+  const us = snap.topCountries.find((c) => c.key === "US");
+  const ca = snap.topCountries.find((c) => c.key === "CA");
+  assert.ok(us?.topIps.some((t) => t.ip === IP1), "US must list IP1 (its own IP)");
+  assert.ok(ca?.topIps.some((t) => t.ip === IP2), "CA must list IP2 (its own IP)");
+  assert.ok(!us?.topIps.some((t) => t.ip === IP2), "an IP must not appear under a foreign country");
+  // Each country's IP list is descending by count.
+  for (const c of snap.topCountries) {
+    for (let i = 1; i < c.topIps.length; i++) {
+      assert.ok(c.topIps[i - 1].count >= c.topIps[i].count, `topIps busiest-first for ${c.key}`);
+    }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // recentLogs()
 // ---------------------------------------------------------------------------
