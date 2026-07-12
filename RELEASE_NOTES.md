@@ -1,9 +1,26 @@
-# NginUX v0.2.0
+# NginUX v0.2.2
 
 NginUX is a self-hosted reverse-proxy manager for your homelab — expose internal
 services over HTTPS, gate them behind a login, and watch your traffic, all from one
 clean dashboard. Think Nginx Proxy Manager, rebuilt around a live network-topology
 view, real metrics, and an agent-ready API.
+
+## New in v0.2.2 — internal hardening
+
+No new features and no behaviour change — this release finishes the deferred
+follow-ups from the v0.2.0 batch, verified by the full test suite plus an
+in-browser pass over both analytics views:
+
+- **Faster log summaries** — per-service traffic summaries now skip the disk read
+  entirely when the in-memory window already covers the requested range.
+- **Modular route layout** — four more route groups (self-update, security, agents,
+  certificates) moved out of the monolith into `server/src/routes/*`, shrinking the
+  central file by ~200 lines with no route or auth change.
+- **Deduplicated analytics UI** — the status-code, top-IP, and by-country panels are
+  now one shared component set used by both the Logs page and each service's
+  analytics, so the two can't drift.
+
+(v0.2.1 was a docs/version-sync release with no code change.)
 
 ## New in v0.2.0 — the whole backlog
 

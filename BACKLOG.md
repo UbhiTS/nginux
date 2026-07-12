@@ -24,20 +24,29 @@ gate and a short list of deliberately-deferred follow-ups from the shipped work.
 
 ### Follow-ups from shipped work (optional, low priority)
 
-These are conscious scope cuts from v0.2.0 — the shipped versions are correct and
-tested; these would only sharpen them.
+F1–F3 shipped in **v0.2.2** (see the Archive). What remains is one infra-gated
+verification and the parking lot.
 
 | # | Item | Why it's deferred | Pri | Effort |
 |---|------|-------------------|-----|--------|
-| F1 | **Rolling byte-offset index for the access log** (on top of the async reader from §2.1). Seek near a time-window's start instead of streaming the whole tail. | The async streaming reader already removed the event-loop block; the index is a marginal seek win. | P3 | M |
-| F2 | **Finish the `index.ts` route-module split** — extract the remaining groups (hosts, auth, metrics/logs, MCP, SSE) that §2.3 left central. | The tightly-coupled auth/host core carries real regression risk; best done as its own reviewed PR. | P3 | L |
-| F3 | **Extract the 3 shared analytics panels** (Top-IPs / status-codes / by-country) that §2.4 left lightly duplicated between Logs and HostAnalytics. | Their markup differs structurally and there are no UI tests, so extraction risks visual drift. | P3 | M |
 | F4 | **Live multi-domain verification** of §3.2 (DNS-01 across base domains) and §3.3 (second-domain login-loop fix). | The logic is unit-tested; the real round-trip needs two domains + DNS/TLS (the QNAP deployment). | P3 | S |
 | F5 | **New-idea parking lot** — surface future proposals here as they come up. | — | — | — |
 
 ---
 
 ## Archive — shipped
+
+### v0.2.2 (2026-07-12) — v0.2.0 follow-ups (F1–F3)
+
+Released; regression suite holds at 248 tests. Pure hardening/refactor — no
+behaviour change, verified by tsc + tests + an in-browser pass over both
+analytics consumers.
+
+| # | Item | Shipped as |
+|---|------|-----------|
+| F1 | Rolling byte-offset index for the access log | `metrics.ts` `ringCoversWindow` fast-path: `hostSummary` skips the disk read entirely when the in-memory ring already covers the requested window (the reverse reader's early-break already obviated a byte-seek) |
+| F2 | Finish the `index.ts` route split | four more groups extracted to `routes/*` (update / security / agents / certs) + centralized `registerXRoutes` block; `index.ts` 1683 → 1490 lines. The genuinely-coupled core (hosts/auth/metrics/topology/config/MCP/SSE) stays inline by design |
+| F3 | Extract the 3 shared analytics panels | `components/AnalyticsPanels.tsx` (`StatusCodeBars` / `TopSourceIps` / `CountryBars`), shared verbatim by `Logs` + `HostAnalytics`; −81 lines across the two pages |
 
 ### v0.2.0 (2026-07-12) — the whole backlog batch
 
