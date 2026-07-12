@@ -21,3 +21,19 @@ export const flag = (cc: string) =>
 const regionNames = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
 export const countryName = (cc: string) =>
   cc && cc.length === 2 && regionNames ? (regionNames.of(cc.toUpperCase()) ?? cc) : cc || "";
+
+/** "1 day" / "3 days" — the app rendered "1 days" at six sites. */
+export const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+
+/** Pluralize a word by count: plural("service", 1) -> "service", plural("service", 3) -> "services". */
+export const plural = (word: string, n: number, suffix = "s") => `${word}${n === 1 ? "" : suffix}`;
+
+/** Copy text to the clipboard; resolves to whether it succeeded (for a "Copied" confirmation). */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}

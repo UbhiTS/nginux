@@ -16,8 +16,16 @@
   --red: #f85149;
   --red-soft: #3a1518;
   --purple: #a371f7;
-  --radius: 10px;
   --radius-sm: 7px;
+  --radius: 10px;
+  --radius-lg: 12px;
+  --radius-pill: 20px;
+  /* Type scale — the ~8 steps the app's 21 ad-hoc sizes collapse into. Adopt on
+     edited components (var(--fs-*)) so the sprawl stops drifting. */
+  --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-base: 14px;
+  --fs-lg: 15px; --fs-xl: 17px; --fs-2xl: 22px; --fs-3xl: 27px;
+  /* 4px spacing scale. */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px;
   --shadow: 0 8px 24px rgba(0,0,0,.4);
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "SF Mono", "Cascadia Code", Consolas, monospace;
@@ -47,24 +55,26 @@
   --shadow: 0 8px 24px rgba(0,0,0,.42);
 }
 [data-theme="medium"] {
-  --bg: #515a66;
-  --bg-elev: #5b6470;
-  --bg-elev2: #5f6975;
-  --border: #67717f;
-  --border-soft: #5c6472;
+  /* Surfaces darkened + secondary text lifted so the mid-slate theme clears WCAG
+     AA (was: text-dim 3.47, text-faint 2.28, accent 2.07 — all failing). */
+  --bg: #454d57;
+  --bg-elev: #4f5762;
+  --bg-elev2: #545d68;
+  --border: #626c7a;
+  --border-soft: #565f6b;
   --text: #f1f4f8;
-  --text-dim: #bcc6d2;
-  --text-faint: #94a1ae;
-  --accent: #5a96ff;
-  --accent-soft: #38547d;
-  --green: #46bb59;
-  --green-soft: #2c4a35;
-  --yellow: #e1b146;
-  --yellow-soft: #4f4527;
-  --red: #ff6f67;
-  --red-soft: #56353a;
-  --purple: #b489f7;
-  --shadow: 0 8px 24px rgba(0,0,0,.38);
+  --text-dim: #d6dde6;
+  --text-faint: #c4cdd7;
+  --accent: #7aa9ff;
+  --accent-soft: #33507a;
+  --green: #57cc6a;
+  --green-soft: #29452f;
+  --yellow: #e8bb54;
+  --yellow-soft: #4a4022;
+  --red: #ff9089;
+  --red-soft: #4f3035;
+  --purple: #bd93f9;
+  --shadow: 0 8px 24px rgba(0,0,0,.42);
 }
 [data-theme="less-light"] {
   --bg: #bcbec1;
@@ -112,8 +122,11 @@ a { color: inherit; text-decoration: none; }
 .hint a { color: var(--accent); text-decoration: none; }
 .hint a:hover { text-decoration: underline; }
 button { font-family: inherit; cursor: pointer; }
-/* Visible keyboard focus ring (mouse clicks don't trigger :focus-visible). */
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Visible keyboard focus ring (mouse clicks don't trigger :focus-visible). Two-tone:
+   the non-clipping accent outline is the floor; an inner --bg ring (box-shadow) sits
+   the accent against the page background instead of an elevated surface, so it clears
+   3:1 in every theme (the plain accent outline failed on cards in the slate themes). */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 2px var(--bg); }
 
 /* ---------- Layout ---------- */
 .app { display: flex; min-height: 100vh; }
@@ -230,7 +243,9 @@ button { font-family: inherit; cursor: pointer; }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn-ghost:hover { background: var(--bg-elev2); color: var(--text); }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
-.btn:disabled { opacity: .5; cursor: not-allowed; }
+/* Disabled = a muted-but-legible neutral (overrides the primary/danger fills), not a
+   .5-opacity wash that dropped white-on-accent labels to ~2:1. */
+.btn:disabled { background: var(--bg-elev2); border-color: var(--border-soft); color: var(--text-dim); cursor: not-allowed; }
 
 /* ---------- Cards / common ---------- */
 .card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -612,4 +627,68 @@ button { font-family: inherit; cursor: pointer; }
     opacity: 0; pointer-events: none; transition: opacity .25s ease;
   }
   .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+}
+
+/* ============================================================
+   Foundation utilities (UX pass) — shared vocabulary for pages
+   ============================================================ */
+
+/* Visually hidden but read by assistive tech + usable as a label target. */
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+/* One home for the faint uppercase eyebrow (was realized ~13 different ways) and
+   the secondary caption (was muted + an inline fontSize at ~63 sites). */
+.overline { font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); }
+.caption { font-size: var(--fs-sm); color: var(--text-dim); }
+/* Unified modal header (was 8 inline fontWeight/fontSize, two drifting to 700). */
+.modal-title { font-size: var(--fs-lg); font-weight: 650; letter-spacing: -.2px; }
+
+/* ---- Skeleton loaders: reserve space + shimmer instead of flashing a zero-state ---- */
+.skeleton { position: relative; overflow: hidden; border-radius: var(--radius-sm); background: var(--bg-elev2); }
+.skeleton::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text-faint) 12%, transparent), transparent);
+  animation: skeleton-shimmer 1.3s infinite;
+}
+.skeleton-row { height: 44px; margin-bottom: 8px; }
+.skeleton-text { height: 12px; border-radius: 4px; }
+@keyframes skeleton-shimmer { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .skeleton::after { animation: none; } }
+
+/* ---- Inline empty / error state (the loading→ready→error machine renders this
+   instead of letting a dropped fetch masquerade as an empty list) ---- */
+.state-note { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 36px 24px; color: var(--text-dim); font-size: var(--fs-md); }
+.state-note svg { width: 24px; height: 24px; color: var(--text-faint); }
+.state-note.error svg { color: var(--red); }
+
+/* ---- Sticky bulk-action bar (was static at the top, off-screen when selecting
+   rows near the bottom of a long list) ---- */
+.bulk-bar { position: sticky; top: 58px; z-index: 6; }
+
+/* ---- Foldable grid utilities: inline gridTemplateColumns beat the old class-only
+   media rules, so pages can opt into these to actually collapse on mobile ---- */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.grid-sidecar { display: grid; grid-template-columns: 1fr 320px; gap: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .preset:hover, .svc-emoji:hover, .host-row:hover { transform: none; }
+}
+
+@media (max-width: 760px) {
+  .grid-2, .grid-3, .grid-sidecar { grid-template-columns: 1fr; }
+  .bulk-bar { top: 0; }
+  /* Grow the primary touch targets toward a ~44px hit area (visual size roughly kept). */
+  .range { padding: 9px 13px; }
+  .switch { width: 46px; height: 28px; }
+  .switch::after { width: 22px; height: 22px; }
+  .icon-btn { width: 40px; height: 40px; }
+  .drawer-toggle { width: 44px; height: 44px; }
+  /* Let the topbar wrap so packed detail actions don't spill off the fixed bar. */
+  .topbar { height: auto; min-height: 58px; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
+  /* Keep the wizard's own app-search visible (the blanket .search hide targets the header). */
+  .wcard .search { display: flex; }
 }

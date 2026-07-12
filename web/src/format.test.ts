@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { fmtBytes, statusColor, flag, countryName } from "./format.ts";
+import { describe, it, expect, vi } from "vitest";
+import { fmtBytes, statusColor, flag, countryName, days, plural, copyText } from "./format.ts";
 
 describe("fmtBytes", () => {
   it("scales bytes to B/KB/MB/GB with one decimal", () => {
@@ -43,5 +43,37 @@ describe("countryName", () => {
   });
   it("returns an empty string for empty input", () => {
     expect(countryName("")).toBe("");
+  });
+});
+
+describe("days", () => {
+  it("uses the singular only for exactly 1", () => {
+    expect(days(0)).toBe("0 days");
+    expect(days(1)).toBe("1 day");
+    expect(days(5)).toBe("5 days");
+  });
+});
+
+describe("plural", () => {
+  it("adds the suffix unless the count is 1", () => {
+    expect(plural("service", 1)).toBe("service");
+    expect(plural("service", 2)).toBe("services");
+    expect(plural("box", 3, "es")).toBe("boxes");
+  });
+});
+
+describe("copyText", () => {
+  it("writes to the clipboard and resolves true", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await expect(copyText("token-123")).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith("token-123");
+  });
+  it("resolves false when the clipboard write rejects", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    await expect(copyText("x")).resolves.toBe(false);
   });
 });

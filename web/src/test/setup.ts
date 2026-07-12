@@ -53,3 +53,18 @@ vi.stubGlobal("IntersectionObserver", NoopObserver);
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
+
+// jsdom doesn't implement matchMedia; usePrefersReducedMotion + any media query read it.
+// Default to "no reduced motion" (matches: false). Override per-test via vi.stubGlobal.
+if (!window.matchMedia) {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
