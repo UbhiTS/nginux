@@ -204,6 +204,25 @@ export const Icon = {
       <path d="M21 3v5h-5" />
     </S>
   ),
+  // ---- added for the icon/graphics pass (section + stat iconography) ----
+  server: (p: P) => (<S {...p}><rect x="3" y="4" width="18" height="6" rx="2" /><rect x="3" y="14" width="18" height="6" rx="2" /><path d="M7 7h.01M7 17h.01" strokeLinecap="round" /></S>),
+  key: (p: P) => (<S {...p}><circle cx="7.5" cy="15.5" r="4.5" /><path d="m10.7 12.3 8.3-8.3M16 5l3 3M13.5 7.5l2 2" strokeLinecap="round" /></S>),
+  activity: (p: P) => (<S {...p}><path d="M3 12h4l2.5 7 4-14L16 12h5" strokeLinecap="round" strokeLinejoin="round" /></S>),
+  clock: (p: P) => (<S {...p}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" strokeLinecap="round" /></S>),
+  filter: (p: P) => (<S {...p}><path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z" strokeLinejoin="round" /></S>),
+  copy: (p: P) => (<S {...p}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></S>),
+  ban: (p: P) => (<S {...p}><circle cx="12" cy="12" r="9" /><path d="m5.6 5.6 12.8 12.8" strokeLinecap="round" /></S>),
+  mail: (p: P) => (<S {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></S>),
+  bell: (p: P) => (<S {...p}><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" strokeLinejoin="round" /><path d="M13.7 21a1.9 1.9 0 0 1-3.4 0" strokeLinecap="round" /></S>),
+  database: (p: P) => (<S {...p}><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></S>),
+  edit: (p: P) => (<S {...p}><path d="M12 20h9" strokeLinecap="round" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" strokeLinejoin="round" /></S>),
+  flag: (p: P) => (<S {...p}><path d="M4 21V4M4 4h13l-2.5 4L17 12H4" strokeLinecap="round" strokeLinejoin="round" /></S>),
+  sliders: (p: P) => (<S {...p}><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" strokeLinecap="round" /></S>),
+  network: (p: P) => (<S {...p}><circle cx="12" cy="5" r="2.5" /><circle cx="5" cy="19" r="2.5" /><circle cx="19" cy="19" r="2.5" /><path d="M12 7.5v3M11 11 6.5 16.5M13 11l4.5 5.5" /></S>),
+  layers: (p: P) => (<S {...p}><path d="m12 2 9 5-9 5-9-5 9-5Z" strokeLinejoin="round" /><path d="m3.5 12 8.5 4.7 8.5-4.7M3.5 16.8 12 21.5l8.5-4.7" strokeLinejoin="round" /></S>),
+  eye: (p: P) => (<S {...p}><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" strokeLinejoin="round" /><circle cx="12" cy="12" r="3" /></S>),
+  upload: (p: P) => (<S {...p}><path d="M12 16V4M7 9l5-5 5 5M4 20h16" strokeLinecap="round" strokeLinejoin="round" /></S>),
+  plug: (p: P) => (<S {...p}><path d="M9 2v6M15 2v6M7 8h10v2a5 5 0 0 1-10 0V8ZM12 15v7" strokeLinecap="round" strokeLinejoin="round" /></S>),
 };
 
 export type IconName = keyof typeof Icon;

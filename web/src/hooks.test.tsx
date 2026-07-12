@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
-import { useAsyncData, usePrefersReducedMotion } from "./hooks.ts";
+import { useAsyncData, usePrefersReducedMotion, useCountUp } from "./hooks.ts";
 
 describe("useAsyncData", () => {
   it("starts loading, then resolves to ready with data", async () => {
@@ -43,5 +43,19 @@ describe("usePrefersReducedMotion", () => {
     const { result } = renderHook(() => usePrefersReducedMotion());
     expect(result.current).toBe(true);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("useCountUp", () => {
+  it("jumps straight to the target under reduced motion (no animation)", () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: true, media: q, addEventListener: () => {}, removeEventListener: () => {} }));
+    const { result } = renderHook(() => useCountUp(4200));
+    expect(result.current).toBe(4200);
+    vi.unstubAllGlobals();
+  });
+
+  it("eventually reaches the target when animating", async () => {
+    const { result } = renderHook(() => useCountUp(50, 20));
+    await waitFor(() => expect(result.current).toBe(50));
   });
 });

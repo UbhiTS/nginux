@@ -62,6 +62,32 @@ export function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
+/** Animate a number from 0 up to `target` on mount / when the target changes (a bit of
+ *  character on the dashboard stat tiles). Honors reduced-motion (jumps straight to the
+ *  value) and degrades to the final value if requestAnimationFrame is unavailable. */
+export function useCountUp(target: number, durationMs = 650): number {
+  const reduced = usePrefersReducedMotion();
+  const [value, setValue] = useState<number>(() => (reduced ? target : 0));
+  useEffect(() => {
+    if (reduced || typeof requestAnimationFrame !== "function") {
+      setValue(target);
+      return;
+    }
+    let raf = 0;
+    let start: number | null = null;
+    const tick = (t: number) => {
+      if (start === null) start = t;
+      const p = Math.min(1, (t - start) / durationMs);
+      const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+      setValue(Math.round(target * eased));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, durationMs, reduced]);
+  return value;
+}
+
 export type AsyncStatus = "loading" | "ready" | "error";
 export interface AsyncData<T> {
   status: AsyncStatus;

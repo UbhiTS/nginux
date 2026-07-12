@@ -692,3 +692,32 @@ button { font-family: inherit; cursor: pointer; }
   /* Keep the wizard's own app-search visible (the blanket .search hide targets the header). */
   .wcard .search { display: flex; }
 }
+
+/* ============================================================
+   Iconography + tasteful motion (UX character pass)
+   ============================================================ */
+
+/* Leading icon + title group for card/section headers. Wrap the icon+title in
+   .ch-t so the icon hugs the title on the left while any trailing badge/control
+   still sits at the right (headers are flex + space-between). */
+.ch-t { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.ch-t > svg, .card-head > svg:first-child, .section-title > svg:first-child { width: 16px; height: 16px; color: var(--text-faint); flex-shrink: 0; }
+/* The section-title icon inherits the accent on hover-less headers; keep it calm. */
+.section-title .ch-t > svg { color: var(--text-dim); }
+
+/* A stat tile with a decorative corner icon — subtle, monochrome, sits behind the value. */
+.stat { position: relative; overflow: hidden; }
+.stat > .stat-ico { position: absolute; top: 12px; right: 12px; width: 18px; height: 18px; color: var(--text-faint); opacity: .5; }
+
+/* Subtle entrance for hero/stat rows on mount. Reduced-motion → no animation. */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.animate-rise { animation: rise .34s cubic-bezier(.2,.7,.3,1) both; }
+/* Stagger children (e.g. stat tiles) for a gentle cascade. */
+.animate-rise-stagger > * { animation: rise .34s cubic-bezier(.2,.7,.3,1) both; }
+.animate-rise-stagger > *:nth-child(1) { animation-delay: 0s; }
+.animate-rise-stagger > *:nth-child(2) { animation-delay: .05s; }
+.animate-rise-stagger > *:nth-child(3) { animation-delay: .1s; }
+.animate-rise-stagger > *:nth-child(4) { animation-delay: .15s; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise, .animate-rise-stagger > * { animation: none; }
+}
