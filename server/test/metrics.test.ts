@@ -298,6 +298,25 @@ test("hostStats/hostTraffic 7d consults hour rollups (data older than ~25h is no
   assert.ok(oldWeekTraffic && oldWeekTraffic.count >= 1, "hostTraffic 7d must also surface it via hour rollups");
 });
 
+// Geo-block analytics (feature 4.10): denied-status requests grouped by country/IP.
+test("blockedAttempts groups denied (401/403/429) requests by country + top IPs", () => {
+  const now = Date.now();
+  const deny = (status: number, country: string, ip: string) => metrics.ingest({
+    ts: new Date(now).toISOString(), host: "blk.example.com", method: "GET", path: "/", status,
+    bytes: 0, bytesIn: 0, ip, country, ua: "curl", ms: 1,
+  });
+  deny(403, "RU", "5.5.5.1"); deny(403, "RU", "5.5.5.1"); deny(429, "RU", "5.5.5.2");
+  deny(401, "CN", "6.6.6.1"); deny(200, "US", "7.7.7.1"); // a 200 must NOT count as blocked
+
+  const b = metrics.blockedAttempts(12);
+  assert.ok(b.total >= 4, "counts the denied requests");
+  const ru = b.byCountry.find((c) => c.country === "RU");
+  assert.ok(ru && ru.count >= 3, "RU denied attempts grouped");
+  const topIp = b.topIps.find((t) => t.ip === "5.5.5.1");
+  assert.ok(topIp && topIp.count >= 2 && topIp.country === "RU", "top offending IP with its country");
+  assert.ok(!b.topIps.some((t) => t.ip === "7.7.7.1"), "a 200 response is not a blocked attempt");
+});
+
 // REGRESSION (audit): trafficSeries 7d used floor rounding (168h/30 → 5h/pt), so
 // it only reached back ~150h and dropped the oldest ~18h. ceil covers the window.
 test("trafficSeries 7d covers the full window (ceil rounding), including ~155h-old data", () => {

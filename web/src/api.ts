@@ -124,6 +124,7 @@ export const api = {
     req<AuditEvent[]>(`/audit?${type ? `type=${type}&` : ""}limit=${limit}`),
   securityOverview: () => req<SecurityOverview>("/security/overview"),
   exposure: () => req<Exposure[]>("/security/exposure"),
+  blockedAttempts: () => req<BlockedAttempts>("/security/blocked"),
   bans: () => req<Ban[]>("/bans"),
   addBan: (ip: string, reason?: string) => req<Ban>("/bans", { method: "POST", body: JSON.stringify({ ip, reason }) }),
   removeBan: (ip: string) => req<{ ok: boolean }>(`/bans/${encodeURIComponent(ip)}`, { method: "DELETE" }),
@@ -495,6 +496,13 @@ export interface SecurityOverview {
   unprotected: number;
   failedLogins24h: number;
   activeSessions: number;
+}
+
+export interface BlockedAttempts {
+  total: number;
+  byCountry: { country: string; count: number }[];
+  topIps: { ip: string; count: number; country: string }[];
+  allowedCountries: string[];
 }
 
 export interface Ban {

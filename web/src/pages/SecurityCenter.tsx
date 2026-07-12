@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type AuditEvent, type Ban, type Exposure, type SecurityOverview } from "../api.ts";
+import { api, type AuditEvent, type Ban, type BlockedAttempts, type Exposure, type SecurityOverview } from "../api.ts";
 import type { SecurityProfile } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ServiceIcon } from "../components/ServiceIcon.tsx";
@@ -23,12 +23,14 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [bans, setBans] = useState<Ban[]>([]);
   const [banIp, setBanIp] = useState("");
+  const [blocked, setBlocked] = useState<BlockedAttempts | null>(null);
 
   const loadBans = () => api.bans().then(setBans).catch(() => {});
   useEffect(() => {
     api.securityOverview().then(setOverview).catch(() => {});
     api.exposure().then(setExposure).catch(() => {});
     api.audit(undefined, 50).then(setEvents).catch(() => {});
+    api.blockedAttempts().then(setBlocked).catch(() => {});
     loadBans();
   }, []);
 
@@ -109,6 +111,40 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
                 ))}
               </div>
             </div>
+
+            {blocked && blocked.total > 0 && (
+              <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", marginTop: 18 }}>
+                <div className="card">
+                  <div className="card-head">Blocked attempts by country <span className="muted" style={{ fontWeight: 400 }}>· {blocked.total} denied recently</span></div>
+                  <div className="atable">
+                    {blocked.byCountry.map((c) => (
+                      <div key={c.country} className="arow" style={{ gridTemplateColumns: "1fr auto" }}>
+                        <div>
+                          {c.country || "—"}
+                          {blocked.allowedCountries.length > 0 && !blocked.allowedCountries.includes(c.country) && (
+                            <span className="pill r" style={{ marginLeft: 8 }}>geo-blocked</span>
+                          )}
+                        </div>
+                        <div className="mono">{c.count}</div>
+                      </div>
+                    ))}
+                    {blocked.byCountry.length === 0 && <div className="placeholder"><p>No country data for blocked requests.</p></div>}
+                  </div>
+                </div>
+                <div className="card">
+                  <div className="card-head">Top blocked IPs</div>
+                  <div className="atable">
+                    {blocked.topIps.map((t) => (
+                      <div key={t.ip} className="arow" style={{ gridTemplateColumns: "1fr auto auto", gap: 12 }}>
+                        <div className="mono">{t.ip}</div>
+                        <div className="muted">{t.country || "—"}</div>
+                        <button className="btn btn-ghost btn-sm" title="Ban this IP" onClick={async () => { await api.addBan(t.ip, "Blocked-attempt source"); loadBans(); }}>Ban</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 

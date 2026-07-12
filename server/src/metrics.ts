@@ -444,6 +444,34 @@ export function hostSummary(domain: string, range: string) {
   };
 }
 
+/** Recent DENIED requests (401 auth, 403 geo/IP/exploit block, 429 rate limit)
+ *  grouped by source country + top offending IPs, from the in-memory ring. Powers
+ *  the "blocked attempts" security view - a country lock's 403s land here. */
+export function blockedAttempts(limit = 12): {
+  total: number;
+  byCountry: { country: string; count: number }[];
+  topIps: { ip: string; count: number; country: string }[];
+} {
+  const DENIED = new Set([401, 403, 429]);
+  const byCountry = new Map<string, number>();
+  const byIp = new Map<string, { count: number; country: string }>();
+  let total = 0;
+  for (const e of ring) {
+    if (!DENIED.has(e.status)) continue;
+    total++;
+    if (e.country) byCountry.set(e.country, (byCountry.get(e.country) ?? 0) + 1);
+    const cur = byIp.get(e.ip) ?? { count: 0, country: e.country ?? "" };
+    cur.count++;
+    if (!cur.country && e.country) cur.country = e.country;
+    byIp.set(e.ip, cur);
+  }
+  return {
+    total,
+    byCountry: [...byCountry.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([country, count]) => ({ country, count })),
+    topIps: [...byIp.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, limit).map(([ip, v]) => ({ ip, count: v.count, country: v.country })),
+  };
+}
+
 export function summary() {
   const errors = statusClass["4xx"] + statusClass["5xx"];
   const sorted = sortedMs();

@@ -20,7 +20,7 @@ import {
 } from "./repo.ts";
 import { applyConfig, generateHostConfig, generateStreamConfig, previewConfigForHosts, redactConfig } from "./nginx.ts";
 import { buildNotifications } from "./notifications.ts";
-import { deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
+import { activeAllowedCountries, deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
 import {
   adminSetPassword,
   beginTwofaSetup,
@@ -100,6 +100,7 @@ import {
   rangeSummary as metricsRangeSummary,
   hostSummary as metricsHostSummary,
   trafficSeries,
+  blockedAttempts,
 } from "./metrics.ts";
 import { getUptime, startUptimeMonitor } from "./uptime.ts";
 import { rotateLogsNow, startLogRotation } from "./logrotate.ts";
@@ -1365,6 +1366,13 @@ app.get("/api/audit", async (req, reply) => {
 });
 app.get("/api/security/overview", async (req, reply) => requireRole(req, reply, "admin", "editor") ? securityOverview() : undefined);
 app.get("/api/security/exposure", async (req, reply) => requireRole(req, reply, "admin", "editor") ? securityExposure() : undefined);
+// Geo-block analytics: recent denied requests (auth / geo / IP / exploit / rate)
+// by country + top offending IPs, plus the current country allow-list. Admin/editor
+// (carries client IPs), matching the other security feeds.
+app.get("/api/security/blocked", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return undefined;
+  return { ...blockedAttempts(12), allowedCountries: activeAllowedCountries() };
+});
 
 // ---------- IP bans (fail2ban-style) ----------
 app.get("/api/bans", async (req, reply) => requireRole(req, reply, "admin", "editor") ? listBans() : undefined);
