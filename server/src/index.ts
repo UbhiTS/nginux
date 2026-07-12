@@ -18,7 +18,7 @@ import {
   listHosts,
   updateHost,
 } from "./repo.ts";
-import { applyConfig, generateHostConfig, generateStreamConfig, redactConfig } from "./nginx.ts";
+import { applyConfig, generateHostConfig, generateStreamConfig, previewConfigForHosts, redactConfig } from "./nginx.ts";
 import { buildNotifications } from "./notifications.ts";
 import { deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
 import {
@@ -605,6 +605,43 @@ app.delete("/api/hosts/:id", async (req, reply) => {
   void syncGitOps(`Remove a service`);
   logEvent({ type: "host.deleted", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Removed a service`, ip: clientIp(req), meta: { id } });
   return { ok: true, apply };
+});
+
+// Config-diff preview ("see exactly what changes"): generate the nginx config a
+// proposed create/update/delete WOULD produce and diff it against what's live,
+// WITHOUT writing or reloading. Admin/editor only - the diff spans the whole
+// config set (every host's file), so it's the same sensitivity as the metrics feeds.
+const previewInput = z.object({
+  mode: z.enum(["create", "update", "delete"]),
+  id: z.string().optional(),
+  host: z.record(z.unknown()).optional(),
+});
+app.post("/api/config/preview", async (req, reply) => {
+  if (!userRoleAtLeast(req, reply, "admin", "editor")) return undefined;
+  const parsedReq = previewInput.safeParse(req.body);
+  if (!parsedReq.success) return reply.code(400).send({ error: parsedReq.error.issues });
+  const { mode, id, host } = parsedReq.data;
+  const hosts = listHosts();
+  let candidateHosts: ProxyHost[];
+
+  if (mode === "delete") {
+    if (!id || !getHost(id)) return reply.code(404).send({ error: "Service not found" });
+    candidateHosts = hosts.filter((h) => h.id !== id);
+  } else if (mode === "update") {
+    if (!id) return reply.code(400).send({ error: "id is required to preview an update." });
+    const existing = getHost(id);
+    if (!existing) return reply.code(404).send({ error: "Service not found" });
+    const parsed = hostInput.partial().safeParse(host ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+    const merged = { ...existing, ...parsed.data } as ProxyHost;
+    candidateHosts = hosts.map((h) => (h.id === id ? merged : h));
+  } else { // create
+    const parsed = hostInput.safeParse(host ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+    const candidate = { ...parsed.data, id: "__preview__", health: "unknown", certExpiresAt: null, createdAt: "", updatedAt: "" } as ProxyHost;
+    candidateHosts = [...hosts, candidate];
+  }
+  return previewConfigForHosts(candidateHosts);
 });
 
 // per-host mTLS client certificates

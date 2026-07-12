@@ -1,5 +1,6 @@
 import type {
   ApplyResult,
+  ConfigPreview,
   Preset,
   ProxyHost,
   Settings,
@@ -54,6 +55,10 @@ export const api = {
     }),
   deleteHost: (id: string) =>
     req<{ ok: boolean; apply: ApplyResult }>(`/hosts/${id}`, { method: "DELETE" }),
+  // Dry-run the nginx-config change a create/update/delete would produce, without
+  // writing or reloading. Powers the "see exactly what changes" preview.
+  previewConfig: (body: { mode: "create" | "update" | "delete"; id?: string; host?: Partial<ProxyHost> }) =>
+    req<ConfigPreview>("/config/preview", { method: "POST", body: JSON.stringify(body) }),
   hostConfig: (id: string) =>
     fetch(`/api/hosts/${id}/config`).then((r) => r.text()),
   testConnection: (host: string, port: number) =>

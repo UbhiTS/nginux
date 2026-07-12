@@ -5,6 +5,7 @@ import type { Preset, ProxyHost, Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 import { CertDetailModal } from "../components/CertDetailModal.tsx";
+import { ConfigDiffModal } from "../components/ConfigDiffModal.tsx";
 import { ServiceIcon } from "../components/ServiceIcon.tsx";
 import { HostAnalytics } from "../components/HostAnalytics.tsx";
 
@@ -467,6 +468,8 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
   onCertsChanged: () => void;
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
+  // "Preview changes": dry-run the nginx-config diff this edit would produce.
+  const [showDiff, setShowDiff] = useState(false);
   // Logo picker: search the dashboard-icons catalog (debounced) for a real app logo.
   const [iconQuery, setIconQuery] = useState("");
   const [iconResults, setIconResults] = useState<{ name: string; url: string }[]>([]);
@@ -773,8 +776,19 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       )}
       <div className="wnav">
         <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+        <button className="btn" onClick={() => setShowDiff(true)} disabled={saving}>Preview changes</button>
         <button className="btn btn-primary" onClick={onSave} disabled={saving}>{saving ? <span className="spinner" /> : null}Save changes</button>
       </div>
+      {showDiff && (
+        <ConfigDiffModal
+          mode="update"
+          id={draft.id}
+          host={draft}
+          confirmLabel="Save changes"
+          onClose={() => setShowDiff(false)}
+          onConfirm={() => { setShowDiff(false); onSave(); }}
+        />
+      )}
     </div>
   );
 }

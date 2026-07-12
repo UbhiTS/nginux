@@ -210,3 +210,40 @@ test("PUT /api/hosts/:id: port-only edit that repoints the portal domain off the
   assert.equal(ok.statusCode, 200, "an unrelated field edit on the portal host must still succeed");
   saveSettings({ ssoLoginUrl: "" }); // restore default so later tests aren't affected
 });
+
+// ---------------------------------------------------------------------------
+// (11) Config-diff preview (feature): dry-run a create/update/delete and return
+// the nginx-config diff WITHOUT writing or reloading. Admin/editor only (the diff
+// spans every host's file); bad input is 400; an unknown id is 404.
+// ---------------------------------------------------------------------------
+test("POST /api/config/preview: a create dry-run returns the added config file, without persisting", async () => {
+  const admin = cookieFor(makeUser("admin"));
+  const r = await post("/api/config/preview", admin, {
+    mode: "create",
+    host: createPayload({ name: "previewsvc", domain: "preview-new.example.com" }),
+  });
+  assert.equal(r.statusCode, 200, "an admin may preview a create");
+  const body = r.json() as { changed: boolean; files: Array<{ name: string; status: string; additions: number }> };
+  const added = body.files.find((f) => f.name === "preview-new.example.com.conf");
+  assert.ok(added && added.status === "added", "the proposed host's file must show as added");
+  assert.ok(added.additions > 0, "an added file has additions");
+  // Preview must NOT have created the host.
+  const list = await app.inject({ method: "GET", url: "/api/hosts", headers: { cookie: admin } });
+  assert.ok(!(list.json() as Array<{ domain: string }>).some((h) => h.domain === "preview-new.example.com"), "preview must not persist the host");
+});
+
+test("POST /api/config/preview: a scoped user is forbidden (diff spans all hosts)", async () => {
+  const r = await post("/api/config/preview", cookieFor(makeUser("scoped", "whatever")), {
+    mode: "create", host: createPayload({ domain: "nope.example.com" }),
+  });
+  assert.equal(r.statusCode, 403, "a scoped user must not preview the whole config set");
+});
+
+test("POST /api/config/preview: invalid proposed host is 400; unknown update id is 404", async () => {
+  const admin = cookieFor(makeUser("admin"));
+  const bad = await post("/api/config/preview", admin, { mode: "create", host: { name: "a;b{}", domain: "x.example.com", forwardHost: "1.2.3.4", forwardPort: 3000 } });
+  assert.equal(bad.statusCode, 400, "an injection-laden proposed host must be rejected");
+
+  const missing = await post("/api/config/preview", admin, { mode: "update", id: "no-such-host", host: { forwardPort: 3001 } });
+  assert.equal(missing.statusCode, 404, "previewing an update to a nonexistent host is 404");
+});

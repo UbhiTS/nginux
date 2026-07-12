@@ -348,16 +348,13 @@ export interface WriteResult {
   rollback: () => void;
 }
 
-export function writeAllConfigs(): WriteResult {
-  if (!existsSync(CONF_DIR)) mkdirSync(CONF_DIR, { recursive: true });
-  if (!existsSync(STREAM_DIR)) mkdirSync(STREAM_DIR, { recursive: true });
-  // Refresh the country-lock include from current settings + DB presence.
-  writeGeoipConf();
-
-  // Build the full desired set (absolute path -> content) first.
+/** Build the full desired config set (absolute path -> content) for a given host
+ *  list WITHOUT touching disk. Pure - the single generator shared by writeAllConfigs
+ *  (persist) and the preview/dry-run path (diff a proposed change before applying). */
+export function buildDesiredConfigs(hosts: ProxyHost[]): Map<string, string> {
   const desired = new Map<string, string>();
   const sniHosts: ProxyHost[] = [];
-  for (const h of listHosts()) {
+  for (const h of hosts) {
     if (!h.enabled) continue;
     if (h.protocol === "sni") { sniHosts.push(h); continue; }
     const isStream = h.protocol === "tcp" || h.protocol === "udp";
@@ -367,6 +364,16 @@ export function writeAllConfigs(): WriteResult {
   if (sniHosts.length) {
     desired.set(join(STREAM_DIR, "_sni_passthrough.conf"), generateSniPassthrough(sniHosts));
   }
+  return desired;
+}
+
+export function writeAllConfigs(): WriteResult {
+  if (!existsSync(CONF_DIR)) mkdirSync(CONF_DIR, { recursive: true });
+  if (!existsSync(STREAM_DIR)) mkdirSync(STREAM_DIR, { recursive: true });
+  // Refresh the country-lock include from current settings + DB presence.
+  writeGeoipConf();
+
+  const desired = buildDesiredConfigs(listHosts());
 
   // Capture the prior content of every managed .conf we touch, so a failed
   // `nginx -t` can be rolled back ON DISK by applyConfigInner. Without this, an
@@ -397,6 +404,92 @@ export function writeAllConfigs(): WriteResult {
     }
   };
   return { files: [...desired.keys()], rollback };
+}
+
+// ---------------------------------------------------------------------------
+// Config diff / preview - "see exactly what changes" before writing + reloading.
+// Pure and dependency-free: generate the config a proposed host set WOULD produce,
+// compare against what's on disk now, and return a per-file unified diff. The real
+// `nginx -t` still runs at apply time (with automatic rollback on failure).
+// ---------------------------------------------------------------------------
+
+/** Current on-disk managed configs (conf.d + stream.d), absolute path -> content. */
+export function readManagedConfigs(): Map<string, string> {
+  const live = new Map<string, string>();
+  for (const dir of [CONF_DIR, STREAM_DIR]) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".conf")) continue;
+      const c = safeRead(join(dir, f));
+      if (c !== null) live.set(join(dir, f), c);
+    }
+  }
+  return live;
+}
+
+/** Line-based longest-common-subsequence, so the diff shows minimal changed
+ *  lines instead of "whole file replaced". Returns unified-style +/- text plus
+ *  the add/remove line counts. */
+export function unifiedLineDiff(oldStr: string, newStr: string): { text: string; additions: number; deletions: number } {
+  const a = oldStr === "" ? [] : oldStr.replace(/\n$/, "").split("\n");
+  const b = newStr === "" ? [] : newStr.replace(/\n$/, "").split("\n");
+  // LCS table (rows a, cols b). Bounded by config-file size, so O(a*b) is fine.
+  const m = a.length, n = b.length;
+  const lcs: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const out: string[] = [];
+  let additions = 0, deletions = 0, i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { out.push("  " + a[i]); i++; j++; }
+    else if (lcs[i + 1][j] >= lcs[i][j + 1]) { out.push("- " + a[i]); deletions++; i++; }
+    else { out.push("+ " + b[j]); additions++; j++; }
+  }
+  while (i < m) { out.push("- " + a[i]); deletions++; i++; }
+  while (j < n) { out.push("+ " + b[j]); additions++; j++; }
+  return { text: out.join("\n"), additions, deletions };
+}
+
+export interface ConfigFileDiff {
+  name: string;                                  // basename shown in the UI
+  status: "added" | "modified" | "removed";
+  additions: number;
+  deletions: number;
+  diff: string;
+}
+export interface ConfigPreview {
+  changed: boolean;
+  files: ConfigFileDiff[];
+}
+
+/** Diff the config a proposed host list WOULD produce against what's live now. */
+export function previewConfigForHosts(hosts: ProxyHost[]): ConfigPreview {
+  const desired = buildDesiredConfigs(hosts);
+  const live = readManagedConfigs();
+  const files: ConfigFileDiff[] = [];
+  const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
+  for (const [path, content] of desired) {
+    const current = live.get(path);
+    if (current === undefined) {
+      const d = unifiedLineDiff("", content);
+      files.push({ name: base(path), status: "added", additions: d.additions, deletions: 0, diff: d.text });
+    } else if (current !== content) {
+      const d = unifiedLineDiff(current, content);
+      files.push({ name: base(path), status: "modified", additions: d.additions, deletions: d.deletions, diff: d.text });
+    }
+  }
+  for (const [path, content] of live) {
+    if (!desired.has(path)) {
+      const d = unifiedLineDiff(content, "");
+      files.push({ name: base(path), status: "removed", additions: 0, deletions: d.deletions, diff: d.text });
+    }
+  }
+  files.sort((x, y) => x.name.localeCompare(y.name));
+  return { changed: files.length > 0, files };
 }
 
 async function nginxInstalled(): Promise<boolean> {

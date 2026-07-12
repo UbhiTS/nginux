@@ -129,6 +129,18 @@ export interface ApplyResult {
   nginxAvailable: boolean;
 }
 
+export interface ConfigFileDiff {
+  name: string;
+  status: "added" | "modified" | "removed";
+  additions: number;
+  deletions: number;
+  diff: string;
+}
+export interface ConfigPreview {
+  changed: boolean;
+  files: ConfigFileDiff[];
+}
+
 /** Map a health status to the dot/pill colour class used in the design system. */
 export const healthClass: Record<HealthStatus, "g" | "y" | "r" | "n"> = {
   online: "g",
