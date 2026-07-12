@@ -46,6 +46,8 @@ export function Services({
 }) {
   const [toggling, setToggling] = useState<string | null>(null);
   const [certs, setCerts] = useState<Certificate[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
   useEffect(() => { api.certificates().then(setCerts).catch(() => {}); }, []);
 
   // Flip a service between served (enabled) and paused (disabled). Disabling
@@ -60,6 +62,28 @@ export function Services({
     }
   };
 
+  const toggleSel = (id: string) => setSelected((s) => {
+    const next = new Set(s);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const allSelected = hosts.length > 0 && selected.size === hosts.length;
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(hosts.map((h) => h.id)));
+
+  const runBulk = async (action: "enable" | "disable" | "maintenance-on" | "maintenance-off" | "delete") => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (action === "delete" && !confirm(`Delete ${ids.length} service${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      await api.batchHosts(ids, action);
+      setSelected(new Set());
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <div className="topbar">
@@ -71,8 +95,23 @@ export function Services({
         </button>
       </div>
       <div className="content">
+        {selected.size > 0 && (
+          <div className="card card-pad" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <b style={{ fontSize: 13 }}>{selected.size} selected</b>
+            <div style={{ flex: 1 }} />
+            <button className="btn btn-sm" disabled={busy} onClick={() => runBulk("enable")}>Enable</button>
+            <button className="btn btn-sm" disabled={busy} onClick={() => runBulk("disable")}>Pause</button>
+            <button className="btn btn-sm" disabled={busy} onClick={() => runBulk("maintenance-on")}>Maintenance on</button>
+            <button className="btn btn-sm" disabled={busy} onClick={() => runBulk("maintenance-off")}>Maintenance off</button>
+            <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => runBulk("delete")}>Delete</button>
+            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setSelected(new Set())}>Clear</button>
+          </div>
+        )}
         <div className="card">
-          <div className="col-head">
+          <div className="col-head" style={{ gridTemplateColumns: "34px 1fr 1fr 1fr 1fr auto" }}>
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all services" />
+            </div>
             <div>Service</div>
             <div>Status</div>
             <div>Certificate</div>
@@ -84,13 +123,17 @@ export function Services({
             return (
               <div
                 key={h.id}
-                className={`host-row${h.enabled ? "" : " is-paused"}`}
+                className={`host-row${h.enabled ? "" : " is-paused"}${selected.has(h.id) ? " is-selected" : ""}`}
+                style={{ gridTemplateColumns: "34px 1fr 1fr 1fr 1fr auto" }}
                 role="button"
                 tabIndex={0}
                 aria-label={`Open ${h.name}`}
                 onClick={() => navigate({ name: "host", hostId: h.id })}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: h.id }); } }}
               >
+                <div style={{ display: "flex", alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={selected.has(h.id)} onChange={() => toggleSel(h.id)} aria-label={`Select ${h.name}`} />
+                </div>
                 <div className="host-main">
                   <div className="host-icon"><ServiceIcon iconUrl={h.iconUrl} size={26} /></div>
                   <div>

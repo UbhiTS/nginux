@@ -652,6 +652,44 @@ app.delete("/api/hosts/:id", async (req, reply) => {
   return { ok: true, apply };
 });
 
+// Bulk actions on many services at once (enable/disable/maintenance/delete),
+// with ONE snapshot + ONE nginx reload for the whole batch instead of N. Admin/
+// editor only, matching the single-host mutation + delete routes.
+app.post("/api/hosts/batch", async (req, reply) => {
+  if (!requireRole(req, reply, "admin", "editor")) return;
+  const parsed = z.object({
+    ids: z.array(z.string().max(64)).min(1).max(500),
+    action: z.enum(["enable", "disable", "maintenance-on", "maintenance-off", "delete"]),
+  }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const { ids, action } = parsed.data;
+  const actor = currentUser(req)?.username ?? "system";
+  snapshot(`Bulk ${action} on ${ids.length} service(s)`, actor);
+
+  let affected = 0;
+  for (const id of ids) {
+    const h = getHost(id);
+    if (!h) continue;
+    if (action === "delete") {
+      if (deleteHost(id)) { try { deleteCert(h.domain); } catch { /* best effort */ } affected++; }
+    } else {
+      const patch = action === "enable" ? { enabled: true }
+        : action === "disable" ? { enabled: false }
+        : action === "maintenance-on" ? { maintenanceMode: true }
+        : { maintenanceMode: false };
+      if (updateHost(id, patch)) affected++;
+    }
+  }
+  const apply = await applyConfig();
+  void syncGitOps(`Bulk ${action} (${affected} service${affected === 1 ? "" : "s"})`);
+  logEvent({
+    type: action === "delete" ? "host.deleted" : "host.updated",
+    severity: action === "delete" ? "warn" : "notice",
+    actor, summary: `Bulk ${action} on ${affected} service${affected === 1 ? "" : "s"}`, ip: clientIp(req), meta: { action, affected },
+  });
+  return { affected, apply };
+});
+
 // Config-diff preview ("see exactly what changes"): generate the nginx config a
 // proposed create/update/delete WOULD produce and diff it against what's live,
 // WITHOUT writing or reloading. Admin/editor only - the diff spans the whole

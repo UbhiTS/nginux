@@ -455,6 +455,7 @@ button { font-family: inherit; cursor: pointer; }
 .host-row { border-bottom: 1px solid var(--border-soft); cursor: pointer; transition: background .12s; font-size: 13px; }
 .host-row:last-child { border-bottom: none; }
 .host-row:hover { background: var(--bg-elev2); }
+.host-row.is-selected { background: var(--accent-soft, var(--bg-elev2)); }
 .host-row > button { justify-self: end; }
 .host-row > .switch { justify-self: center; }
 .host-row.is-paused .host-main, .host-row.is-paused .host-meta { opacity: .5; }

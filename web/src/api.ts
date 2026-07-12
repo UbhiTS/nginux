@@ -55,6 +55,9 @@ export const api = {
     }),
   deleteHost: (id: string) =>
     req<{ ok: boolean; apply: ApplyResult }>(`/hosts/${id}`, { method: "DELETE" }),
+  // Apply one action to many services with a single reload.
+  batchHosts: (ids: string[], action: "enable" | "disable" | "maintenance-on" | "maintenance-off" | "delete") =>
+    req<{ affected: number; apply: ApplyResult }>("/hosts/batch", { method: "POST", body: JSON.stringify({ ids, action }) }),
   // Dry-run the nginx-config change a create/update/delete would produce, without
   // writing or reloading. Powers the "see exactly what changes" preview.
   previewConfig: (body: { mode: "create" | "update" | "delete"; id?: string; host?: Partial<ProxyHost> }) =>

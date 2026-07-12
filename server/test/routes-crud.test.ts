@@ -297,6 +297,39 @@ test("require2faForManagers confines a manager without 2FA to the enrollment flo
   saveSettings({ require2faForManagers: false });
 });
 
+// ---------------------------------------------------------------------------
+// (14) Bulk actions (feature 4.5): one action across many services, admin/editor
+// only, with a single reload. delete/disable/maintenance verified.
+// ---------------------------------------------------------------------------
+test("POST /api/hosts/batch applies one action to many services (admin/editor only)", async () => {
+  const a = createHost(makeHost({ id: "bulk-a", name: "bulka", domain: "bulk-a.example.com", enabled: true, maintenanceMode: false }));
+  const b = createHost(makeHost({ id: "bulk-b", name: "bulkb", domain: "bulk-b.example.com", enabled: true, maintenanceMode: false }));
+  const admin = cookieFor(makeUser("admin"));
+
+  // A readonly user is refused.
+  const ro = await post("/api/hosts/batch", cookieFor(makeUser("readonly")), { ids: [a.id], action: "disable" });
+  assert.equal(ro.statusCode, 403, "readonly may not run bulk actions");
+
+  // Disable both in one call.
+  const dis = await post("/api/hosts/batch", admin, { ids: [a.id, b.id], action: "disable" });
+  assert.equal(dis.statusCode, 200);
+  assert.equal((dis.json() as { affected: number }).affected, 2, "both services affected");
+  const after = await app.inject({ method: "GET", url: "/api/hosts", headers: { cookie: admin } });
+  const rows = after.json() as Array<{ id: string; enabled: boolean }>;
+  assert.equal(rows.find((h) => h.id === a.id)?.enabled, false, "a disabled");
+  assert.equal(rows.find((h) => h.id === b.id)?.enabled, false, "b disabled");
+
+  // Maintenance on for one, then delete both.
+  const maint = await post("/api/hosts/batch", admin, { ids: [a.id], action: "maintenance-on" });
+  assert.equal((maint.json() as { affected: number }).affected, 1);
+
+  const del = await post("/api/hosts/batch", admin, { ids: [a.id, b.id], action: "delete" });
+  assert.equal((del.json() as { affected: number }).affected, 2, "both deleted");
+  const gone = await app.inject({ method: "GET", url: "/api/hosts", headers: { cookie: admin } });
+  const remaining = gone.json() as Array<{ id: string }>;
+  assert.ok(!remaining.some((h) => h.id === a.id || h.id === b.id), "both services removed");
+});
+
 test("require2faForManagers leaves read-only/scoped users and enrolled managers alone", async () => {
   saveSettings({ require2faForManagers: true });
   // A readonly user is not a manager -> unaffected.
