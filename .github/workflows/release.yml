@@ -38,6 +38,16 @@ jobs:
       - run: npm ci
       - run: npm run typecheck --workspace server
       - run: npm run test --workspace server
+      # Prove the data-plane boundary end-to-end: real nginx, fed the app's own generated
+      # config, must never let an under-authenticated request reach a backend. nginx-full
+      # ships the auth_request module; the harness assembles its own module-free wrapper.
+      - name: Install nginx (real-nginx integration test)
+        run: sudo apt-get update && sudo apt-get install -y nginx-full
+      - name: Data-plane integration test (forward-auth boundary through real nginx)
+        env:
+          NGINUX_NGINX_BIN: /usr/sbin/nginx
+          NGINUX_REQUIRE_NGINX: "1"   # a missing nginx must FAIL the release gate, not skip
+        run: npm run test:integration --workspace server
       - run: npx tsc --noEmit
         working-directory: web
       - run: npm run test --workspace web

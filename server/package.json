@@ -9,7 +9,8 @@
     "start": "node --experimental-sqlite --disable-warning=ExperimentalWarning src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-sqlite --disable-warning=ExperimentalWarning \"test/**/*.test.ts\"",
-    "test:coverage": "node --test --experimental-test-coverage --experimental-sqlite --disable-warning=ExperimentalWarning \"test/**/*.test.ts\""
+    "test:coverage": "node --test --experimental-test-coverage --experimental-sqlite --disable-warning=ExperimentalWarning \"test/**/*.test.ts\"",
+    "test:integration": "node --test --experimental-sqlite --disable-warning=ExperimentalWarning \"test/integration/**/*.itest.ts\""
   },
   "dependencies": {
     "@fastify/static": "^9.1.3",
