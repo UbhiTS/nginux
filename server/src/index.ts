@@ -108,15 +108,12 @@ import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert, wri
 import { generateSniPassthrough } from "./nginx.ts";
 import {
   assertSafeOutboundUrl,
-  hasNginxMetachars,
   isDangerousHost,
-  isHeaderName,
   isHost,
-  isHostPort,
   isHostname,
   isIpOrCidr,
-  isLocationPath,
 } from "./validate.ts";
+import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
 import {
   createChannel,
   deleteChannel,
@@ -393,87 +390,9 @@ function requireRoleOrScope(req: FastifyRequest, reply: FastifyReply, roles: Rol
 }
 
 // ---------- validation ----------
-const splitEntries = (s: string): string[] => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
-const splitLines = (s: string): string[] => s.split("\n").map((x) => x.trim()).filter(Boolean);
-
-// Each entry of an IP allow/deny list must be a valid IP or CIDR.
-const ipListField = z.string().default("").refine(
-  (s) => splitEntries(s).every(isIpOrCidr),
-  "IP allow/deny entries must be valid IPv4/IPv6 addresses or CIDRs.",
-);
-// "Name: value" per line; header name must be a token, value free of CR/LF.
-const customHeadersField = z.string().default("").refine(
-  (s) => splitLines(s).every((line) => {
-    const i = line.indexOf(":");
-    // Reject CR/LF (response splitting) AND " (would close the quoted nginx
-    // add_header string and inject a directive).
-    return i > 0 && isHeaderName(line.slice(0, i).trim()) && !/[\n\r"]/.test(line.slice(i + 1));
-  }),
-  'Custom headers must be "Header-Name: value" per line (no quotes).',
-);
-// "/path host:port" per line - both parts strictly validated (config injection sink).
-const pathRulesField = z.string().default("").refine(
-  (s) => splitLines(s).every((line) => {
-    const [p, t, ...rest] = line.split(/\s+/);
-    return rest.length === 0 && isLocationPath(p) && isHostPort(t);
-  }),
-  'Path rules must be "/path host:port" per line.',
-);
-// Extra upstream targets, "host:port" per line.
-const upstreamsField = z.string().default("").refine(
-  (s) => splitLines(s).every(isHostPort),
-  'Upstream targets must be "host:port" per line.',
-);
-// Raw nginx directives are admin-only (enforced in the route) and may never
-// contain block braces, which would let a value break out of the location block.
-const customNginxField = z.string().default("").refine(
-  (s) => !/[{}]/.test(s),
-  "Custom nginx directives may not contain { or }.",
-);
-
-const hostInput = z.object({
-  name: z.string().min(1).max(100).refine((s) => !hasNginxMetachars(s), "Name may not contain ; { } or line breaks."),
-  iconUrl: z.string().max(4096).refine((s) => s === "" || /^https:\/\/cdn\.jsdelivr\.net\//.test(s) || /^data:image\//.test(s), "Icon must be a dashboard-icons URL or an uploaded image.").default(""),
-  domain: z.string().min(1).max(253).refine(isHostname, "Invalid domain/hostname."),
-  forwardScheme: z.enum(["http", "https"]).default("http"),
-  forwardHost: z.string().min(1).refine(isHost, "Invalid forward host (must be a hostname or IP)."),
-  forwardPort: z.number().int().min(1).max(65535),
-  preset: z.string().max(64).default("custom"),
-  websockets: z.boolean().default(false),
-  http2: z.boolean().default(true),
-  ssl: z.boolean().default(true),
-  requireLogin: z.boolean().default(false),
-  require2fa: z.boolean().default(false),
-  countryLock: z.boolean().default(false),
-  serverGroup: z.string().max(64).default("default"),
-  serverIp: z.string().max(64).default("").refine((s) => s === "" || isHost(s), "Invalid server IP."),
-  enabled: z.boolean().default(true),
-  // Which certificate to serve (empty = per-domain). Used as a cert-dir path
-  // segment, so constrain to a safe charset and forbid traversal.
-  certDomain: z.string().max(253).default("").refine(
-    (s) => s === "" || (/^[a-z0-9.*_-]+$/i.test(s) && !s.includes("..")),
-    "Invalid certificate selection.",
-  ),
-  maintenanceMode: z.boolean().default(false),
-  securityHeaders: z.boolean().default(true),
-  hsts: z.boolean().default(false),
-  rateLimit: z.boolean().default(false),
-  rateLimitRps: z.number().int().min(1).max(10000).default(10),
-  rateLimitBurst: z.number().int().min(0).max(100000).default(20),
-  blockExploits: z.boolean().default(true), // secure-by-default for new services
-  ipAllow: ipListField,
-  ipDeny: ipListField,
-  customHeaders: customHeadersField,
-  customNginx: customNginxField,
-  upstreams: upstreamsField,
-  lbMethod: z.enum(["round_robin", "least_conn", "ip_hash"]).default("round_robin"),
-  protocol: z.enum(["http", "tcp", "udp", "grpc", "sni"]).default("http"),
-  listenPort: z.number().int().min(0).max(65535).default(0),
-  pathRules: pathRulesField,
-  mtls: z.boolean().default(false),
-  rateLimitKbps: z.number().int().min(0).max(1_000_000).default(0),
-  maxConns: z.number().int().min(0).max(100_000).default(0),
-});
+// The host-write schema (`hostInput`) + its field predicates live in
+// hostschema.ts, shared verbatim with the agent/MCP tool path so the two can't
+// drift. See that module for the injection-boundary rationale.
 
 // A domain used as a filesystem path segment (certs) must be a plain hostname.
 const domainParam = z.string().min(1).max(253).refine(isHostname, "Invalid domain.");
@@ -580,22 +499,8 @@ function streamPortError(h: { protocol: string; listenPort: number; name?: strin
   return null;
 }
 /** A host must not claim the control plane's own public hostname (self-hijack). */
-// True when exposing `domain` would hijack the domain NginUX itself runs on
-// (Settings → public URL) away from the control plane. Forwarding that domain TO
-// the control plane (port 6767) is allowed - that's the recommended SSO portal
-// setup (expose NginUX on its own subdomain so login-gated services can sign in).
-function isControlPlaneDomain(domain: string, forwardPort?: number): boolean {
-  // The NginUX public URL (Settings → Instance) doubles as the SSO sign-in URL.
-  const raw = getSettings().ssoLoginUrl?.trim();
-  if (!raw) return false;
-  let h: string;
-  try {
-    h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
-  } catch { return false; }
-  if (h !== domain.toLowerCase()) return false;
-  const controlPort = Number(process.env.PORT ?? 6767);
-  return forwardPort !== controlPort; // allowed when it points at the control plane
-}
+// isControlPlaneDomain (the SSO-portal hijack guard) is shared with the agent
+// path from hostschema.ts - imported above, defined once.
 
 app.get("/api/hosts", async (req) => {
   const u = currentUser(req);

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   assertWithin, hasNginxMetachars, isDangerousHost, isHeaderName, isHost,
-  isHostPort, isHostname, isIpOrCidr, isLocationPath,
+  isHostPort, isHostname, isIpOrCidr, isLocationPath, splitEntries, splitLines,
 } from "../src/validate.ts";
 import { join } from "node:path";
 
@@ -95,4 +95,19 @@ test("assertWithin permits paths inside the base and blocks traversal", () => {
   assert.equal(assertWithin(base, join(base, "plex.ubhi.io", "fullchain.pem")).startsWith(base), true);
   assert.throws(() => assertWithin(base, join(base, "..", "..", "etc", "passwd")), /escapes/);
   assert.throws(() => assertWithin(base, join(base, "..", "other")), /escapes/);
+});
+
+// Canonical tokenisers - ONE definition shared by the validators and the nginx
+// generator (they used to be copy-pasted in 3 files). If these ever diverge, a
+// value could validate one way and generate another.
+test("splitLines: newline-separated, trimmed, drops blanks", () => {
+  assert.deepEqual(splitLines("a\n b \n\n\tc\t\n"), ["a", "b", "c"]);
+  assert.deepEqual(splitLines(""), []);
+  // A CRLF upload: split on \n then trim removes the trailing \r.
+  assert.deepEqual(splitLines("X-Foo: a\r\nX-Bar: b"), ["X-Foo: a", "X-Bar: b"]);
+});
+test("splitEntries: whitespace/comma-separated, trimmed, drops blanks", () => {
+  assert.deepEqual(splitEntries("1.2.3.4, 5.6.7.8"), ["1.2.3.4", "5.6.7.8"]);
+  assert.deepEqual(splitEntries("10.0.0.0/8\n  192.168.0.0/16 "), ["10.0.0.0/8", "192.168.0.0/16"]);
+  assert.deepEqual(splitEntries("   "), []);
 });

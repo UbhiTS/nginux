@@ -7,6 +7,9 @@ import { getPreset } from "./presets.ts";
 import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
 import { writeGeoipConf } from "./geoip.ts";
+// Canonical tokenisers (shared with the validators in hostschema.ts, so a value
+// is generated exactly the way it was validated). splitEntries == the old splitList.
+import { splitEntries as splitList, splitLines } from "./validate.ts";
 import type { ProxyHost } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -66,8 +69,6 @@ export interface ApplyResult {
   nginxAvailable: boolean;
 }
 
-const splitList = (s: string): string[] => s.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
-const splitLines = (s: string): string[] => s.split("\n").map((x) => x.trim()).filter(Boolean);
 /** HTML-escape for any user string reflected into a generated HTML response.
  *  Entities also neutralise quotes that would otherwise break the surrounding
  *  nginx single-quoted string. */

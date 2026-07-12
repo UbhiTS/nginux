@@ -11,7 +11,8 @@ import { getUptime } from "./uptime.ts";
 import { hostStats, recentLogs, rangeSummary as metricsRangeSummary, summary as metricsSummary, trafficSeries } from "./metrics.ts";
 import { PRESETS } from "./presets.ts";
 import type { AgentPrincipal, Scope } from "./tokens.ts";
-import { isHeaderName, isHost, isHostPort, isHostname, isIpOrCidr, isLocationPath } from "./validate.ts";
+import { isHost, isHostname, isIpOrCidr } from "./validate.ts";
+import { hostInput, isControlPlaneDomain, validName } from "./hostschema.ts";
 import type { NewProxyHost, ProxyHost, Settings } from "./types.ts";
 
 // Agents reach updateHost/createHost WITHOUT the REST zod schema, so validate
@@ -27,41 +28,27 @@ const FORBIDDEN_TOOL_FIELDS = new Set([
   "requireLogin", "require2fa", "mtls", "countryLock", "securityHeaders", "hsts",
   "blockExploits", "ipAllow", "ipDeny",
 ]);
-const splitList = (s: string) => String(s).split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
-const splitLines = (s: string) => String(s).split("\n").map((x) => x.trim()).filter(Boolean);
 
-/** Strip forbidden fields and validate injection-prone ones; throws on bad input.
- *  Exported for regression tests - this is the agent-path security boundary. */
+/** Strip forbidden fields, then validate the rest through the SAME schema the
+ *  REST boundary uses (`hostInput`, partial). This is the agent-path security
+ *  boundary; routing it through the shared schema means the field rules
+ *  (injection sinks, enums, numeric bounds, iconUrl) can no longer drift looser
+ *  than REST. Throws on bad input. Exported for regression tests. */
 export function sanitizeHostPatch(raw: Record<string, unknown>): Partial<ProxyHost> {
-  const patch: Record<string, unknown> = {};
+  // 1. Drop fields an agent may never set: DB-managed / raw-config / security
+  //    posture. Stripping BEFORE validation matters - these fields exist in the
+  //    schema and would otherwise pass as "valid" (e.g. requireLogin:false).
+  const candidate: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (FORBIDDEN_TOOL_FIELDS.has(k)) continue;
-    patch[k] = v;
+    candidate[k] = v;
   }
-  if (typeof patch.name === "string" && /[;{}\n\r]/.test(patch.name)) throw new Error("Invalid name.");
-  if (typeof patch.forwardHost === "string" && !isHost(patch.forwardHost)) throw new Error("Invalid forwardHost.");
-  if (typeof patch.serverIp === "string" && patch.serverIp && !isHost(patch.serverIp)) throw new Error("Invalid serverIp.");
-  // forwardScheme is emitted raw into `proxy_pass ${scheme}://...`; the REST schema
-  // pins it to the enum, so do the same here or an agent could inject directives.
-  if (patch.forwardScheme !== undefined && patch.forwardScheme !== "http" && patch.forwardScheme !== "https") throw new Error("Invalid forwardScheme.");
-  // certDomain becomes a cert-dir path segment - same charset/no-traversal rule as REST.
-  if (typeof patch.certDomain === "string" && patch.certDomain !== "" && (!/^[a-z0-9.*_-]+$/i.test(patch.certDomain) || patch.certDomain.includes(".."))) throw new Error("Invalid certDomain.");
-  if (typeof patch.upstreams === "string" && !splitLines(patch.upstreams as string).every(isHostPort)) throw new Error("Invalid upstreams entry.");
-  if (typeof patch.customHeaders === "string" && !splitLines(patch.customHeaders as string).every((l) => { const i = l.indexOf(":"); return i > 0 && isHeaderName(l.slice(0, i).trim()) && !/[\n\r"]/.test(l.slice(i + 1)); })) throw new Error("Invalid customHeaders.");
-  if (typeof patch.pathRules === "string" && !splitLines(patch.pathRules as string).every((l) => { const [p, t, ...rest] = l.split(/\s+/); return rest.length === 0 && isLocationPath(p) && isHostPort(t); })) throw new Error("Invalid pathRules.");
-  return patch as Partial<ProxyHost>;
-}
-
-/** Would exposing `domain` hijack the domain NginUX itself runs on away from the
- *  control plane? (Mirror of the REST guard; forwarding TO :6767 is allowed.) */
-function wouldHijackControlPlane(domain: string, forwardPort: number): boolean {
-  const raw = getSettings().ssoLoginUrl?.trim(); // public URL = SSO sign-in URL
-  if (!raw) return false;
-  let h: string;
-  try { h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase(); }
-  catch { return false; }
-  if (h !== domain.toLowerCase()) return false;
-  return forwardPort !== Number(process.env.PORT ?? 6767);
+  // 2. Validate the remainder with the shared schema (partial: only-present fields).
+  const parsed = hostInput.partial().safeParse(candidate);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues.map((i) => i.message).join("; ") || "Invalid host patch.");
+  }
+  return parsed.data as Partial<ProxyHost>;
 }
 
 export type Tier = "read" | "low" | "medium" | "high";
@@ -277,7 +264,7 @@ export const TOOLS: Record<string, Tool> = {
     summarize: (a) => `expose ${a.name} at ${a.domain}`,
     handler: async (a) => {
       const domain = String(a.domain), forwardHost = String(a.forwardHost);
-      if (/[;{}\n\r]/.test(String(a.name))) throw new Error("Invalid name.");
+      if (!validName(String(a.name))) throw new Error("Invalid name.");
       if (!isHostname(domain)) throw new Error("Invalid domain.");
       if (!isHost(forwardHost)) throw new Error("Invalid forwardHost.");
       const port = Number(a.forwardPort);
@@ -285,7 +272,7 @@ export const TOOLS: Record<string, Tool> = {
       // Mirror the REST guards: clear duplicate-domain error, and don't let an
       // agent repoint NginUX's own portal domain away from the control plane.
       if (getHostByDomain(domain)) throw new Error(`${domain} is already in use.`);
-      if (wouldHijackControlPlane(domain, port)) throw new Error("That domain is where NginUX itself runs; forward it to the control plane on port 6767 or pick another.");
+      if (isControlPlaneDomain(domain, port)) throw new Error("That domain is where NginUX itself runs; forward it to the control plane on port 6767 or pick another.");
       const host = createHost({
         name: String(a.name), domain,
         forwardScheme: a.forwardScheme === "https" ? "https" : "http", forwardHost, forwardPort: port,

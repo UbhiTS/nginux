@@ -66,6 +66,19 @@ export function hasNginxMetachars(s: string): boolean {
   return /[;{}\n\r]/.test(s);
 }
 
+// ---- canonical splitters (ONE definition; the validators AND the nginx
+// generator must tokenise identically, or a value could validate one way and
+// generate another). Previously copy-pasted in index.ts, tools.ts and nginx.ts. ----
+
+/** Newline-separated, trimmed, non-empty lines (custom headers, path rules, upstreams). */
+export function splitLines(s: string): string[] {
+  return String(s).split("\n").map((x) => x.trim()).filter(Boolean);
+}
+/** Whitespace/comma-separated, trimmed, non-empty entries (IP allow/deny lists). */
+export function splitEntries(s: string): string[] {
+  return String(s).split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+}
+
 // ---- SSRF guard for OUTBOUND requests (webhooks, notification channels) ----
 // This is a homelab proxy, so private LAN targets are legitimate (a self-hosted
 // gotify/ntfy on 192.168.x). The genuinely dangerous target with no legitimate
