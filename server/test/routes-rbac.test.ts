@@ -71,6 +71,29 @@ test("#8 forward-auth rejects a mustChangePassword session, then allows once cle
 });
 
 // ---------------------------------------------------------------------------
+// (#8b) The gate FAILS CLOSED for a host it can't resolve, for EVERY role — not
+// just scoped users. nginx only forward-auths managed (requireLogin) hosts and always
+// stamps X-Original-Host, so an unresolvable host is abnormal (config drift, or an
+// input shape the lookup misses); admitting it would silently skip the per-host
+// require2fa/scope checks. This is the recurrence class ("unauth reaches services"):
+// the *default* for an unidentifiable gated request must be deny, not allow.
+// Regression for the 2026-07-12 audit.
+// ---------------------------------------------------------------------------
+test("#8b forward-auth fails closed for an unresolvable host (fully-privileged, non-scoped session)", async () => {
+  const uid = makeUser("editor", "", 0); // real-password, non-scoped, no 2FA
+  const r = await app.inject({
+    method: "GET",
+    url: "/api/auth/forward",
+    headers: {
+      "x-nginux-forward-secret": FWD_SECRET,
+      "x-original-host": "not-a-managed-host.example.com",
+      cookie: cookieFor(uid),
+    },
+  });
+  assert.equal(r.statusCode, 401, "a gated request for an unknown host must be denied, not admitted with 200");
+});
+
+// ---------------------------------------------------------------------------
 // The forward-auth endpoint is only usefully callable with the shared secret;
 // nginx sends it on every subrequest. A caller that omits it is refused.
 // ---------------------------------------------------------------------------

@@ -1195,22 +1195,21 @@ app.get("/api/auth/forward", async (req, reply) => {
   // control plane; deny downstream service access too until enrolled, mirroring that
   // confinement. (Security audit 2026-07-12.)
   if (mustEnroll2fa(u)) return reply.code(401).send({ ok: false });
-  // If we can identify the target host, enforce its per-host requirements.
+  // Enforce the target host's per-host policy. forward-auth is only ever invoked by
+  // nginx for a requireLogin host, and nginx always stamps X-Original-Host — so that
+  // host MUST resolve to a DB row. If it can't, FAIL CLOSED (deny) rather than fall
+  // through to 200. This closes the whole "per-host check silently skipped" class at
+  // the root, for EVERY role: any present-or-future way to make the lookup miss
+  // (uppercase, wildcard, unicode/punycode, config drift, a header we don't parse)
+  // now denies an under-authenticated request instead of admitting it — the exact
+  // recurrence guarded against here. (Security audit 2026-07-12.)
   const originalHost = (req.headers["x-original-host"] as string) || (req.headers["x-forwarded-host"] as string);
-  if (originalHost) {
-    const host = getHostByDomainCached(originalHost.split(":")[0]);
-    if (host) {
-      if (host.require2fa && !u.twofaEnabled) return reply.code(401).send({ ok: false });
-      // A scoped user only passes the per-host login gate for hosts in their
-      // scope - otherwise one NginUX login would unlock every protected app.
-      if (u.role === "scoped" && !scopedAllows(u, host)) return reply.code(403).send({ ok: false });
-    } else if (u.role === "scoped") {
-      // FAIL CLOSED: a scoped user's access is defined strictly per in-scope host; a
-      // login-gated request that can't be tied to a known host must NOT fall through to
-      // 200 for them (defends the wildcard/case fail-open class). (Security audit 2026-07-12.)
-      return reply.code(403).send({ ok: false });
-    }
-  }
+  const host = originalHost ? getHostByDomainCached(originalHost.split(":")[0]) : null;
+  if (!host) return reply.code(401).send({ ok: false });
+  if (host.require2fa && !u.twofaEnabled) return reply.code(401).send({ ok: false });
+  // A scoped user only passes the per-host login gate for hosts in their scope -
+  // otherwise one NginUX login would unlock every protected app.
+  if (u.role === "scoped" && !scopedAllows(u, host)) return reply.code(403).send({ ok: false });
   return reply.code(200).send({ ok: true });
 });
 
