@@ -29,6 +29,14 @@ const bumpStat = (s: Stat, e: LogEntry) => { s.count++; s.out += e.bytes; s.in +
 
 const RING_MAX = 500;
 const ring: LogEntry[] = [];
+
+/** True when the in-memory ring already spans back past `cutoffMs` - its oldest
+ *  retained entry (ring[0]) is older than the window, so the ring holds every log
+ *  line in [cutoff, now] and a time-windowed disk read for that window is
+ *  redundant. Exported for the fast-path regression test. */
+export function ringCoversWindow(cutoffMs: number): boolean {
+  return ring.length > 0 && Date.parse(ring[0].ts) <= cutoffMs;
+}
 const minuteBuckets = new Map<number, Stat>();
 // Per-hour totals (global + per-host) so the 7d/30d traffic graph spans its full
 // window - minuteBuckets only retain ~25h. ~40 days of hours is <1k entries.
@@ -391,10 +399,13 @@ export async function hostSummary(domain: string, range: string) {
     const e = ring[i];
     if (e.host.toLowerCase() === dom && Date.parse(e.ts) >= cutoff) add(e);
   }
-  // Then the persisted access log, newest-first via the async bounded reverse
-  // reader, stopping once past the window (chronological early-break). Streams the
-  // tail in chunks instead of a synchronous up-to-32MB read/decode.
+  // Fast path: if the in-memory ring already spans back past the window (its
+  // oldest retained entry is older than the cutoff), it holds EVERY log line in
+  // [cutoff, now], so the disk read - and even opening the file - is redundant.
+  // The reverse reader already early-breaks at the window; this skips it entirely
+  // for recent windows on a quiet-enough instance.
   try {
+    if (!ringCoversWindow(cutoff)) {
     for await (const t of readLinesReverse(ACCESS_LOG)) {
       if (!t.toLowerCase().includes(dom)) continue; // cheap pre-filter before parsing
       try {
@@ -408,6 +419,7 @@ export async function hostSummary(domain: string, range: string) {
           ip: j.ip ?? "-", country: j.country ?? "", ua: j.ua ?? "", ms: Math.round(Number(j.ms ?? 0) * 1000) / 1000,
         });
       } catch { /* skip malformed line */ }
+    }
     }
   } catch { /* fall back to whatever the ring had */ }
   const ipTop = groupTopIpsByCountry(ip, (k) => ipCC.get(k) ?? "", 5);

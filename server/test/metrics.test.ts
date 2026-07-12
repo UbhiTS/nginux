@@ -298,6 +298,14 @@ test("hostStats/hostTraffic 7d consults hour rollups (data older than ~25h is no
   assert.ok(oldWeekTraffic && oldWeekTraffic.count >= 1, "hostTraffic 7d must also surface it via hour rollups");
 });
 
+// F1: hostSummary skips the disk read when the in-memory ring already covers the
+// window. ringCoversWindow is the decision predicate (ring non-empty here after the
+// corpus replay).
+test("ringCoversWindow: covered for a far-future cutoff, never for the epoch", () => {
+  assert.equal(metrics.ringCoversWindow(Date.now() + 1e12), true, "ring's oldest entry predates a far-future cutoff");
+  assert.equal(metrics.ringCoversWindow(0), false, "no entry predates the epoch");
+});
+
 // Geo-block analytics (feature 4.10): denied-status requests grouped by country/IP.
 test("blockedAttempts groups denied (401/403/429) requests by country + top IPs", () => {
   const now = Date.now();
