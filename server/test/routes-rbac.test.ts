@@ -11,7 +11,7 @@ import { makeHost } from "./helpers.ts";
 setupTestEnv();
 const { app } = await import("../src/index.ts");
 const { db, saveSettings } = await import("../src/db.ts");
-const { createSession } = await import("../src/auth.ts");
+const { createSession, listUsers, updateUserRole, countAdmins } = await import("../src/auth.ts");
 const { createHost, getHostByDomain } = await import("../src/repo.ts");
 const { createToken } = await import("../src/tokens.ts");
 
@@ -150,4 +150,64 @@ test("#6 /api/events/sse rejects a 'read'-scope token", async () => {
     headers: { authorization: `Bearer ${readTok}` },
   });
   assert.equal(r.statusCode, 403, "a 'read'-only token must not open the security event stream");
+});
+
+// ---------------------------------------------------------------------------
+// Session management: list exposes a non-secret sid (never the token) + flags the
+// caller's own session; an admin can revoke any session; non-admins can't.
+// ---------------------------------------------------------------------------
+test("sessions: admin lists sid+current (no token) and can revoke one", async () => {
+  const adminId = makeUser("admin");
+  const victimId = makeUser("editor");
+  createSession(victimId, "phone", "10.0.0.9");
+  const adminCookie = cookieFor(adminId);
+
+  const listed = (await app.inject({ method: "GET", url: "/api/sessions", headers: { cookie: adminCookie } })).json() as Array<Record<string, unknown>>;
+  const victim = listed.find((s) => s.username === victimId);
+  assert.ok(victim?.sid, "victim session is listed with a sid");
+  assert.equal("token" in victim!, false, "the raw session token is never returned");
+  assert.ok(listed.some((s) => s.current === true), "the admin's own session is flagged current");
+
+  const del = await app.inject({ method: "DELETE", url: `/api/sessions/${victim!.sid}`, headers: { cookie: adminCookie } });
+  assert.equal(del.statusCode, 200);
+  assert.deepEqual(del.json(), { ok: true });
+
+  const after = (await app.inject({ method: "GET", url: "/api/sessions", headers: { cookie: adminCookie } })).json() as Array<Record<string, unknown>>;
+  assert.equal(after.some((s) => s.sid === victim!.sid), false, "the revoked session is gone");
+});
+
+test("sessions: a non-admin can neither list nor revoke", async () => {
+  const editorId = makeUser("editor");
+  assert.equal((await app.inject({ method: "GET", url: "/api/sessions", headers: { cookie: cookieFor(editorId) } })).statusCode, 403);
+  assert.equal((await app.inject({ method: "DELETE", url: "/api/sessions/deadbeefdeadbeef", headers: { cookie: cookieFor(editorId) } })).statusCode, 403);
+});
+
+// ---------------------------------------------------------------------------
+// Role change in place (promote/demote without delete+recreate), with a
+// last-admin guard so the instance can't be locked out of admin.
+// ---------------------------------------------------------------------------
+test("role change: admin promotes a user in place", async () => {
+  const adminId = makeUser("admin");
+  const targetId = makeUser("readonly");
+  const res = await app.inject({ method: "PATCH", url: `/api/users/${targetId}/role`, headers: { cookie: cookieFor(adminId) }, payload: { role: "editor" } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().role, "editor");
+});
+
+test("role change: the last admin cannot be demoted", async () => {
+  const soleAdmin = makeUser("admin");
+  // Collapse to a single admin so the guard is exercised deterministically.
+  for (const u of listUsers()) if (u.role === "admin" && u.id !== soleAdmin) updateUserRole(u.id, "editor");
+  assert.equal(countAdmins(), 1, "exactly one admin remains");
+  const res = await app.inject({ method: "PATCH", url: `/api/users/${soleAdmin}/role`, headers: { cookie: cookieFor(soleAdmin) }, payload: { role: "editor" } });
+  assert.equal(res.statusCode, 400);
+  assert.match(String(res.json().error), /last admin/i);
+  assert.equal(countAdmins(), 1, "the demotion was refused; the admin is intact");
+});
+
+test("role change: a non-admin can't change roles", async () => {
+  const editorId = makeUser("editor");
+  const targetId = makeUser("readonly");
+  const res = await app.inject({ method: "PATCH", url: `/api/users/${targetId}/role`, headers: { cookie: cookieFor(editorId) }, payload: { role: "admin" } });
+  assert.equal(res.statusCode, 403);
 });

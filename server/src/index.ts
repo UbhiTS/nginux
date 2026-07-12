@@ -38,6 +38,10 @@ import {
   getUserById,
   listSessions,
   listUsers,
+  revokeSession,
+  sessionSid,
+  countAdmins,
+  updateUserRole,
   logEvent,
   parseCookie,
   scopedAllows,
@@ -1271,9 +1275,31 @@ app.delete("/api/users/:id", async (req, reply) => {
   if (!admin) return;
   const { id } = req.params as { id: string };
   if (id === admin.id) return reply.code(400).send({ error: "You can't delete your own account." });
+  const target = getUserById(id);
+  if (target?.role === "admin" && countAdmins() <= 1) return reply.code(400).send({ error: "Can't delete the last admin account." });
   deleteUser(id);
   logEvent({ type: "user.deleted", severity: "warn", actor: admin.username, summary: `Deleted a user`, ip: clientIp(req), meta: { id } });
   return { ok: true };
+});
+// Change a user's role in place (promote/demote without delete+recreate, which
+// used to lose their 2FA enrollment). Refuses to demote the last admin.
+app.patch("/api/users/:id/role", async (req, reply) => {
+  const admin = requireAdmin(req, reply);
+  if (!admin) return;
+  const { id } = req.params as { id: string };
+  const parsed = z.object({
+    role: z.enum(["admin", "editor", "readonly", "scoped"]),
+    scope: z.string().max(200).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const target = getUserById(id);
+  if (!target) return reply.code(404).send({ error: "User not found" });
+  if (target.role === "admin" && parsed.data.role !== "admin" && countAdmins() <= 1) {
+    return reply.code(400).send({ error: "Can't demote the last admin account." });
+  }
+  updateUserRole(id, parsed.data.role, parsed.data.scope ?? "");
+  logEvent({ type: "user.role_changed", severity: "warn", actor: admin.username, summary: `Changed ${target.username}'s role to ${parsed.data.role}`, ip: clientIp(req), meta: { id, role: parsed.data.role } });
+  return getUserById(id)!;
 });
 
 // Admin reset of another user's password (no current password needed; the user
@@ -1330,8 +1356,24 @@ app.delete("/api/users/me/avatar", async (req, reply) => {
 
 app.get("/api/sessions", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
-  // Never return the raw session token to the client - mask to a short id.
-  return listSessions().map((s) => ({ ...s, token: "…" + s.token.slice(-6) }));
+  // Expose the non-secret sid (used to revoke) and flag the caller's own session;
+  // never return the raw token.
+  const myTok = parseCookie(req.headers.cookie)[SESSION_COOKIE];
+  const mySid = myTok ? sessionSid(myTok) : "";
+  return listSessions().map((s) => ({
+    sid: s.sid, userId: s.userId, username: s.username, device: s.device,
+    ip: s.ip, lastActive: s.lastActive, current: s.sid === mySid,
+  }));
+});
+// Revoke one session by its public sid (kills a lost/rogue login without deleting
+// the whole account). Revoking your own session logs you out.
+app.delete("/api/sessions/:sid", async (req, reply) => {
+  const admin = requireAdmin(req, reply);
+  if (!admin) return;
+  const { sid } = req.params as { sid: string };
+  const ok = revokeSession(sid);
+  if (ok) logEvent({ type: "security.session_revoked", severity: "notice", actor: admin.username, summary: "Revoked a session", ip: clientIp(req), meta: { sid } });
+  return { ok };
 });
 
 // Route groups extracted into server/src/routes/*.ts (registered on the same app

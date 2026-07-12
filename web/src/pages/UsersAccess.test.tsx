@@ -12,6 +12,8 @@ vi.mock("../api.ts", async (importOriginal) => {
     api: {
       users: vi.fn(),
       sessions: vi.fn(),
+      revokeSession: vi.fn(),
+      updateUserRole: vi.fn(),
       createUser: vi.fn(),
       deleteUser: vi.fn(),
       adminSetUserPassword: vi.fn(),
@@ -42,7 +44,8 @@ function makeUser(over: Partial<AuthUser> = {}): AuthUser {
 
 function makeSession(over: Partial<Session> = {}): Session {
   return {
-    token: "t1",
+    sid: "s1",
+    current: false,
     userId: "u1",
     username: "alice",
     device: "Firefox on Linux",
@@ -65,6 +68,8 @@ beforeEach(() => {
   vi.mocked(api.sessions).mockResolvedValue([makeSession()]);
   vi.mocked(api.createUser).mockResolvedValue(makeUser() as never);
   vi.mocked(api.deleteUser).mockResolvedValue({ ok: true } as never);
+  vi.mocked(api.revokeSession).mockResolvedValue({ ok: true } as never);
+  vi.mocked(api.updateUserRole).mockResolvedValue(makeUser() as never);
   vi.mocked(api.adminSetUserPassword).mockResolvedValue({ ok: true } as never);
   vi.mocked(api.changePassword).mockResolvedValue({ ok: true } as never);
   vi.mocked(api.twofaSetup).mockResolvedValue({ secret: "ABCD", otpauth: "otpauth://x" } as never);
@@ -127,6 +132,44 @@ describe("UsersAccess — roles", () => {
     await waitFor(() => expect(screen.getByText("alice@example.com")).toBeInTheDocument());
     expect(screen.getByText("What each role can do")).toBeInTheDocument();
     expect(screen.getByText(/manage services/i)).toBeInTheDocument();
+  });
+
+  it("lets an admin change a user's role in place via the role select", async () => {
+    vi.mocked(api.users).mockResolvedValue([
+      makeUser(),
+      makeUser({ id: "u2", username: "bob", email: "bob@example.com", role: "readonly" }),
+    ]);
+    renderPage();
+    await waitFor(() => expect(screen.getByText("bob@example.com")).toBeInTheDocument());
+    await userEvent.selectOptions(screen.getByLabelText("Role for bob"), "editor");
+    expect(api.updateUserRole).toHaveBeenCalledWith("u2", "editor", "");
+  });
+
+  it("disables the role select for the last remaining admin", async () => {
+    renderPage(); // alice is the only admin
+    await waitFor(() => expect(screen.getByText("alice@example.com")).toBeInTheDocument());
+    expect(screen.getByLabelText("Role for alice")).toBeDisabled();
+  });
+});
+
+describe("UsersAccess — session revoke", () => {
+  it("marks the caller's own session as 'This device'", async () => {
+    vi.mocked(api.sessions).mockResolvedValue([makeSession({ sid: "sme", current: true })]);
+    renderPage({ tab: "sessions" });
+    expect(await screen.findByText("This device")).toBeInTheDocument();
+  });
+
+  it("revokes a session through the confirm dialog", async () => {
+    vi.mocked(api.sessions).mockResolvedValue([
+      makeSession({ sid: "s9", username: "bob", device: "Safari on iPhone", ip: "10.0.0.9" }),
+    ]);
+    renderPage({ tab: "sessions" });
+    await waitFor(() => expect(screen.getByText("Safari on iPhone")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Revoke session" }));
+    expect(api.revokeSession).toHaveBeenCalledWith("s9");
   });
 });
 

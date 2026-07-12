@@ -6,6 +6,9 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="theme-color" content="#3b82f6" />
     <title>NginUX - reverse proxy, simplified</title>
+    <!-- Apply the saved theme before first paint (avoids a dark-theme flash for
+         light/medium users). Separate file because CSP forbids inline scripts. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

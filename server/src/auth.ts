@@ -267,7 +267,13 @@ export function destroyUserSessions(userId: string): void {
   db.prepare("DELETE FROM sessions WHERE userId = ?").run(userId);
 }
 
-export function listSessions(): Array<{ token: string; userId: string; username: string; device: string; ip: string; lastActive: string }> {
+/** A non-secret, stable public id for a session, so the client can target one for
+ *  revocation without ever seeing the (secret) session token. */
+export function sessionSid(token: string): string {
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+export function listSessions(): Array<{ token: string; sid: string; userId: string; username: string; device: string; ip: string; lastActive: string }> {
   const rows = db
     .prepare(
       `SELECT s.token, s.userId, s.device, s.ip, s.createdAt, u.username
@@ -276,12 +282,35 @@ export function listSessions(): Array<{ token: string; userId: string; username:
     .all() as Row[];
   return rows.map((r) => ({
     token: String(r.token),
+    sid: sessionSid(String(r.token)),
     userId: String(r.userId),
     username: String(r.username),
     device: String(r.device),
     ip: String(r.ip),
     lastActive: String(r.createdAt),
   }));
+}
+
+/** Revoke one session by its public sid (see sessionSid). Returns true if a session
+ *  matched. O(n) over live sessions, which is fine at homelab scale. */
+export function revokeSession(sid: string): boolean {
+  const rows = db.prepare("SELECT token FROM sessions").all() as Row[];
+  const match = rows.find((r) => sessionSid(String(r.token)) === sid);
+  if (!match) return false;
+  destroySession(String(match.token));
+  return true;
+}
+
+/** Number of admin accounts — used to refuse demoting/deleting the last admin. */
+export function countAdmins(): number {
+  const r = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get() as Row;
+  return Number(r.n);
+}
+
+/** Change a user's role (and scope, relevant only for the "scoped" role). Returns
+ *  false if the user doesn't exist. Callers must enforce the last-admin guard. */
+export function updateUserRole(id: string, role: Role, scope = ""): boolean {
+  return db.prepare("UPDATE users SET role = ?, scope = ? WHERE id = ?").run(role, role === "scoped" ? scope : "", id).changes > 0;
 }
 
 // ---------- cookies ----------

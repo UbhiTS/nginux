@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type GeoipStatus, type LogEntry, type MetricsSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { TrafficChart } from "./TrafficChart.tsx";
-import { TrafficMap } from "./TrafficMap.tsx";
+import { TrafficMap } from "./TrafficMapLazy.tsx";
 import { StatusCodeBars, TopSourceIps, CountryBars } from "./AnalyticsPanels.tsx";
 import { statusColor, fmtBytes } from "../format.ts";
 

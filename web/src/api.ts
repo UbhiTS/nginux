@@ -113,6 +113,8 @@ export const api = {
   createUser: (body: { username: string; password: string; role: string; email?: string; scope?: string }) =>
     req<AuthUser>("/users", { method: "POST", body: JSON.stringify(body) }),
   deleteUser: (id: string) => req<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
+  updateUserRole: (id: string, role: string, scope?: string) =>
+    req<AuthUser>(`/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role, scope }) }),
   adminSetUserPassword: (id: string, newPassword: string) =>
     req<{ ok: boolean }>(`/users/${id}/password`, { method: "POST", body: JSON.stringify({ newPassword }) }),
   // Profile avatar: `image` is a resized data URL; the server stores the bytes.
@@ -120,6 +122,7 @@ export const api = {
   removeAvatar: () => req<{ ok: boolean }>("/users/me/avatar", { method: "DELETE" }),
   avatarUrl: (id: string, v = 0) => `/api/users/${encodeURIComponent(id)}/avatar${v ? `?v=${v}` : ""}`,
   sessions: () => req<Session[]>("/sessions"),
+  revokeSession: (sid: string) => req<{ ok: boolean }>(`/sessions/${sid}`, { method: "DELETE" }),
   audit: (type?: string, limit = 50) =>
     req<AuditEvent[]>(`/audit?${type ? `type=${type}&` : ""}limit=${limit}`),
   securityOverview: () => req<SecurityOverview>("/security/overview"),
@@ -472,7 +475,10 @@ export interface AuthUser {
 }
 
 export interface Session {
-  token: string;
+  /** Non-secret public id used to revoke this session (the raw token is never sent). */
+  sid: string;
+  /** True for the caller's own session (revoking it signs you out). */
+  current: boolean;
   userId: string;
   username: string;
   device: string;

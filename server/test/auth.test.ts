@@ -208,3 +208,51 @@ test("TOTP counter starts at -1 and only ever advances forward", async () => {
 test("getLastTotpCounter returns -1 for an unknown user", () => {
   assert.equal(auth.getLastTotpCounter("nobody"), -1);
 });
+
+// ---------- sessions: public sid + revoke ----------
+
+test("sessionSid is stable, 16 hex chars, and unique per token", () => {
+  const a = "a".repeat(64), b = "b".repeat(64);
+  assert.equal(auth.sessionSid(a), auth.sessionSid(a), "stable for the same token");
+  assert.match(auth.sessionSid(a), /^[0-9a-f]{16}$/);
+  assert.notEqual(auth.sessionSid(a), auth.sessionSid(b));
+});
+
+test("revokeSession deletes exactly the session matching the sid", async () => {
+  const u = await auth.createUser({ username: `rev_${Math.random().toString(36).slice(2, 8)}`, password: "pw-123456" });
+  const tok = auth.createSession(u.id, "laptop", "10.0.0.1");
+  const keep = auth.createSession(u.id, "phone", "10.0.0.2");
+  assert.notEqual(auth.userForSession(tok), null);
+  assert.equal(auth.revokeSession(auth.sessionSid(tok)), true);
+  assert.equal(auth.userForSession(tok), null, "revoked session stops resolving");
+  assert.notEqual(auth.userForSession(keep), null, "the other session survives");
+  assert.equal(auth.revokeSession("0000000000000000"), false, "unknown sid returns false");
+});
+
+test("listSessions carries the sid for each row", async () => {
+  const u = await auth.createUser({ username: `ls_${Math.random().toString(36).slice(2, 8)}`, password: "pw-123456" });
+  const tok = auth.createSession(u.id, "d", "1.1.1.1");
+  const row = auth.listSessions().find((s) => s.sid === auth.sessionSid(tok));
+  assert.ok(row && row.username === u.username);
+});
+
+// ---------- roles: count + in-place change ----------
+
+test("countAdmins counts only admin-role users", async () => {
+  const base = auth.countAdmins();
+  await auth.createUser({ username: `ed_${Math.random().toString(36).slice(2, 8)}`, password: "pw-123456", role: "editor" });
+  assert.equal(auth.countAdmins(), base, "an editor doesn't change the admin count");
+  await auth.createUser({ username: `ad_${Math.random().toString(36).slice(2, 8)}`, password: "pw-123456", role: "admin" });
+  assert.equal(auth.countAdmins(), base + 1);
+});
+
+test("updateUserRole changes the role and clears scope for non-scoped roles", async () => {
+  const u = await auth.createUser({ username: `role_${Math.random().toString(36).slice(2, 8)}`, password: "pw-123456", role: "readonly" });
+  assert.equal(auth.updateUserRole(u.id, "scoped", "reports"), true);
+  assert.equal(auth.getUserById(u.id)?.role, "scoped");
+  assert.equal(auth.getUserById(u.id)?.scope, "reports");
+  auth.updateUserRole(u.id, "editor", "ignored");
+  assert.equal(auth.getUserById(u.id)?.role, "editor");
+  assert.equal(auth.getUserById(u.id)?.scope, "", "scope is cleared when the role isn't 'scoped'");
+  assert.equal(auth.updateUserRole("nobody", "admin"), false, "unknown user returns false");
+});

@@ -30,6 +30,22 @@ export function UsersAccess({
   const sessions = sessionsState.data ?? [];
   const load = () => { usersState.reload(); sessionsState.reload(); };
 
+  // admin: change a user's role in place (server refuses demoting the last admin).
+  const changeRole = async (u: AuthUser, role: AuthUser["role"]) => {
+    if (role === u.role) return;
+    setRoleBusyId(u.id);
+    setRoleErr("");
+    try {
+      await api.updateUserRole(u.id, role, u.scope);
+      if (u.id === currentUser.id) await refreshMe();
+      load();
+    } catch (e) {
+      setRoleErr(e instanceof Error ? e.message : "Couldn't change the role.");
+    } finally {
+      setRoleBusyId("");
+    }
+  };
+
   const [enroll, setEnroll] = useState<{ secret: string; otpauth: string } | null>(null);
   const [pwPrompt, setPwPrompt] = useState(false); // confirm-password gate before 2FA setup
   const [pw, setPw] = useState("");
@@ -49,6 +65,12 @@ export function UsersAccess({
   // admin: delete a user
   const [delUser, setDelUser] = useState<AuthUser | null>(null);
   const [delBusy, setDelBusy] = useState(false);
+
+  // admin: revoke a session / change a role in place
+  const [revokeS, setRevokeS] = useState<Session | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  const [roleBusyId, setRoleBusyId] = useState("");
+  const [roleErr, setRoleErr] = useState("");
 
   // admin: add a new user
   const [addOpen, setAddOpen] = useState(false);
@@ -258,6 +280,11 @@ export function UsersAccess({
               <div className="test-result ok" role="status" style={{ marginBottom: 18 }}><Icon.check /><div>{rpDone}</div></div>
             )}
 
+            {roleErr && (
+              <div className="test-result bad" role="alert" style={{ marginBottom: 14 }}>
+                <Icon.x /><div>{roleErr}</div>
+              </div>
+            )}
             <div className="card atable">
               <div className="ahead" style={{ gridTemplateColumns: cols }}>
                 <div>User</div>
@@ -292,9 +319,26 @@ export function UsersAccess({
                       </div>
                     </div>
                     <div style={{ textAlign: "center" }}>
-                      <span className={`pill ${u.role === "admin" ? "b" : "n"}`}>
-                        {u.role === "scoped" ? `scoped: ${u.scope || "-"}` : u.role}
-                      </span>
+                      {currentUser.role === "admin" ? (
+                        <select
+                          className="input"
+                          style={{ width: "auto", padding: "5px 8px", fontSize: 12.5 }}
+                          value={u.role}
+                          disabled={lastAdmin || roleBusyId === u.id}
+                          aria-label={`Role for ${u.username}`}
+                          title={lastAdmin ? "Can't demote the last admin - promote another user first." : undefined}
+                          onChange={(e) => changeRole(u, e.target.value as AuthUser["role"])}
+                        >
+                          <option value="admin">admin</option>
+                          <option value="editor">editor</option>
+                          <option value="readonly">readonly</option>
+                          {u.role === "scoped" && <option value="scoped">scoped: {u.scope || "-"}</option>}
+                        </select>
+                      ) : (
+                        <span className={`pill ${u.role === "admin" ? "b" : "n"}`}>
+                          {u.role === "scoped" ? `scoped: ${u.scope || "-"}` : u.role}
+                        </span>
+                      )}
                     </div>
                     <div style={{ textAlign: "center" }}>
                       <span className={`pill ${u.twofaEnabled ? "g" : "r"}`}>{u.twofaEnabled ? "On" : "Not set up"}</span>
@@ -341,11 +385,12 @@ export function UsersAccess({
 
         {tab === "sessions" && (
           <div className="card atable">
-            <div className="ahead" style={{ gridTemplateColumns: "1fr 2fr 1.1fr 1fr" }}>
+            <div className="ahead" style={{ gridTemplateColumns: "1.2fr 2fr 1.1fr 1fr auto" }}>
               <div>User</div>
               <div>Device</div>
               <div>Source IP</div>
               <div>Signed in</div>
+              <div />
             </div>
             {sessionsState.status === "loading" && (
               <div style={{ padding: "12px 16px" }}>
@@ -366,11 +411,19 @@ export function UsersAccess({
               </div>
             )}
             {sessionsState.status === "ready" && sessions.map((s) => (
-              <div key={s.token} className="arow" style={{ gridTemplateColumns: "1fr 2fr 1.1fr 1fr" }}>
-                <div>{s.username}</div>
+              <div key={s.sid} className="arow" style={{ gridTemplateColumns: "1.2fr 2fr 1.1fr 1fr auto" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{s.username}</span>
+                  {s.current && <span className="pill g" style={{ flexShrink: 0 }}>This device</span>}
+                </div>
                 <div className="muted">{s.device}</div>
                 <div className="mono">{s.ip || "-"}</div>
                 <div className="muted">{fmt(s.lastActive)}</div>
+                <div style={{ justifySelf: "end" }}>
+                  {currentUser.role === "admin" && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setRevokeS(s)}>Revoke</button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -395,6 +448,31 @@ export function UsersAccess({
             }
           }}
           onCancel={() => setDelUser(null)}
+        />
+      )}
+
+      {revokeS && (
+        <ConfirmDialog
+          danger
+          title={revokeS.current ? "Sign out your own session?" : "Revoke this session?"}
+          message={revokeS.current
+            ? <>This signs <b>you</b> out on this device right away.</>
+            : <>This signs out <b>{revokeS.username}</b> on <b>{revokeS.device}</b> ({revokeS.ip || "unknown IP"}) right away.</>}
+          confirmLabel="Revoke session"
+          busy={revokeBusy}
+          onConfirm={async () => {
+            setRevokeBusy(true);
+            try {
+              await api.revokeSession(revokeS.sid);
+              const wasCurrent = revokeS.current;
+              setRevokeS(null);
+              if (wasCurrent) await refreshMe(); // our cookie is gone -> App drops to the login screen
+              else load();
+            } finally {
+              setRevokeBusy(false);
+            }
+          }}
+          onCancel={() => setRevokeS(null)}
         />
       )}
 
