@@ -427,13 +427,35 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
     }
   };
 
-  const exportConfig = async () => {
-    const data = await api.exportConfig();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const backup = async () => {
+    const pass = prompt("Optional passphrase to ENCRYPT the backup (leave blank for a plain, secrets-masked file):") ?? "";
+    if (pass && pass.length < 8) { setMsg("Passphrase must be at least 8 characters."); setTimeout(() => setMsg(""), 4000); return; }
+    const r = await api.backupConfig(pass || undefined, !!pass);
+    const payload = r.encrypted ? r.blob : r.bundle;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `nginux-config-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `nginux-backup-${new Date().toISOString().slice(0, 10)}${r.encrypted ? ".enc" : ""}.json`;
     a.click();
+    setMsg(r.encrypted ? "Encrypted backup downloaded." : "Backup downloaded (secrets masked)."); setTimeout(() => setMsg(""), 4000);
+  };
+
+  const restoreBackup = async (file: File) => {
+    setRestoring(true);
+    try {
+      const parsed = JSON.parse(await file.text());
+      const encrypted = parsed && parsed.magic === "nginux-encrypted";
+      const passphrase = encrypted ? (prompt("This backup is encrypted. Enter its passphrase:") ?? "") : undefined;
+      if (!confirm("Restore this backup? It REPLACES all services, bans and channels, and merges settings.")) return;
+      const r = await api.restoreConfig(encrypted ? { blob: parsed, passphrase } : { bundle: parsed });
+      setMsg(`Restored ${r.hosts} services, ${r.bans} bans, ${r.channels} channels.`);
+      setTimeout(() => setMsg(""), 6000);
+      load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Couldn't restore that file."); setTimeout(() => setMsg(""), 6000);
+    } finally {
+      setRestoring(false);
+    }
   };
 
   return (
@@ -441,7 +463,12 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
       <div className="section-title" style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         Backups &amp; GitOps
         <span style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn-sm" onClick={exportConfig}>Export config</button>
+          <button className="btn btn-sm" onClick={backup} title="Portable bundle: hosts + settings + bans + channels">Backup</button>
+          <label className="btn btn-sm" style={{ cursor: "pointer", margin: 0 }}>
+            Restore
+            <input type="file" accept="application/json,.json" style={{ display: "none" }} disabled={restoring}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void restoreBackup(f); e.target.value = ""; }} />
+          </label>
           <button className="btn btn-sm" onClick={async () => { await api.snapshotConfig("Manual snapshot"); load(); }}>Snapshot now</button>
         </span>
       </div>

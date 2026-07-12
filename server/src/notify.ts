@@ -40,6 +40,40 @@ function getChannelRaw(id: string): Channel | null {
   const r = db.prepare("SELECT * FROM channels WHERE id = ?").get(id) as Row | undefined;
   return r ? toChannel(r) : null;
 }
+
+/** Every channel with its REAL (unmasked) config - for an encrypted backup only.
+ *  Never return this to a client; listChannels() is the masked, client-safe view. */
+export function listChannelsRaw(): Channel[] {
+  return (db.prepare("SELECT * FROM channels ORDER BY createdAt").all() as Row[]).map(toChannel);
+}
+
+/** Replace the whole channel set (backup restore), in one transaction. Channels
+ *  whose secret config is masked (••••) are skipped, so restoring a redacted
+ *  (unencrypted) bundle never overwrites a real channel with a useless placeholder. */
+export function replaceAllChannels(channels: Channel[]): number {
+  const insert = db.prepare(
+    "INSERT INTO channels (id, type, name, config, events, minSeverity, enabled, lastStatus, createdAt) VALUES (?,?,?,?,?,?,?,?,?)",
+  );
+  let restored = 0;
+  db.exec("BEGIN");
+  try {
+    db.prepare("DELETE FROM channels").run();
+    for (const c of channels) {
+      const masked = Object.values(c.config ?? {}).some((v) => typeof v === "string" && v.includes("••"));
+      if (masked) continue; // a redacted export can't restore a working channel
+      insert.run(
+        c.id, c.type, c.name, JSON.stringify(c.config ?? {}), JSON.stringify(c.events ?? ["*"]),
+        c.minSeverity ?? "info", c.enabled ? 1 : 0, c.lastStatus ?? null, c.createdAt ?? new Date().toISOString(),
+      );
+      restored++;
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  return restored;
+}
 function maskConfig(config: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(config)) {

@@ -104,6 +104,8 @@ import { rotateLogsNow, startLogRotation } from "./logrotate.ts";
 import { diffVersion, listVersions, restoreVersion, snapshot } from "./versioning.ts";
 import { gitLog, syncGitOps } from "./gitops.ts";
 import { importNginxConf } from "./importer.ts";
+import { buildBundle, restoreBundle } from "./backup.ts";
+import { encryptJson, decryptJson, isEncryptedEnvelope } from "./cryptobox.ts";
 import { addBan, listBans, removeBan, startBanEngine } from "./bans.ts";
 import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert, writeClientCrl } from "./clientcerts.ts";
 import { generateSniPassthrough } from "./nginx.ts";
@@ -809,9 +811,57 @@ app.post("/api/config/versions/:id/restore", async (req, reply) => {
   logEvent({ type: "config.restored", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: `Restored config (${r.restored} services)`, ip: clientIp(req), meta: { id } });
   return { ...r, apply };
 });
+// Portable backup bundle (hosts + settings + bans + channels; NOT certs). Without
+// a passphrase the bundle is plaintext with secrets MASKED (safe to store); with a
+// passphrase the whole bundle is AES-256-GCM encrypted and may carry real secrets.
+app.post("/api/config/backup", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  const parsed = z.object({
+    passphrase: z.string().min(8).max(256).optional(),
+    includeSecrets: z.boolean().default(false),
+  }).safeParse(req.body ?? {});
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const { passphrase, includeSecrets } = parsed.data;
+  // Real secrets only ever leave the box inside an encrypted bundle.
+  const withSecrets = includeSecrets && !!passphrase;
+  const bundle = buildBundle(new Date().toISOString(), withSecrets);
+  logEvent({ type: "config.exported", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Exported a backup bundle${passphrase ? " (encrypted)" : ""}`, ip: clientIp(req), meta: { encrypted: !!passphrase, includeSecrets: withSecrets } });
+  return passphrase ? { encrypted: true, blob: encryptJson(bundle, passphrase) } : { encrypted: false, bundle };
+});
+
+// Restore a bundle (plaintext object or an encrypted blob + passphrase). Replaces
+// hosts/bans/channels and merges settings, then reloads nginx. Snapshots first.
+app.post("/api/config/restore", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  const parsed = z.object({
+    bundle: z.record(z.string(), z.unknown()).optional(),
+    blob: z.record(z.string(), z.unknown()).optional(),
+    passphrase: z.string().max(256).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  let data: unknown = parsed.data.bundle;
+  if (parsed.data.blob && isEncryptedEnvelope(parsed.data.blob)) {
+    try { data = decryptJson(parsed.data.blob, parsed.data.passphrase ?? ""); }
+    catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Couldn't decrypt the backup." }); }
+  }
+  if (!data) return reply.code(400).send({ error: "Provide a bundle or an encrypted blob + passphrase." });
+  snapshot("Before restoring a backup", currentUser(req)?.username ?? "admin");
+  let result;
+  try { result = restoreBundle(data); }
+  catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid backup bundle." }); }
+  writeGeoipConf();
+  const apply = await applyConfig();
+  void syncGitOps(`Restore backup (${result.hosts} services)`);
+  logEvent({ type: "config.restored", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: `Restored a backup: ${result.hosts} services, ${result.bans} bans, ${result.channels} channels`, ip: clientIp(req), meta: { ...result } });
+  return { ...result, apply };
+});
+
+// Legacy plaintext export (hosts + settings), now with secrets MASKED so it can't
+// leak provider credentials. Prefer POST /api/config/backup.
 app.get("/api/config/export", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return; // full dump includes provider secrets
-  return { version: VERSION, exportedAt: new Date().toISOString(), hosts: listHosts(), settings: getSettings() };
+  if (!requireAdmin(req, reply)) return;
+  const b = buildBundle(new Date().toISOString(), false);
+  return { version: b.version, exportedAt: b.createdAt, hosts: b.hosts, settings: b.settings };
 });
 app.post("/api/config/import", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;

@@ -66,6 +66,28 @@ export function removeBan(ip: string): boolean {
   return changed;
 }
 
+/** Replace the whole ban list (backup restore), in one transaction, then rewrite
+ *  the nginx deny-list. Returns how many bans were restored. */
+export function replaceAllBans(bans: Ban[]): number {
+  const insert = db.prepare(
+    "INSERT OR REPLACE INTO bans (ip, reason, source, createdAt, expiresAt) VALUES (?,?,?,?,?)",
+  );
+  db.exec("BEGIN");
+  try {
+    db.prepare("DELETE FROM bans").run();
+    for (const b of bans) {
+      insert.run(b.ip, b.reason ?? "", b.source ?? "manual", b.createdAt ?? new Date().toISOString(), b.expiresAt ?? null);
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  writeBannedConf();
+  scheduleBannedApply();
+  return bans.length;
+}
+
 /** Write the deny-list snippet included by the base nginx http block. */
 export function writeBannedConf(): void {
   if (!existsSync(dirname(BANNED_FILE))) mkdirSync(dirname(BANNED_FILE), { recursive: true });

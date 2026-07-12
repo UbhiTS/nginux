@@ -330,6 +330,35 @@ test("POST /api/hosts/batch applies one action to many services (admin/editor on
   assert.ok(!remaining.some((h) => h.id === a.id || h.id === b.id), "both services removed");
 });
 
+// ---------------------------------------------------------------------------
+// (15) Backup/restore bundle (feature 4.2): admin-only; an encrypted backup
+// round-trips through the HTTP endpoints.
+// ---------------------------------------------------------------------------
+test("POST /api/config/backup + /restore round-trip an encrypted bundle (admin-only)", async () => {
+  createHost(makeHost({ id: "bk1", name: "bk", domain: "bk-backup.example.com" }));
+  const admin = cookieFor(makeUser("admin"));
+
+  // Editors can't back up (full config dump).
+  const editor = await post("/api/config/backup", cookieFor(makeUser("editor")), {});
+  assert.equal(editor.statusCode, 403, "editor may not export a backup");
+
+  // Encrypted backup.
+  const bk = await post("/api/config/backup", admin, { passphrase: "backup-pass-123", includeSecrets: true });
+  assert.equal(bk.statusCode, 200);
+  const body = bk.json() as { encrypted: boolean; blob: { magic: string } };
+  assert.equal(body.encrypted, true);
+  assert.equal(body.blob.magic, "nginux-encrypted", "the payload is an encrypted envelope");
+
+  // Restoring with the right passphrase succeeds.
+  const good = await post("/api/config/restore", admin, { blob: body.blob, passphrase: "backup-pass-123" });
+  assert.equal(good.statusCode, 200, "restore with the correct passphrase works");
+  assert.ok((good.json() as { hosts: number }).hosts >= 1);
+
+  // The wrong passphrase is a clean 400, not a crash.
+  const bad = await post("/api/config/restore", admin, { blob: body.blob, passphrase: "nope" });
+  assert.equal(bad.statusCode, 400, "wrong passphrase -> 400");
+});
+
 test("require2faForManagers leaves read-only/scoped users and enrolled managers alone", async () => {
   saveSettings({ require2faForManagers: true });
   // A readonly user is not a manager -> unaffected.
