@@ -1,9 +1,32 @@
-# NginUX v0.1.0
+# NginUX v0.1.2
 
 NginUX is a self-hosted reverse-proxy manager for your homelab — expose internal
 services over HTTPS, gate them behind a login, and watch your traffic, all from one
 clean dashboard. Think Nginx Proxy Manager, rebuilt around a live network-topology
 view, real metrics, and an agent-ready API.
+
+## New in this release
+
+**New features**
+- **Config-diff preview** — "Preview changes" on any service dry-runs the exact
+  nginx-config diff a save would produce, colour-coded, before anything is written
+  or reloaded. Turns "edit and pray" into "see exactly what changes."
+- **Update button + one-click self-update** — an "Update available" button appears
+  (admins only) when a newer release or rebuilt image is published; with the Docker
+  socket opted-in it can pull and relaunch itself, auto-rolling-back on failure.
+
+**Hardening & correctness** (from a full adversarial review)
+- Fixed an nginx IP-deny rule that was dead code (and inverted to *allow*), gated
+  the per-host metrics feeds so scoped users can't enumerate services, closed a
+  login open-redirect, tightened the control-plane-domain hijack guard, and locked
+  scoped users out of upstream/domain/TLS routing changes.
+- Corrected long-range analytics (7d/30d were truncated to ~25h), maintenance mode
+  now short-circuits path routes, uptime monitoring debounces transient blips,
+  auto-ban exempts LAN devices, and alert channels coalesce storms.
+- Unified host-write validation into one shared schema so the REST and agent paths
+  can never drift apart.
+
+**Quality** — the regression suite grew from 133 to 193 tests.
 
 ## Highlights
 

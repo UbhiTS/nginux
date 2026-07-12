@@ -20,12 +20,12 @@ but two of them (1.1, 1.3) are places where a security-relevant validator has
 
 | # | Item | Why it matters | Pri | Effort | Status |
 |---|------|----------------|-----|--------|--------|
-| 1.1 | **Share host-write validation between REST and the agent tool path.** `server/src/index.ts` (zod `hostInput`) and `server/src/tools.ts` (`sanitizeHostPatch`) enforce the same injection/field rules twice, and have already diverged. Extract one shared validator both call. | A future field added to one path silently bypasses the other — the exact class of hole the review found. | P1 | M | ☐ |
-| 1.2 | **De-duplicate the control-plane self-hijack guard** (`isControlPlaneDomain` logic) currently mirrored in two files. | Two copies drift; the update-path copy already had a bug (fixed this pass). | P2 | S | ☐ |
-| 1.3 | **Share the per-line injection-sink validators** (`customHeaders` / `pathRules` / `upstreams`) copy-pasted between the zod schema and the agent sanitizer. | Same drift risk as 1.1, at the directive level. | P1 | S | ☐ |
-| 1.4 | **Remove the dead split helper + unify the triplicated `splitList`/`splitLines` utilities** across three server modules into one `util.ts`. | Dead code + three subtly-different splitters invite inconsistency. | P3 | S | ☐ |
+| 1.1 | **Share host-write validation between REST and the agent tool path.** ~~`index.ts` (zod `hostInput`) and `tools.ts` (`sanitizeHostPatch`) enforce the same rules twice and have diverged.~~ **Done (v0.1.2):** extracted `server/src/hostschema.ts`; the agent path now validates through `hostInput.partial()`. Parity pinned by tests. | A future field added to one path silently bypasses the other. | P1 | M | ☑ |
+| 1.2 | **De-duplicate the control-plane self-hijack guard.** **Done (v0.1.2):** `isControlPlaneDomain` lives once in `hostschema.ts`, shared by REST + agent. | Two copies drift; the update-path copy already had a bug. | P2 | S | ☑ |
+| 1.3 | **Share the per-line injection-sink validators** (`customHeaders`/`pathRules`/`upstreams`). **Done (v0.1.2):** shared predicates in `hostschema.ts`. | Same drift risk as 1.1, at the directive level. | P1 | S | ☑ |
+| 1.4 | **Unify the triplicated `splitList`/`splitLines` utilities.** **Done (v0.1.2):** canonical `splitLines`/`splitEntries` in `validate.ts`; index/tools/nginx all import them. | Dead code + three subtly-different splitters invite inconsistency. | P3 | S | ☑ |
 | 1.5 | **Finish the MCP `prompts` capability** in `server/src/mcp.ts` — it's advertised + listed but not retrievable (`prompts/get` unimplemented). Either wire it up or stop advertising it. | A half-wired capability confuses agent clients and reads as a bug. | P2 | S | ☐ |
-| 1.6 | **Widen `update_settings` SETTING_KEYS allowlist safely** (`tools.ts`) once 1.1's shared settings-validation layer exists — currently omits `allowedCountries`, `updateCheckEnabled`, `ssoLoginUrl`, etc. by design (no agent-side validation). | Depends on 1.1; do not widen without shared validation. | P2 | M | ☐ (blocked by 1.1) |
+| 1.6 | **Widen `update_settings` SETTING_KEYS allowlist safely** (`tools.ts`) now that 1.1's shared-schema layer exists — currently omits `allowedCountries`, `updateCheckEnabled`, `ssoLoginUrl`, etc. by design (no agent-side validation). | 1.1 is done, so this is now unblocked. | P2 | M | ☐ |
 
 ## 2. Performance & structure (deferred audit findings)
 
@@ -40,7 +40,7 @@ but two of them (1.1, 1.3) are places where a security-relevant validator has
 
 | # | Item | State | Pri | Status |
 |---|------|-------|-----|--------|
-| 3.1 | **Update button + one-click self-update.** Full implementation on local branch `backlog/self-update-button` (release checker every 6h, admin UI + modal, opt-in Docker-socket self-update with auto-rollback). | Everything verified live **except** the container swap (no Docker on the dev box). Needs **one supervised test on real Docker** (QNAP) before shipping. Resume by merging the branch — don't rewrite. | P1 | ⏸ |
+| 3.1 | **Update button + one-click self-update.** **Merged to main (v0.1.2)** — release checker, admin UI + modal, opt-in Docker-socket self-update with auto-rollback. Release detection + UI verified live + unit-tested. | ⚠️ The **container swap still needs one supervised test on real Docker** (QNAP) — untestable on the dev box. It's dormant unless the Docker socket is mounted AND an admin triggers it, so shipping it is safe. | P1 | ◐ (ships dormant; Docker swap unverified) |
 | 3.2 | **Per-FQDN DNS-01 base-domain derivation** (public-suffix-aware) so DNS-01 + wildcard issuance works across multiple base domains without settings juggling. Touch: `certs.ts`, `dns.ts`. | Specced; small, high-value, low-risk. | P2 | ☐ |
 | 3.3 | **Multi-realm login gate (per-base-domain SSO).** Per-host login URL + cookie domain so a login-gated service on a *second* base domain doesn't hit a redirect loop. Touch: `index.ts` (`authCookieDomain`), `nginx.ts`, settings, Settings UI. | Specced; bigger. True cross-domain SSO is impossible via cookies — goal is only to stop the loop. | P3 | ☐ |
 
@@ -50,7 +50,7 @@ Fresh ideas surfaced while reviewing. Not committed — here to triage.
 
 | # | Idea | Value | Pri | Effort |
 |---|------|-------|-----|--------|
-| 4.1 | **Config diff preview before apply.** Show the nginx-config diff (and `nginx -t` result) in the UI *before* writing/reloading, with a confirm step. | Turns "edit and pray" into "see exactly what changes." Big trust/safety win for the core workflow. | P1 | M |
+| 4.1 | ~~**Config diff preview before apply.**~~ **Done (v0.1.2)** — "Preview changes" dry-runs the colour-coded nginx-config diff before writing/reloading, with a confirm step. (nginx -t still runs at apply time with rollback.) | Turns "edit and pray" into "see exactly what changes." | P1 ✅ | M |
 | 4.2 | **Backup & restore bundle.** One-click encrypted export/import of hosts + settings + bans + channels (certs optional). | Disaster recovery + easy migration between boxes; today there's no portable snapshot. | P1 | M |
 | 4.3 | **HTTP(S) health checks** (not just TCP): expected status, path, and interval per service — complements the new uptime-debounce logic. | TCP-connect says "port open," not "app healthy." | P2 | M |
 | 4.4 | **Security profiles / rate-limit presets.** Named, reusable bundles (headers + rate limit + geo + exploit-block) applied across services. | Consistency + far fewer per-host mistakes. | P2 | M |
@@ -63,4 +63,4 @@ Fresh ideas surfaced while reviewing. Not committed — here to triage.
 
 ---
 
-_Last triaged: 2026-07-11, after the full-application adversarial review + regression-suite expansion (133 → 165 tests, 71.9% line coverage)._
+_Last triaged: 2026-07-12. Shipped in v0.1.2: §1.1–1.4 (shared validation), §4.1 (config-diff preview), §3.1 (self-update, ships dormant pending a Docker swap test). Regression suite 133 → 193 tests._
