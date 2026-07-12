@@ -41,6 +41,11 @@ verification and the parking lot.
 Released; regression suite 193 → 248 tests. Bundles the full backlog batch plus its
 three deferred follow-ups (F1–F3). See `RELEASE_NOTES.md` for the user-facing summary.
 
+> **Recut note:** this work first shipped as **v0.2.0 / v0.2.1 / v0.2.2** on the same
+> day, then those three releases + git tags + GHCR images were withdrawn and collapsed
+> into this single v0.1.3 patch on top of v0.1.2. The `Release v0.2.x` commits remain
+> in git history as a factual record; no tags/releases/images for them survive.
+
 **Follow-ups (F1–F3)** — pure hardening/refactor, verified by tsc + tests + an
 in-browser pass over both analytics consumers.
 
@@ -88,5 +93,6 @@ in-browser pass over both analytics consumers.
 
 ---
 
-_Last triaged: 2026-07-12. Backlog fully implemented and released as v0.1.3. Active
-work is the §3.1 Docker-swap test and the F4/F5 follow-ups (all low priority)._
+_Last triaged: 2026-07-12 (post-recut to v0.1.3; interim v0.2.x releases withdrawn).
+Backlog fully implemented and released as v0.1.3. Active work is the §3.1 Docker-swap
+test and the F4/F5 follow-ups (all low priority)._
