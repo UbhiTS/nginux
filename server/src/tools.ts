@@ -13,7 +13,8 @@ import { PRESETS } from "./presets.ts";
 import type { AgentPrincipal, Scope } from "./tokens.ts";
 import { isHost, isHostname, isIpOrCidr } from "./validate.ts";
 import { hostInput, isControlPlaneDomain, validName } from "./hostschema.ts";
-import type { NewProxyHost, ProxyHost, Settings } from "./types.ts";
+import { settingsInput } from "./settingsschema.ts";
+import type { NewProxyHost, ProxyHost } from "./types.ts";
 
 // Agents reach updateHost/createHost WITHOUT the REST zod schema, so validate
 // here too. Fields an agent may never set via the generic update_service tool:
@@ -97,12 +98,6 @@ export function scopesForRole(role: User["role"]): Scope[] {
       return ["read"];
   }
 }
-
-const SETTING_KEYS: (keyof Settings)[] = [
-  "instanceName", "baseDomain", "theme", "letsEncryptEmail", "homeCountry",
-  "publicIp", "gatewayIp", "dnsProvider", "godaddyApiKey", "godaddySecret", "cloudflareApiToken",
-  "maxmindLicenseKey", "acmeStaging", "agentAutoApprove", "gitOpsEnabled",
-];
 
 const hostConfigFor = (h: ProxyHost): string =>
   h.protocol === "sni" ? generateSniPassthrough([h])
@@ -415,9 +410,12 @@ export const TOOLS: Record<string, Tool> = {
     summarize: () => "update settings",
     handler: async (a) => {
       const raw = (a.patch as Record<string, unknown>) ?? {};
-      const patch: Partial<Settings> = {};
-      for (const k of SETTING_KEYS) if (k in raw) (patch as Record<string, unknown>)[k] = raw[k];
-      saveSettings(patch);
+      // Validate through the SAME schema as REST (settingsschema.ts): unknown keys
+      // are stripped, and every accepted field is bounds/charset/enum-checked - so
+      // the agent path can safely accept the full settings surface without drift.
+      const parsed = settingsInput.safeParse(raw);
+      if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") || "Invalid settings patch.");
+      saveSettings(parsed.data);
       writeGeoipConf();
       await applyConfig();
       return redactSettings(getSettings());

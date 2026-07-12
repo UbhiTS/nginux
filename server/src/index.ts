@@ -115,6 +115,7 @@ import {
   isIpOrCidr,
 } from "./validate.ts";
 import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
+import { settingsInput } from "./settingsschema.ts";
 import {
   createChannel,
   deleteChannel,
@@ -464,34 +465,8 @@ app.post("/api/update/apply", async (req, reply) => {
 app.get("/api/presets", async () => Object.values(PRESETS));
 
 // ---------- settings ----------
-const settingsInput = z.object({
-  instanceName: z.string().max(120),
-  baseDomain: z.string().max(253).refine((s) => s === "" || isHostname(s), "Invalid base domain."),
-  theme: z.enum(["dark", "less-dark", "medium", "less-light", "light"]),
-  letsEncryptEmail: z.string().max(254),
-  homeCountry: z.string().max(2),
-  // Comma/space-separated ISO-3166-1 alpha-2 codes; geoip.ts filters to valid
-  // 2-letter tokens, so we only bound length + charset here (no injection into
-  // the generated nginx map - each code is re-validated against /^[A-Z]{2}$/).
-  allowedCountries: z.string().max(512).regex(/^[A-Za-z ,]*$/, "Only letters, spaces and commas."),
-  publicIp: z.string().max(64),
-  gatewayIp: z.string().max(64),
-  dnsProvider: z.enum(["none", "godaddy", "cloudflare"]),
-  godaddyApiKey: z.string().max(256),
-  godaddySecret: z.string().max(256),
-  cloudflareApiToken: z.string().max(256),
-  maxmindLicenseKey: z.string().max(256),
-  acmeStaging: z.boolean(),
-  updateCheckEnabled: z.boolean(),
-  agentAutoApprove: z.boolean(),
-  require2faForManagers: z.boolean(),
-  gitOpsEnabled: z.boolean(),
-  ssoLoginUrl: z.string().max(512).refine((s) => s === "" || /^https?:\/\/[^\s/]+/i.test(s), "Must be a full URL like https://nginux.example.com."),
-  ssoCookieDomain: z.string().max(253).refine((s) => s === "" || /^\.?[a-z0-9.-]+$/i.test(s), "Invalid cookie domain."),
-  ssoForwardSecret: z.string().max(256),
-  logMaxMb: z.number().int().min(0).max(100000),
-  logKeepFiles: z.number().int().min(0).max(50),
-}).partial();
+// settingsInput (the write-validation schema) lives in settingsschema.ts, shared
+// verbatim with the agent update_settings tool so the two paths can't drift.
 
 app.get("/api/settings", async (req) => {
   const s = getSettings();
