@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { setupTestEnv } from "./helpers.ts";
 
 setupTestEnv();
-const { isAlertWorthy, createChannel, listChannels } = await import("../src/notify.ts");
+const { isAlertWorthy, createChannel, listChannels, setChannelRouting } = await import("../src/notify.ts");
 
 // -------------------------------------------------------------------------
 // 1. isAlertWorthy - the alert-severity gate.
@@ -66,4 +66,32 @@ test("maskConfig keeps non-secret fields readable (partial mask on semi-sensitiv
   // The password is a secret and must be masked.
   assert.notEqual(created.config.pass, "hunter2hunter2", "pass must be masked");
   assert.ok(created.config.pass.includes("•"), "pass must be bullet-masked");
+});
+
+// -------------------------------------------------------------------------
+// 3. Per-channel severity routing (backlog 4.7): a channel stores a severity
+//    floor; the alert engine skips events below it (unit-tested in severity.test).
+// -------------------------------------------------------------------------
+test("createChannel defaults minSeverity to 'info' and persists an explicit floor", () => {
+  const def = createChannel({ type: "slack", name: "all", config: { url: "https://hooks.slack.com/x" } });
+  assert.equal(def.minSeverity, "info", "default floor is info (backward-compatible: all severities)");
+
+  const pager = createChannel({ type: "webhook", name: "pager", config: { url: "https://pager.example.com/x" }, minSeverity: "danger" });
+  assert.equal(pager.minSeverity, "danger", "an explicit floor is stored");
+  // It survives a re-list.
+  const listed = listChannels().find((c) => c.id === pager.id);
+  assert.equal(listed?.minSeverity, "danger");
+});
+
+test("setChannelRouting edits events + severity floor, leaving unspecified fields intact", () => {
+  const ch = createChannel({ type: "discord", name: "route", config: { url: "https://discord.example.com/x" }, events: ["*"], minSeverity: "info" });
+  const updated = setChannelRouting(ch.id, { minSeverity: "warn" });
+  assert.equal(updated?.minSeverity, "warn", "floor updated");
+  assert.deepEqual(updated?.events, ["*"], "events left intact when only the floor changes");
+
+  const routed = setChannelRouting(ch.id, { events: ["security.ip_banned", "service.upstream_down"] });
+  assert.deepEqual(routed?.events, ["security.ip_banned", "service.upstream_down"], "events updated");
+  assert.equal(routed?.minSeverity, "warn", "floor left intact when only events change");
+
+  assert.equal(setChannelRouting("no-such-channel", { minSeverity: "info" }), null, "unknown id -> null");
 });

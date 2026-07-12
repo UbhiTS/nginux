@@ -212,10 +212,12 @@ export const api = {
 
   // ---- notification channels ----
   channels: () => req<Channel[]>("/channels"),
-  createChannel: (type: string, name: string, config: Record<string, string>, events: string[] = ["*"]) =>
-    req<Channel>("/channels", { method: "POST", body: JSON.stringify({ type, name, config, events }) }),
+  createChannel: (type: string, name: string, config: Record<string, string>, minSeverity = "info", events: string[] = ["*"]) =>
+    req<Channel>("/channels", { method: "POST", body: JSON.stringify({ type, name, config, events, minSeverity }) }),
   setChannelEnabled: (id: string, enabled: boolean) =>
     req<{ ok: boolean }>(`/channels/${id}/enabled`, { method: "PUT", body: JSON.stringify({ enabled }) }),
+  setChannelRouting: (id: string, patch: { events?: string[]; minSeverity?: string }) =>
+    req<Channel>(`/channels/${id}/routing`, { method: "PUT", body: JSON.stringify(patch) }),
   deleteChannel: (id: string) => req<{ ok: boolean }>(`/channels/${id}`, { method: "DELETE" }),
   testChannel: (id: string) => req<{ ok: boolean; status: string }>(`/channels/${id}/test`, { method: "POST" }),
 };
@@ -326,10 +328,11 @@ export interface Uptime {
 
 export interface Channel {
   id: string;
-  type: "ntfy" | "gotify" | "pushover" | "discord" | "slack" | "telegram" | "webhook";
+  type: "ntfy" | "gotify" | "pushover" | "discord" | "slack" | "telegram" | "webhook" | "email";
   name: string;
   config: Record<string, string>;
   events: string[];
+  minSeverity: "info" | "notice" | "warn" | "danger";
   enabled: boolean;
   lastStatus: string | null;
   createdAt: string;

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import { db } from "./db.ts";
 import { matchesEvent, subscribe } from "./events.ts";
+import { meetsSeverity } from "./severity.ts";
 
 export type ChannelType = "ntfy" | "gotify" | "pushover" | "discord" | "slack" | "telegram" | "webhook" | "email";
 
@@ -11,6 +12,8 @@ export interface Channel {
   name: string;
   config: Record<string, string>;
   events: string[];
+  /** Only alert this channel for events at or above this severity (info = all). */
+  minSeverity: string;
   enabled: boolean;
   lastStatus: string | null;
   createdAt: string;
@@ -21,6 +24,7 @@ function toChannel(r: Row): Channel {
   return {
     id: String(r.id), type: r.type as ChannelType, name: String(r.name),
     config: JSON.parse(String(r.config)), events: JSON.parse(String(r.events)),
+    minSeverity: String(r.minSeverity ?? "info"),
     enabled: !!r.enabled, lastStatus: r.lastStatus ? String(r.lastStatus) : null, createdAt: String(r.createdAt),
   };
 }
@@ -50,10 +54,11 @@ function maskConfig(config: Record<string, string>): Record<string, string> {
   return out;
 }
 
-export function createChannel(input: { type: ChannelType; name: string; config: Record<string, string>; events?: string[] }): Channel {
+export function createChannel(input: { type: ChannelType; name: string; config: Record<string, string>; events?: string[]; minSeverity?: string }): Channel {
   const id = randomUUID();
-  db.prepare("INSERT INTO channels (id, type, name, config, events, enabled, createdAt) VALUES (?,?,?,?,?,1,?)").run(
-    id, input.type, input.name, JSON.stringify(input.config), JSON.stringify(input.events ?? ["*"]), new Date().toISOString(),
+  db.prepare("INSERT INTO channels (id, type, name, config, events, minSeverity, enabled, createdAt) VALUES (?,?,?,?,?,?,1,?)").run(
+    id, input.type, input.name, JSON.stringify(input.config), JSON.stringify(input.events ?? ["*"]),
+    input.minSeverity ?? "info", new Date().toISOString(),
   );
   return { ...getChannelRaw(id)!, config: maskConfig(getChannelRaw(id)!.config) };
 }
@@ -62,6 +67,16 @@ export function deleteChannel(id: string): boolean {
 }
 export function setChannelEnabled(id: string, enabled: boolean) {
   db.prepare("UPDATE channels SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+}
+/** Edit a channel's routing: which event types it matches and its severity floor. */
+export function setChannelRouting(id: string, patch: { events?: string[]; minSeverity?: string }): Channel | null {
+  const cur = getChannelRaw(id);
+  if (!cur) return null;
+  const events = patch.events ?? cur.events;
+  const minSeverity = patch.minSeverity ?? cur.minSeverity;
+  db.prepare("UPDATE channels SET events = ?, minSeverity = ? WHERE id = ?").run(JSON.stringify(events), minSeverity, id);
+  const updated = getChannelRaw(id)!;
+  return { ...updated, config: maskConfig(updated.config) };
 }
 
 // ---------- delivery ----------
@@ -186,6 +201,9 @@ export function initAlertEngine(): void {
     for (const r of db.prepare("SELECT * FROM channels WHERE enabled = 1").all() as Row[]) {
       const ch = toChannel(r);
       if (!matchesEvent(ch.events, e.type)) continue;
+      // Severity routing: a channel with minSeverity "danger" ignores info/notice/
+      // warn events; the default "info" lets everything through (backward-compatible).
+      if (!meetsSeverity(severity, ch.minSeverity)) continue;
       const key = `${ch.id}|${e.type}`;
       const bucket = alertBuckets.get(key);
       if (!bucket) {

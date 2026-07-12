@@ -508,11 +508,21 @@ const CHANNEL_FIELDS: Record<string, { key: string; label: string; secret?: bool
   email: [{ key: "host", label: "SMTP host" }, { key: "port", label: "Port" }, { key: "user", label: "Username", secret: true }, { key: "pass", label: "Password", secret: true }, { key: "from", label: "From" }, { key: "to", label: "To" }],
 };
 
+// Severity floor a channel alerts on: e.g. a pager channel set to "danger" ignores
+// routine notices, while the default "info" forwards everything (as before).
+const SEVERITY_OPTIONS = [
+  { value: "info", label: "All (info+)" },
+  { value: "notice", label: "Notice+" },
+  { value: "warn", label: "Warnings+" },
+  { value: "danger", label: "Danger only" },
+];
+
 function Notifications() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [type, setType] = useState("ntfy");
   const [name, setName] = useState("");
   const [config, setConfig] = useState<Record<string, string>>({});
+  const [minSeverity, setMinSeverity] = useState("info");
   const [msg, setMsg] = useState("");
 
   const load = () => { api.channels().then(setChannels).catch(() => {}); };
@@ -520,8 +530,8 @@ function Notifications() {
 
   const add = async () => {
     if (!name) return;
-    await api.createChannel(type, name, config);
-    setName(""); setConfig({});
+    await api.createChannel(type, name, config, minSeverity);
+    setName(""); setConfig({}); setMinSeverity("info");
     load();
   };
   const test = async (id: string) => {
@@ -554,15 +564,27 @@ function Notifications() {
               onChange={(e) => setConfig((c) => ({ ...c, [f.key]: e.target.value }))}
             />
           ))}
+          <select className="input" style={{ maxWidth: 150 }} value={minSeverity} onChange={(e) => setMinSeverity(e.target.value)} title="Only alert this channel at or above this severity">
+            {SEVERITY_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
           <button className="btn btn-primary btn-sm" onClick={add}>Add channel</button>
         </div>
         {msg && <div className="info-line" style={{ marginTop: 10 }}><Icon.info />{msg}</div>}
       </div>
       <div className="card atable">
         {channels.map((c) => (
-          <div key={c.id} className="arow" style={{ gridTemplateColumns: "72px 1fr auto auto auto", gap: 12 }}>
+          <div key={c.id} className="arow" style={{ gridTemplateColumns: "72px 1fr auto auto auto auto", gap: 12 }}>
             <span className="pill n" style={{ justifySelf: "center" }}>{c.type}</span>
             <div><b>{c.name}</b> <span className="muted" style={{ fontSize: 11 }}>{c.lastStatus ?? "untested"}</span></div>
+            <select
+              className="input"
+              style={{ maxWidth: 130, height: 30, padding: "0 8px", fontSize: 12 }}
+              value={c.minSeverity ?? "info"}
+              title="Severity floor: this channel only alerts at or above this level"
+              onChange={async (e) => { await api.setChannelRouting(c.id, { minSeverity: e.target.value }); load(); }}
+            >
+              {SEVERITY_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
             <button className={`switch${c.enabled ? " on" : ""}`} onClick={async () => { await api.setChannelEnabled(c.id, !c.enabled); load(); }} />
             <button className="btn btn-ghost btn-sm" onClick={() => test(c.id)}>Test</button>
             <button className="btn btn-ghost btn-sm" onClick={async () => { await api.deleteChannel(c.id); load(); }}>Delete</button>
