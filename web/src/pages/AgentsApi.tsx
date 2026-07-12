@@ -323,10 +323,10 @@ function EventsTab({ origin }: { origin: string }) {
       <div className="section-title">Outbound webhooks</div>
       <div className="card card-pad" style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 10 }}>
-          <input className="input" placeholder="https://your-endpoint/webhook" value={url} onChange={(e) => setUrl(e.target.value)} />
+          <input className="input" placeholder="https://your-endpoint/webhook  or  syslog://siem.local:514" value={url} onChange={(e) => setUrl(e.target.value)} />
           <button className="btn btn-primary btn-sm" onClick={addWebhook}>Add</button>
         </div>
-        <div className="info-line" style={{ marginTop: 8 }}><Icon.info /> Deliveries are signed with an HMAC <span className="mono">X-NginUX-Signature</span> header.</div>
+        <div className="info-line" style={{ marginTop: 8 }}><Icon.info /> HTTP deliveries are signed with an HMAC <span className="mono">X-NginUX-Signature</span> header. Use a <span className="mono">syslog://host:port</span> (or <span className="mono">syslog+tcp://</span>) URL to stream events to a SIEM.</div>
       </div>
       <div className="card atable">
         {webhooks.map((w) => (
