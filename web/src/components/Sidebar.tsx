@@ -7,6 +7,7 @@ import { Icon } from "../icons.tsx";
 import { Avatar } from "./Avatar.tsx";
 import { BrandLogo } from "./BrandLogo.tsx";
 import { ServiceIcon } from "./ServiceIcon.tsx";
+import { UpdateButton } from "./UpdateButton.tsx";
 import type { Theme } from "../theme.ts";
 
 interface Props {
@@ -120,6 +121,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
         {item("settings", "Settings", Icon.gear)}
       </nav>
 
+      {user.role === "admin" && <UpdateButton />}
       <div className="sidebar-footer">
         <Avatar userId={user.id} name={user.username} editable />
         <div style={{ fontSize: 12.5, minWidth: 0, flex: 1 }}>

@@ -64,6 +64,7 @@ export interface Settings {
   cloudflareApiToken: string;
   maxmindLicenseKey: string;
   acmeStaging: boolean;
+  updateCheckEnabled: boolean;
   agentAutoApprove: boolean;
   gitOpsEnabled: boolean;
   ssoLoginUrl: string;

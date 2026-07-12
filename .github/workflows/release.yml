@@ -96,6 +96,8 @@ jobs:
           tags: |
             ${{ steps.image.outputs.repo }}:${{ steps.version.outputs.next }}
             ${{ steps.image.outputs.repo }}:latest
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

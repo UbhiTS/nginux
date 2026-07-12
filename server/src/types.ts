@@ -110,6 +110,8 @@ export interface Settings {
   maxmindLicenseKey: string;
   /** Use Let's Encrypt staging (avoids rate limits while testing). */
   acmeStaging: boolean;
+  /** Periodically check GitHub for a newer NginUX release (no data sent). */
+  updateCheckEnabled: boolean;
   /** Allow trusted agents to auto-run low/medium-risk tools without approval. */
   agentAutoApprove: boolean;
   /** Commit generated config + state to a local git repo on every apply. */

@@ -152,6 +152,11 @@ export const api = {
     req<CertImportResult>("/certificates/import", { method: "POST", body: JSON.stringify({ files }) }),
   acmeLog: (since: number) => req<AcmeActivity>(`/acme/log?since=${since}`),
 
+  // ---- self-update ----
+  updateStatus: () => req<UpdateStatus>("/update/status"),
+  updateCheck: () => req<UpdateStatus>("/update/check", { method: "POST" }),
+  updateApply: () => req<{ ok: boolean; message: string }>("/update/apply", { method: "POST" }),
+
   // ---- geoip (country lock) ----
   geoipStatus: () => req<GeoipStatus>("/geoip/status"),
   downloadGeoip: () => req<{ ok: boolean; status: GeoipStatus }>("/geoip/download", { method: "POST" }),
@@ -236,6 +241,25 @@ export interface Reachability {
 export interface CertImportResult {
   imported: { domain: string; notAfter: string; staging: boolean }[];
   skipped: { name: string; reason: string }[];
+}
+
+export interface UpdateStatus {
+  current: string;
+  buildSha: string;
+  latestVersion: string | null;
+  latestSha: string | null;
+  releaseName: string | null;
+  notes: string | null;
+  releaseUrl: string | null;
+  publishedAt: string | null;
+  available: boolean;
+  canSelfUpdate: boolean;
+  image: string;
+  checkedAt: string | null;
+  checkError: string | null;
+  applyState: "idle" | "pulling" | "handing-off" | "failed";
+  applyError: string | null;
+  simulated: boolean;
 }
 
 export interface AcmeLogEntry {

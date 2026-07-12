@@ -89,6 +89,13 @@ export function SettingsPage({
               <label>Base domain</label>
               <input className="input" value={settings.baseDomain} onChange={(e) => update({ baseDomain: e.target.value })} placeholder="yourdomain.com" />
             </div>
+            <div className="switch-row" style={{ marginTop: 0, marginBottom: 14 }}>
+              <div className="sw-text">
+                <div className="t">Check for updates</div>
+                <div className="d">Look for new NginUX releases on GitHub (every 6 hours; nothing about your instance is sent). An Update button appears in the sidebar when one is out.</div>
+              </div>
+              <button className={`switch${settings.updateCheckEnabled ? " on" : ""}`} onClick={() => update({ updateCheckEnabled: !settings.updateCheckEnabled })} />
+            </div>
             <div className="field" style={{ marginBottom: 0 }}>
               <label>NginUX public URL</label>
               <input className="input" value={settings.ssoLoginUrl} onChange={(e) => update({ ssoLoginUrl: e.target.value })} placeholder={`https://nginux.${base}`} />

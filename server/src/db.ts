@@ -321,6 +321,7 @@ const DEFAULT_SETTINGS: Settings = {
   cloudflareApiToken: "",
   maxmindLicenseKey: "",
   acmeStaging: false,
+  updateCheckEnabled: true,
   agentAutoApprove: false,
   gitOpsEnabled: false,
   ssoLoginUrl: "",
@@ -348,6 +349,7 @@ export function getSettings(): Settings {
   const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   const merged = { ...DEFAULT_SETTINGS, ...map } as Record<string, unknown>;
   merged.acmeStaging = String(merged.acmeStaging) === "true"; // stored as string
+  merged.updateCheckEnabled = String(merged.updateCheckEnabled) !== "false"; // default ON
   merged.agentAutoApprove = String(merged.agentAutoApprove) === "true";
   merged.gitOpsEnabled = String(merged.gitOpsEnabled) === "true";
   merged.logMaxMb = Number(merged.logMaxMb) || 0; // stored as string

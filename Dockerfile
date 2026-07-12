@@ -47,6 +47,10 @@ RUN chmod +x /entrypoint.sh
 # /data/nginx/selfsigned.{crt,key} (see server/src/nginx.ts) and entrypoint.sh
 # writes them there - so baking them in would only duplicate the default and trip
 # the "secret in ENV" image check on the *_KEY name. Override at runtime if needed.
+# Commit this image was built from (release workflow passes it). The update
+# checker compares it against the latest release so a rebuilt image is
+# detectable even when the version number didn't change.
+ARG GIT_SHA=""
 ENV NODE_ENV=production \
     PORT=6767 \
     HOST=0.0.0.0 \
@@ -56,7 +60,8 @@ ENV NODE_ENV=production \
     NGINX_BANNED_FILE=/data/nginx/banned.conf \
     NGINX_ACCESS_LOG=/data/logs/access.log \
     CERT_DIR=/data/certs \
-    ACME_WEBROOT=/data/acme-webroot
+    ACME_WEBROOT=/data/acme-webroot \
+    NGINUX_BUILD_SHA=$GIT_SHA
 
 # 6767 = control-plane UI/API · 80/443 = proxied traffic (data plane)
 EXPOSE 6767 80 443

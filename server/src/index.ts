@@ -56,6 +56,7 @@ import {
 import type { ProxyHost } from "./types.ts";
 import { otpauthURL, verifyTotp, verifyTotpCounter } from "./totp.ts";
 import { VERSION } from "./version.ts";
+import { applyUpdate, checkForUpdate, simulateStaleBuild, startUpdateChecker, updateStatus } from "./update.ts";
 import {
   AcmeError,
   deleteCert,
@@ -417,6 +418,28 @@ app.get("/api/notifications", async (req, reply) => {
   return buildNotifications({ isManager });
 });
 
+// ---------- self-update (admin only; agents have no tool for this on purpose) ----------
+app.get("/api/update/status", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  return updateStatus();
+});
+
+app.post("/api/update/check", async (req, reply) => {
+  if (!requireAdmin(req, reply)) return;
+  // Dev-only escape hatch: ?simulate=1 marks the current build stale so the
+  // update flow can be exercised without a real newer release.
+  const simulate = (req.query as { simulate?: string }).simulate === "1";
+  if (simulate && process.env.NODE_ENV !== "production") return simulateStaleBuild();
+  return checkForUpdate();
+});
+
+app.post("/api/update/apply", async (req, reply) => {
+  const admin = requireAdmin(req, reply);
+  if (!admin) return;
+  const result = await applyUpdate(admin.username);
+  return reply.code(result.ok ? 200 : 422).send(result);
+});
+
 // ---------- presets ----------
 app.get("/api/presets", async () => Object.values(PRESETS));
 
@@ -439,6 +462,7 @@ const settingsInput = z.object({
   cloudflareApiToken: z.string().max(256),
   maxmindLicenseKey: z.string().max(256),
   acmeStaging: z.boolean(),
+  updateCheckEnabled: z.boolean(),
   agentAutoApprove: z.boolean(),
   gitOpsEnabled: z.boolean(),
   ssoLoginUrl: z.string().max(512).refine((s) => s === "" || /^https?:\/\/[^\s/]+/i.test(s), "Must be a full URL like https://nginux.example.com."),
@@ -1599,6 +1623,8 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   }
   // Daily auto-renewal + cert status refresh.
   startRenewalScheduler();
+  // Release checker (GitHub releases; respects the Settings toggle).
+  startUpdateChecker();
   // Metrics: tail nginx access logs; only feed synthetic traffic when explicitly
   // asked (NGINUX_DEMO_TRAFFIC=1) or in an explicit dev run - never silently in prod.
   startLogTailer();

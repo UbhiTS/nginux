@@ -247,3 +247,23 @@ test("POST /api/config/preview: invalid proposed host is 400; unknown update id 
   const missing = await post("/api/config/preview", admin, { mode: "update", id: "no-such-host", host: { forwardPort: 3001 } });
   assert.equal(missing.statusCode, 404, "previewing an update to a nonexistent host is 404");
 });
+
+// ---------------------------------------------------------------------------
+// (12) Self-update endpoints are admin-only (an editor manages services but not
+// the platform itself). GET /status returns the cached build identity (no network).
+// ---------------------------------------------------------------------------
+test("GET /api/update/status is admin-only and reports the running build", async () => {
+  const editor = await app.inject({ method: "GET", url: "/api/update/status", headers: { cookie: cookieFor(makeUser("editor")) } });
+  assert.equal(editor.statusCode, 403, "an editor may not read platform update status");
+
+  const admin = await app.inject({ method: "GET", url: "/api/update/status", headers: { cookie: cookieFor(makeUser("admin")) } });
+  assert.equal(admin.statusCode, 200, "an admin may read update status");
+  const body = admin.json() as { current: string; canSelfUpdate: boolean };
+  assert.ok(typeof body.current === "string" && body.current.length > 0, "status reports the current version");
+  assert.equal(body.canSelfUpdate, false, "no docker socket on the test runner");
+});
+
+test("POST /api/update/apply is admin-only", async () => {
+  const editor = await app.inject({ method: "POST", url: "/api/update/apply", headers: { cookie: cookieFor(makeUser("editor")) } });
+  assert.equal(editor.statusCode, 403, "an editor may not trigger a self-update");
+});

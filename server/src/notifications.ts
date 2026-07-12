@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
 import { CERT_DIR, listCerts } from "./certs.ts";
+import { updateStatus } from "./update.ts";
 
 /** A plain-language heads-up shown in the app's notification banner. */
 export interface AppNotification {
@@ -90,6 +91,21 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
   }
 
   if (!opts.isManager) return out;
+
+  // 2b. A newer NginUX release is out - point at the sidebar's Update button.
+  const upd = updateStatus();
+  if (upd.available && !upd.simulated) {
+    const what = upd.latestVersion && upd.latestVersion !== upd.current
+      ? `v${upd.latestVersion}`
+      : `a new v${upd.current} build`;
+    out.push({
+      id: `update-available:${upd.latestVersion}:${(upd.latestSha ?? "").slice(0, 7)}`,
+      severity: "info",
+      title: `NginUX ${what} is available`,
+      message: "Click the Update button at the bottom of the sidebar to read the release notes and update.",
+      dismissible: true,
+    });
+  }
 
   // 3. Temporary self-signed cert in use → visitors get a browser warning.
   const selfSigned = enabled.filter(

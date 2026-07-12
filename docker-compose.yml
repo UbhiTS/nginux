@@ -14,6 +14,13 @@ services:
       - "443:443" # proxied HTTPS traffic (data plane)
     volumes:
       - nginux-data:/data # sqlite db, generated nginx config, certs
+      # OPTIONAL - one-click self-update from the UI. Mounting the Docker socket
+      # lets NginUX pull its new image and recreate itself (with automatic
+      # rollback if the new version doesn't come up healthy). The socket is
+      # root-equivalent on the host: enable it only if you're comfortable with
+      # that trade, and NEVER expose :6767 to the internet (LAN/VPN only).
+      # Without it, the Update button shows copy-paste instructions instead.
+      # - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - LOG_LEVEL=info
       # By default NginUX runs as whoever owns the mounted data directory, so
