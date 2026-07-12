@@ -1,32 +1,38 @@
-# NginUX v0.1.2
+# NginUX v0.2.0
 
 NginUX is a self-hosted reverse-proxy manager for your homelab — expose internal
 services over HTTPS, gate them behind a login, and watch your traffic, all from one
 clean dashboard. Think Nginx Proxy Manager, rebuilt around a live network-topology
 view, real metrics, and an agent-ready API.
 
-## New in this release
+## New in v0.2.0 — the whole backlog
 
-**New features**
-- **Config-diff preview** — "Preview changes" on any service dry-runs the exact
-  nginx-config diff a save would produce, colour-coded, before anything is written
-  or reloaded. Turns "edit and pray" into "see exactly what changes."
-- **Update button + one-click self-update** — an "Update available" button appears
-  (admins only) when a newer release or rebuilt image is published; with the Docker
-  socket opted-in it can pull and relaunch itself, auto-rolling-back on failure.
+**Operations & recovery**
+- **Backup & restore** — one-click portable bundle of hosts + settings + bans +
+  channels, optionally passphrase-encrypted (AES-256-GCM). Migrate between boxes or
+  recover in seconds.
+- **Bulk actions** — select multiple services and enable / disable / maintenance /
+  delete / apply-a-profile in one reload.
+- **Import from nginx.conf** — paste an existing config, preview exactly what will
+  be created, then confirm.
+- **Security profiles** — named, reusable security bundles applied across services.
 
-**Hardening & correctness** (from a full adversarial review)
-- Fixed an nginx IP-deny rule that was dead code (and inverted to *allow*), gated
-  the per-host metrics feeds so scoped users can't enumerate services, closed a
-  login open-redirect, tightened the control-plane-domain hijack guard, and locked
-  scoped users out of upstream/domain/TLS routing changes.
-- Corrected long-range analytics (7d/30d were truncated to ~25h), maintenance mode
-  now short-circuits path routes, uptime monitoring debounces transient blips,
-  auto-ban exempts LAN devices, and alert channels coalesce storms.
-- Unified host-write validation into one shared schema so the REST and agent paths
-  can never drift apart.
+**Security & visibility**
+- **HTTP(S) health checks** — probe the app (path + expected status), not just the
+  port. **Enforce-2FA policy** for admins/editors. **Geo-block analytics** — see
+  blocked attempts by country and IP, ban an offender in one click.
+- **Alert routing by severity** (danger → pager, info → Slack) and a **syslog sink**
+  so audit events can stream to a SIEM.
+- **Multi-realm login gate** — gate services on a *second* base domain without the
+  redirect loop. **Per-FQDN DNS-01** so wildcard certs work across domains.
 
-**Quality** — the regression suite grew from 133 to 193 tests.
+**Under the hood**
+- Async streaming access-log reader (no more event-loop-blocking reads), a shared
+  settings-validation schema, a single-pass metrics aggregation, MCP `prompts/get`,
+  and the start of a modular route layout.
+
+**Quality** — the regression suite grew from 193 to **247 tests**; the full config
+also carries the v0.1.2 hardening (adversarial-review fixes) and config-diff preview.
 
 ## Highlights
 

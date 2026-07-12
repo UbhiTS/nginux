@@ -56,17 +56,31 @@ jobs:
         run: |
           git fetch --tags --force
           latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1)"
+          # The intended version is the hand-maintained source of truth in
+          # version.ts (which the UI shows). Baseline is an auto patch-increment
+          # from the latest tag.
+          file_ver="v$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' server/src/version.ts | head -n1)"
           if [ -z "$latest" ]; then
-            next="v0.1.0"
+            auto="v0.1.0"
           else
             ver="${latest#v}"
             major="${ver%%.*}"; rest="${ver#*.}"
             minor="${rest%%.*}"; patch="${rest#*.}"
-            next="v${major}.${minor}.$((patch + 1))"
+            auto="v${major}.${minor}.$((patch + 1))"
+          fi
+          # Honor version.ts when it declares a version STRICTLY GREATER than the
+          # latest tag (lets a deliberate minor/major bump drive the release, and
+          # keeps the tag in sync with the UI version); otherwise fall back to the
+          # auto patch-increment so a forgotten bump still ships something valid.
+          if [ -n "$latest" ] && [ "$file_ver" != "$latest" ] && \
+             [ "$(printf '%s\n%s\n' "$latest" "$file_ver" | sort -V | tail -n1)" = "$file_ver" ]; then
+            next="$file_ver"
+          else
+            next="$auto"
           fi
           echo "latest=${latest:-none}" >> "$GITHUB_OUTPUT"
           echo "next=$next" >> "$GITHUB_OUTPUT"
-          echo "Latest tag: ${latest:-none} -> next: $next"
+          echo "Latest tag: ${latest:-none} · version.ts: $file_ver · auto: $auto -> next: $next"
 
       - name: Lowercase image repo
         id: image
