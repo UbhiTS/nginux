@@ -1,47 +1,42 @@
-# NginUX v0.1.3
+# NginUX v0.1.4
 
 NginUX is a self-hosted reverse-proxy manager for your homelab — expose internal
 services over HTTPS, gate them behind a login, and watch your traffic, all from one
 clean dashboard. Think Nginx Proxy Manager, rebuilt around a live network-topology
 view, real metrics, and an agent-ready API.
 
-## New in v0.1.3
+## New in v0.1.4
 
-A large batch — the full backlog of features plus internal hardening, verified by
-the regression suite and an in-browser pass over the analytics views.
+A security-and-polish release: the login gate is now hardened to stone and **proven**
+so by a real-nginx test, and the interface got a full accessibility and visual pass.
 
-**Operations & recovery**
-- **Backup & restore** — one-click portable bundle of hosts + settings + bans +
-  channels, optionally passphrase-encrypted (AES-256-GCM). Migrate between boxes or
-  recover in seconds.
-- **Bulk actions** — select multiple services and enable / disable / maintenance /
-  delete / apply-a-profile in one reload.
-- **Import from nginx.conf** — paste an existing config, preview exactly what will
-  be created, then confirm.
-- **Security profiles** — named, reusable security bundles applied across services.
+**Security — the login gate, hardened and proven**
+- **Fail-closed forward-auth.** A full security audit found (and this release closes) a
+  recurrence of the "unauthenticated request reaches a service" class: a login-gated host
+  with a wildcard or mixed-case domain could fail *open*. The gate now resolves hosts
+  case-insensitively + wildcard-aware and **denies by default** for every role when a
+  gated request can't be tied to a known host — the safe direction to fail.
+- **Real-nginx boundary test.** A new integration suite stands up actual nginx in front of
+  the app's own generated config and proves, end-to-end, that no under-authenticated
+  request ever reaches a backend — 19 invariants incl. the wildcard/case recurrence,
+  ban-beats-allow-list ordering, 2FA and scoped-access gates, and TLS. It runs in CI and
+  **gates every release** — a push can't ship unless the boundary holds.
+- **Hardened surfaces.** The agent/MCP tool path now fully mirrors the REST validation (no
+  privilege-field bypass), backup/restore validates everything it imports, global IP bans
+  are enforced as a map that still applies on hosts with their own allow/deny lists, and
+  step-up re-auth is rate-limited.
 
-**Security & visibility**
-- **HTTP(S) health checks** — probe the app (path + expected status), not just the
-  port. **Enforce-2FA policy** for admins/editors. **Geo-block analytics** — see
-  blocked attempts by country and IP, ban an offender in one click.
-- **Alert routing by severity** (danger → pager, info → Slack) and a **syslog sink**
-  so audit events can stream to a SIEM.
-- **Multi-realm login gate** — gate services on a *second* base domain without the
-  redirect loop. **Per-FQDN DNS-01** so wildcard certs work across domains.
+**Interface — accessibility, clarity, and character**
+- **Accessibility & UX overhaul** — real keyboard operation across nav/tabs/rows, focus
+  management, honest loading / empty / error states (a failed list no longer looks empty),
+  a mobile drawer, higher-contrast tokens, and clearer microcopy.
+- **Session & role controls** — revoke an active session, change a user's role in place.
+- **Iconography & motion** — concept icons across every header and stat tile, plus subtle,
+  reduced-motion-safe entrances and count-ups. Much less of a wall of text.
 
-**Under the hood**
-- Async streaming access-log reader (no more event-loop-blocking reads), a shared
-  settings-validation schema, a single-pass metrics aggregation, and MCP `prompts/get`.
-- A modular route layout — route groups (geoip, tokens, profiles, webhooks, channels,
-  self-update, security, agents, certificates) split out of the `index.ts` monolith
-  into `server/src/routes/*`, with the tightly-coupled core left central.
-- Faster per-service log summaries — skip the disk read entirely when the in-memory
-  window already covers the requested range.
-- Deduplicated analytics UI — the status-code, top-IP, and by-country panels are one
-  shared component set across the Logs page and each service's analytics.
-
-**Quality** — the regression suite grew from 193 to **248 tests**; the full config
-also carries the v0.1.2 hardening (adversarial-review fixes) and config-diff preview.
+**Quality** — a brand-new web test suite (Vitest + React Testing Library, **325 tests**),
+the server suite at **269**, and the real-nginx integration suite on top. The forward-auth
+fixes are pinned by regression tests that were verified to fail if the fix is reverted.
 
 ## Highlights
 
