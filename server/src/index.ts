@@ -20,7 +20,7 @@ import {
 } from "./repo.ts";
 import { applyConfig, generateHostConfig, generateStreamConfig, previewConfigForHosts, redactConfig } from "./nginx.ts";
 import { buildNotifications } from "./notifications.ts";
-import { activeAllowedCountries, writeGeoipConf } from "./geoip.ts";
+import { writeGeoipConf } from "./geoip.ts";
 import {
   adminSetPassword,
   beginTwofaSetup,
@@ -36,15 +36,12 @@ import {
   getLastTotpCounter,
   getTwofaSecret,
   getUserById,
-  listEvents,
   listSessions,
   listUsers,
   logEvent,
   parseCookie,
   scopedAllows,
   seedAuthIfEmpty,
-  securityExposure,
-  securityOverview,
   setLastTotpCounter,
   useBackupCode,
   SESSION_COOKIE,
@@ -56,31 +53,21 @@ import {
 import type { ProxyHost } from "./types.ts";
 import { otpauthURL, verifyTotp, verifyTotpCounter } from "./totp.ts";
 import { VERSION } from "./version.ts";
-import { applyUpdate, checkForUpdate, simulateStaleBuild, startUpdateChecker, updateStatus } from "./update.ts";
+import { startUpdateChecker } from "./update.ts";
 import {
-  AcmeError,
   deleteCert,
   ensureCert,
-  getAcmeActivity,
-  getCert,
-  getCertDetails,
-  importCertFiles,
-  issue,
-  listCerts,
   reconcileImportedCerts,
-  setAutoRenew,
   startRenewalScheduler,
-  type CertMethod,
 } from "./certs.ts";
 import {
   bearerFrom,
-  listTokens,
   resolveToken,
   seedTokensIfEmpty,
   type Scope,
 } from "./tokens.ts";
-import { decideApproval, listApprovals, scopesForRole, toolCatalog, type Principal } from "./tools.ts";
-import { listWebhooks, subscribe } from "./events.ts";
+import { scopesForRole, type Principal } from "./tools.ts";
+import { subscribe } from "./events.ts";
 import { seedBuiltinProfiles } from "./profiles.ts";
 import { handleMcp } from "./mcp.ts";
 import {
@@ -97,7 +84,6 @@ import {
   rangeSummary as metricsRangeSummary,
   hostSummary as metricsHostSummary,
   trafficSeries,
-  blockedAttempts,
 } from "./metrics.ts";
 import { getUptime, startUptimeMonitor } from "./uptime.ts";
 import { rotateLogsNow, startLogRotation } from "./logrotate.ts";
@@ -106,24 +92,27 @@ import { gitLog, syncGitOps } from "./gitops.ts";
 import { importNginxConf, previewNginxConf } from "./importer.ts";
 import { buildBundle, restoreBundle } from "./backup.ts";
 import { encryptJson, decryptJson, isEncryptedEnvelope } from "./cryptobox.ts";
-import { addBan, listBans, removeBan, startBanEngine } from "./bans.ts";
+import { startBanEngine } from "./bans.ts";
 import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert, writeClientCrl } from "./clientcerts.ts";
 import { generateSniPassthrough } from "./nginx.ts";
 import {
   isDangerousHost,
   isHost,
   isHostname,
-  isIpOrCidr,
 } from "./validate.ts";
 import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
 import { realmForHost } from "./realms.ts";
-import type { RouteCtx } from "./routes/context.ts";
+import { type RouteCtx, clampLimit } from "./routes/context.ts";
+import { registerUpdateRoutes } from "./routes/update.ts";
 import { registerGeoipRoutes } from "./routes/geoip.ts";
 import { registerTokenRoutes } from "./routes/tokens.ts";
 import { registerProfileRoutes } from "./routes/profiles.ts";
 import { registerWebhookRoutes } from "./routes/webhooks.ts";
 import { registerChannelRoutes } from "./routes/channels.ts";
+import { registerSecurityRoutes } from "./routes/security.ts";
+import { registerAgentRoutes } from "./routes/agents.ts";
+import { registerCertRoutes } from "./routes/certs.ts";
 import { initAlertEngine } from "./notify.ts";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
@@ -388,6 +377,11 @@ function userRoleAtLeast(req: FastifyRequest, reply: FastifyReply, ...roles: Rol
   return true;
 }
 
+// Shared identity/role helpers handed to each extracted route group. Defined here
+// (index.ts owns the Fastify instance + the auth preHandler); the register calls
+// are near the bottom, after the core routes that still live inline.
+const routeCtx: RouteCtx = { currentUser, requireAdmin, requireRole, userRoleAtLeast, clientIp };
+
 /** Gate a route reachable by users AND tokens so it enforces the SAME RBAC as the
  *  equivalent MCP tool: a cookie user must hold one of `roles`; a token principal
  *  must hold `scope`. userRoleAtLeast() alone lets EVERY valid token through
@@ -416,9 +410,6 @@ function requireRoleOrScope(req: FastifyRequest, reply: FastifyReply, roles: Rol
 // hostschema.ts, shared verbatim with the agent/MCP tool path so the two can't
 // drift. See that module for the injection-boundary rationale.
 
-// A domain used as a filesystem path segment (certs) must be a plain hostname.
-const domainParam = z.string().min(1).max(253).refine(isHostname, "Invalid domain.");
-
 // ---------- health ----------
 app.get("/api/health", async (_req, reply) => {
   const db = dbOk();
@@ -437,28 +428,6 @@ app.get("/api/notifications", async (req, reply) => {
   if (!u) return reply.code(401).send({ error: "Not signed in" });
   const isManager = u.role === "admin" || u.role === "editor";
   return buildNotifications({ isManager });
-});
-
-// ---------- self-update (admin only; agents have no tool for this on purpose) ----------
-app.get("/api/update/status", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  return updateStatus();
-});
-
-app.post("/api/update/check", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  // Dev-only escape hatch: ?simulate=1 marks the current build stale so the
-  // update flow can be exercised without a real newer release.
-  const simulate = (req.query as { simulate?: string }).simulate === "1";
-  if (simulate && process.env.NODE_ENV !== "production") return simulateStaleBuild();
-  return checkForUpdate();
-});
-
-app.post("/api/update/apply", async (req, reply) => {
-  const admin = requireAdmin(req, reply);
-  if (!admin) return;
-  const result = await applyUpdate(admin.username);
-  return reply.code(result.ok ? 200 : 422).send(result);
 });
 
 // ---------- presets ----------
@@ -1045,8 +1014,6 @@ app.get("/api/metrics/prometheus", async (req, reply) => {
   if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return;
   return reply.type("text/plain; version=0.0.4").send(prometheus());
 });
-const clampLimit = (raw?: string): number | undefined =>
-  raw ? Math.min(1000, Math.max(1, Number(raw) || 1)) : undefined;
 
 app.get("/api/logs/recent", async (req, reply) => {
   if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return; // access logs carry client IPs; token needs 'report' (mirrors the recent_logs MCP tool)
@@ -1367,179 +1334,19 @@ app.get("/api/sessions", async (req, reply) => {
   return listSessions().map((s) => ({ ...s, token: "…" + s.token.slice(-6) }));
 });
 
-// ---------- audit + security posture ----------
-app.get("/api/audit", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const { type, limit } = req.query as { type?: string; limit?: string };
-  return listEvents({ type, limit: clampLimit(limit) });
-});
-app.get("/api/security/overview", async (req, reply) => requireRole(req, reply, "admin", "editor") ? securityOverview() : undefined);
-app.get("/api/security/exposure", async (req, reply) => requireRole(req, reply, "admin", "editor") ? securityExposure() : undefined);
-// Geo-block analytics: recent denied requests (auth / geo / IP / exploit / rate)
-// by country + top offending IPs, plus the current country allow-list. Admin/editor
-// (carries client IPs), matching the other security feeds.
-app.get("/api/security/blocked", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return undefined;
-  return { ...blockedAttempts(12), allowedCountries: activeAllowedCountries() };
-});
-
-// ---------- IP bans (fail2ban-style) ----------
-app.get("/api/bans", async (req, reply) => requireRole(req, reply, "admin", "editor") ? listBans() : undefined);
-app.post("/api/bans", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const parsed = z.object({
-    ip: z.string().refine(isIpOrCidr, "Must be a valid IP or CIDR."),
-    reason: z.string().max(200).default("Manually banned"),
-  }).safeParse(req.body);
-  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  const { ip, reason } = parsed.data;
-  const ban = addBan(ip, reason, "manual");
-  logEvent({ type: "security.ip_banned", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: `Banned ${ip}`, ip: clientIp(req), meta: { source: "manual" } });
-  return reply.code(201).send(ban);
-});
-app.delete("/api/bans/:ip", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { ip } = req.params as { ip: string };
-  const ok = removeBan(decodeURIComponent(ip));
-  if (ok) logEvent({ type: "security.ip_unbanned", severity: "info", actor: currentUser(req)?.username ?? "admin", summary: `Unbanned ${ip}`, ip: clientIp(req), meta: {} });
-  return { ok };
-});
-
-// ---------- certificates ----------
-app.get("/api/certificates", async (req, reply) => requireRole(req, reply, "admin", "editor") ? listCerts() : undefined);
-
-// Live ACME activity feed for the Certificates page - everything NginUX and
-// acme-client did while talking to Let's Encrypt, so failures aren't a black box.
-app.get("/api/acme/log", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const since = Number((req.query as { since?: string }).since ?? 0) || 0;
-  return getAcmeActivity(since);
-});
-
-app.post("/api/certificates/:domain/issue", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
-  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
-  const domain = dp.data;
-  const { method } = z
-    .object({ method: z.enum(["selfsigned", "http-01", "dns-01"]).default("selfsigned") })
-    .parse(req.body ?? {});
-  try {
-    const cert = await issue(domain, method as CertMethod);
-    await applyConfig(); // pick up the new cert paths
-    logEvent({ type: "cert.issued", severity: "info", actor: currentUser(req)?.username ?? "system", summary: `Issued ${method} certificate for ${domain}`, ip: clientIp(req), meta: {} });
-    return cert;
-  } catch (e) {
-    const kind = e instanceof AcmeError ? e.kind : "other";
-    return reply.code(kind === "rate_limit" ? 429 : 422).send({ error: e instanceof Error ? e.message : "Issuance failed.", kind });
-  }
-});
-
-app.post("/api/certificates/:domain/renew", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
-  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
-  const domain = dp.data;
-  const cert = getCert(domain);
-  if (!cert) return reply.code(404).send({ error: "No certificate for that domain." });
-  try {
-    const next = await issue(domain, cert.method);
-    await applyConfig();
-    return next;
-  } catch (e) {
-    const kind = e instanceof AcmeError ? e.kind : "other";
-    return reply.code(kind === "rate_limit" ? 429 : 422).send({ error: e instanceof Error ? e.message : "Renewal failed.", kind });
-  }
-});
-
-app.put("/api/certificates/:domain/autorenew", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
-  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
-  const { on } = z.object({ on: z.boolean() }).parse(req.body);
-  setAutoRenew(dp.data, on);
-  return getCert(dp.data);
-});
-
-app.post("/api/certificates/import", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const parsed = z.object({
-    files: z.array(z.object({ path: z.string().max(1024), content: z.string().max(200_000) })).min(1).max(300),
-  }).safeParse(req.body);
-  if (!parsed.success) return reply.code(400).send({ error: "Invalid upload." });
-  const result = importCertFiles(parsed.data.files);
-  if (result.imported.length) {
-    reconcileImportedCerts(); // register the new files in the DB
-    await applyConfig();       // and have nginx start serving them
-    logEvent({ type: "cert.imported", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Imported ${result.imported.length} certificate(s)`, ip: clientIp(req), meta: { domains: result.imported.map((i) => i.domain) } });
-  }
-  return result;
-});
-
-app.get("/api/certificates/:domain/details", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
-  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
-  const details = getCertDetails(dp.data);
-  if (!details) return reply.code(404).send({ error: "No certificate file for that domain yet." });
-  return details;
-});
-
-app.delete("/api/certificates/:domain", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const dp = domainParam.safeParse((req.params as { domain: string }).domain);
-  if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
-  deleteCert(dp.data);
-  // Re-apply so any host on this domain drops back to the bootstrap cert cleanly.
-  const apply = await applyConfig();
-  logEvent({ type: "cert.deleted", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Deleted certificate for ${dp.data}`, ip: clientIp(req), meta: {} });
-  return { ok: true, apply };
-});
-
-// Route groups extracted into server/src/routes/*.ts (registered on the same
-// app instance). The auth preHandler + core helpers stay here; each module
-// receives the shared identity/role helpers via routeCtx.
-const routeCtx: RouteCtx = { currentUser, requireAdmin, requireRole, userRoleAtLeast, clientIp };
+// Route groups extracted into server/src/routes/*.ts (registered on the same app
+// instance, sharing the auth preHandler defined above). routeCtx (defined near
+// the top, next to the identity helpers) carries the session/role helpers each
+// module needs; everything else a module uses it imports directly.
+registerUpdateRoutes(app, routeCtx);
 registerGeoipRoutes(app, routeCtx);
-
 registerTokenRoutes(app, routeCtx);
-
 registerProfileRoutes(app, routeCtx);
-
-// ---------- agents: tools, approvals, overview ----------
-app.get("/api/agents/tools", async () => toolCatalog());
-app.get("/api/agents/approvals", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { status } = req.query as { status?: string };
-  return listApprovals(status);
-});
-app.post("/api/agents/approvals/:id/approve", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { id } = req.params as { id: string };
-  const ap = await decideApproval(id, true, currentUser(req)?.username ?? "admin");
-  if (!ap) return reply.code(404).send({ error: "Approval not found" });
-  return ap;
-});
-app.post("/api/agents/approvals/:id/deny", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { id } = req.params as { id: string };
-  const ap = await decideApproval(id, false, currentUser(req)?.username ?? "admin");
-  if (!ap) return reply.code(404).send({ error: "Approval not found" });
-  return ap;
-});
-app.get("/api/agents/overview", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  return {
-    agents: listTokens().length,
-    tools: toolCatalog().length,
-    pendingApprovals: listApprovals("pending").length,
-    webhooks: listWebhooks().length,
-  };
-});
-
 registerWebhookRoutes(app, routeCtx);
-
 registerChannelRoutes(app, routeCtx);
+registerSecurityRoutes(app, routeCtx);
+registerAgentRoutes(app, routeCtx);
+registerCertRoutes(app, routeCtx);
 
 // ---------- MCP server (JSON-RPC over HTTP; session or Bearer token) ----------
 app.post("/api/mcp", async (req, reply) => {

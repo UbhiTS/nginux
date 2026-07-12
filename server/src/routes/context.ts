@@ -13,3 +13,8 @@ export interface RouteCtx {
   userRoleAtLeast: (req: FastifyRequest, reply: FastifyReply, ...roles: Role[]) => boolean;
   clientIp: (req: FastifyRequest) => string;
 }
+
+/** Clamp a caller-supplied `limit` query param to [1, 1000] (or undefined). Shared
+ *  by the routes that page audit / log lists. */
+export const clampLimit = (raw?: string): number | undefined =>
+  raw ? Math.min(1000, Math.max(1, Number(raw) || 1)) : undefined;
