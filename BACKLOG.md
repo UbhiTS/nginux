@@ -24,7 +24,7 @@ gate and a short list of deliberately-deferred follow-ups from the shipped work.
 
 ### Follow-ups from shipped work (optional, low priority)
 
-F1–F3 shipped in **v0.2.2** (see the Archive). What remains is one infra-gated
+F1–F3 shipped in **v0.1.3** (see the Archive). What remains is one infra-gated
 verification and the parking lot.
 
 | # | Item | Why it's deferred | Pri | Effort |
@@ -36,11 +36,13 @@ verification and the parking lot.
 
 ## Archive — shipped
 
-### v0.2.2 (2026-07-12) — v0.2.0 follow-ups (F1–F3)
+### v0.1.3 (2026-07-12) — the whole backlog + F1–F3
 
-Released; regression suite holds at 248 tests. Pure hardening/refactor — no
-behaviour change, verified by tsc + tests + an in-browser pass over both
-analytics consumers.
+Released; regression suite 193 → 248 tests. Bundles the full backlog batch plus its
+three deferred follow-ups (F1–F3). See `RELEASE_NOTES.md` for the user-facing summary.
+
+**Follow-ups (F1–F3)** — pure hardening/refactor, verified by tsc + tests + an
+in-browser pass over both analytics consumers.
 
 | # | Item | Shipped as |
 |---|------|-----------|
@@ -48,10 +50,7 @@ analytics consumers.
 | F2 | Finish the `index.ts` route split | four more groups extracted to `routes/*` (update / security / agents / certs) + centralized `registerXRoutes` block; `index.ts` 1683 → 1490 lines. The genuinely-coupled core (hosts/auth/metrics/topology/config/MCP/SSE) stays inline by design |
 | F3 | Extract the 3 shared analytics panels | `components/AnalyticsPanels.tsx` (`StatusCodeBars` / `TopSourceIps` / `CountryBars`), shared verbatim by `Logs` + `HostAnalytics`; −81 lines across the two pages |
 
-### v0.2.0 (2026-07-12) — the whole backlog batch
-
-Released; regression suite 193 → 247 tests. See `RELEASE_NOTES.md` for the
-user-facing summary.
+**Backlog batch**
 
 | # | Item | Shipped as |
 |---|------|-----------|
@@ -89,5 +88,5 @@ user-facing summary.
 
 ---
 
-_Last triaged: 2026-07-12. Backlog fully implemented and released as v0.2.0. Active
-work is the §3.1 Docker-swap test and the F1–F4 follow-ups (all low priority)._
+_Last triaged: 2026-07-12. Backlog fully implemented and released as v0.1.3. Active
+work is the §3.1 Docker-swap test and the F4/F5 follow-ups (all low priority)._
