@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, statSync, createReadStream, watchFile, openSync,
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listHosts } from "./repo.ts";
+import { readLinesReverse } from "./logtail.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ACCESS_LOG = process.env.NGINX_ACCESS_LOG ?? join(__dirname, "..", "data", "logs", "access.log");
@@ -224,7 +225,7 @@ export function recentLogs(filter?: string, limit = 200): LogEntry[] {
  *  the longer-window aggregates would often find nothing even though the request
  *  is recorded on disk. Reads a bounded tail so a huge log can't stall the
  *  request, and a cheap substring pre-filter avoids parsing non-matching lines. */
-export function searchLog(filter: string, limit = 200): LogEntry[] {
+export async function searchLog(filter: string, limit = 200): Promise<LogEntry[]> {
   const f = filter.trim().toLowerCase();
   if (!f) return recentLogs(undefined, limit);
   const matches = (e: LogEntry) =>
@@ -236,34 +237,25 @@ export function searchLog(filter: string, limit = 200): LogEntry[] {
   // Freshest matches from the in-memory ring (also covers dev, where demo traffic
   // is ingested in memory and never written to disk).
   for (let i = ring.length - 1; i >= 0 && out.length < limit; i--) if (matches(ring[i])) take(ring[i]);
-  // Then the persisted access log - full history up to retention, newest-first.
-  // Skip the (blocking, up-to-32MB) disk read entirely when the in-memory ring
-  // already produced `limit` matches - otherwise every filtered lookup re-reads
-  // and re-decodes the tail on the event loop even when it's not needed.
+  // Then the persisted access log - full history up to retention, newest-first,
+  // via the async bounded reverse reader. It streams the tail in chunks and we
+  // stop as soon as we have `limit` matches, so the up-to-32MB read never blocks
+  // the event loop and usually touches only a few KB. A cheap lowercase-substring
+  // pre-filter skips obvious non-matches before the JSON.parse.
   try {
-    if (out.length < limit && existsSync(ACCESS_LOG)) {
-      const size = statSync(ACCESS_LOG).size;
-      if (size > 0) {
-        const maxBytes = 32 * 1024 * 1024;
-        const startAt = size > maxBytes ? size - maxBytes : 0;
-        const fd = openSync(ACCESS_LOG, "r");
-        const buf = Buffer.allocUnsafe(size - startAt);
-        try { readSync(fd, buf, 0, buf.length, startAt); } finally { closeSync(fd); }
-        const lines = buf.toString("utf8").split("\n");
-        if (startAt > 0) lines.shift(); // drop the partial first line when tail-trimmed
-        for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
-          const t = lines[i];
-          if (!t || !t.toLowerCase().includes(f)) continue; // widen-then-narrow: skip obvious non-matches
-          try {
-            const j = JSON.parse(t);
-            const e: LogEntry = {
-              ts: j.time ?? "", host: j.host ?? "-", method: j.method ?? "GET", path: j.path ?? "/",
-              status: Number(j.status ?? 0), bytes: Number(j.bytes ?? 0), bytesIn: Number(j.bytes_in ?? 0),
-              ip: j.ip ?? "-", country: j.country ?? "", ua: j.ua ?? "", ms: Math.round(Number(j.ms ?? 0) * 1000) / 1000,
-            };
-            if (matches(e)) take(e);
-          } catch { /* skip malformed line */ }
-        }
+    if (out.length < limit) {
+      for await (const t of readLinesReverse(ACCESS_LOG)) {
+        if (out.length >= limit) break;
+        if (!t.toLowerCase().includes(f)) continue;
+        try {
+          const j = JSON.parse(t);
+          const e: LogEntry = {
+            ts: j.time ?? "", host: j.host ?? "-", method: j.method ?? "GET", path: j.path ?? "/",
+            status: Number(j.status ?? 0), bytes: Number(j.bytes ?? 0), bytesIn: Number(j.bytes_in ?? 0),
+            ip: j.ip ?? "-", country: j.country ?? "", ua: j.ua ?? "", ms: Math.round(Number(j.ms ?? 0) * 1000) / 1000,
+          };
+          if (matches(e)) take(e);
+        } catch { /* skip malformed line */ }
       }
     }
   } catch { /* fall back to whatever ring matches we found */ }
@@ -374,7 +366,7 @@ export function rangeSummary(range: string) {
  *  breakdowns don't multiply memory by host count - the cost is paid only when a
  *  service's analytics panel is opened. The on-disk log is chronological, so the
  *  scan stops as soon as it passes the window's start. */
-export function hostSummary(domain: string, range: string) {
+export async function hostSummary(domain: string, range: string) {
   const dom = domain.toLowerCase();
   const minutes = range === "live" ? 5 : (RANGE_MINUTES[range] ?? 1440);
   const cutoff = Date.now() - minutes * 60_000;
@@ -399,34 +391,23 @@ export function hostSummary(domain: string, range: string) {
     const e = ring[i];
     if (e.host.toLowerCase() === dom && Date.parse(e.ts) >= cutoff) add(e);
   }
-  // Then the persisted access log, newest-first, stopping once past the window.
+  // Then the persisted access log, newest-first via the async bounded reverse
+  // reader, stopping once past the window (chronological early-break). Streams the
+  // tail in chunks instead of a synchronous up-to-32MB read/decode.
   try {
-    if (existsSync(ACCESS_LOG)) {
-      const size = statSync(ACCESS_LOG).size;
-      if (size > 0) {
-        const maxBytes = 32 * 1024 * 1024;
-        const startAt = size > maxBytes ? size - maxBytes : 0;
-        const fd = openSync(ACCESS_LOG, "r");
-        const buf = Buffer.allocUnsafe(size - startAt);
-        try { readSync(fd, buf, 0, buf.length, startAt); } finally { closeSync(fd); }
-        const lines = buf.toString("utf8").split("\n");
-        if (startAt > 0) lines.shift();
-        for (let i = lines.length - 1; i >= 0; i--) {
-          const t = lines[i];
-          if (!t || !t.toLowerCase().includes(dom)) continue; // cheap pre-filter before parsing
-          try {
-            const j = JSON.parse(t);
-            const ts = j.time ?? "";
-            if (Date.parse(ts) < cutoff) break; // chronological → everything older is out of window
-            if (String(j.host ?? "").toLowerCase() !== dom) continue; // dom matched a path/IP, not the host
-            add({
-              ts, host: j.host ?? "-", method: j.method ?? "GET", path: j.path ?? "/",
-              status: Number(j.status ?? 0), bytes: Number(j.bytes ?? 0), bytesIn: Number(j.bytes_in ?? 0),
-              ip: j.ip ?? "-", country: j.country ?? "", ua: j.ua ?? "", ms: Math.round(Number(j.ms ?? 0) * 1000) / 1000,
-            });
-          } catch { /* skip malformed line */ }
-        }
-      }
+    for await (const t of readLinesReverse(ACCESS_LOG)) {
+      if (!t.toLowerCase().includes(dom)) continue; // cheap pre-filter before parsing
+      try {
+        const j = JSON.parse(t);
+        const ts = j.time ?? "";
+        if (Date.parse(ts) < cutoff) break; // chronological → everything older is out of window
+        if (String(j.host ?? "").toLowerCase() !== dom) continue; // dom matched a path/IP, not the host
+        add({
+          ts, host: j.host ?? "-", method: j.method ?? "GET", path: j.path ?? "/",
+          status: Number(j.status ?? 0), bytes: Number(j.bytes ?? 0), bytesIn: Number(j.bytes_in ?? 0),
+          ip: j.ip ?? "-", country: j.country ?? "", ua: j.ua ?? "", ms: Math.round(Number(j.ms ?? 0) * 1000) / 1000,
+        });
+      } catch { /* skip malformed line */ }
     }
   } catch { /* fall back to whatever the ring had */ }
   const ipTop = groupTopIpsByCountry(ip, (k) => ipCC.get(k) ?? "", 5);

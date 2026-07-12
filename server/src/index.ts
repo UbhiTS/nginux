@@ -923,7 +923,7 @@ app.get("/api/metrics/host/:domain", async (req, reply) => {
   const { domain } = req.params as { domain: string };
   if (!isHostname(domain)) return reply.code(400).send({ error: "Invalid domain." });
   const range = (req.query as { range?: string }).range ?? "1d";
-  return metricsHostSummary(domain, range);
+  return await metricsHostSummary(domain, range);
 });
 app.get("/api/metrics/hosts", async (req, reply) => {
   // Per-host traffic reveals which services exist + their volume; gate it to
@@ -1060,7 +1060,7 @@ app.get("/api/logs/recent", async (req, reply) => {
   const { filter, limit } = req.query as { filter?: string; limit?: string };
   // A filter (e.g. clicking an IP on the traffic map) searches the persisted log
   // on disk so older IPs still resolve; an unfiltered tail uses the live ring.
-  return filter ? searchLog(filter, clampLimit(limit)) : recentLogs(undefined, clampLimit(limit));
+  return filter ? await searchLog(filter, clampLimit(limit)) : recentLogs(undefined, clampLimit(limit));
 });
 let sseClients = 0;
 const SSE_MAX = Number(process.env.NGINUX_SSE_MAX ?? 200);

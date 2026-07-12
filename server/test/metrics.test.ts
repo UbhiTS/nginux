@@ -43,7 +43,7 @@ const recentAll = metrics.recentLogs(undefined, 100);
 const recentHostB = metrics.recentLogs(B);
 const recent500 = metrics.recentLogs("500");
 const recentIp1 = metrics.recentLogs(IP1);
-const searchIp1 = metrics.searchLog(IP1);
+const searchIp1 = await metrics.searchLog(IP1);
 const promSnap = metrics.prometheus();
 const hostTrafficSnap = metrics.hostTraffic("live");
 const hostStatsSnap = metrics.hostStats("1h");
@@ -142,8 +142,8 @@ test("searchLog finds matches for an IP across ring + disk, deduped", () => {
   assert.ok(searchIp1.every((e) => e.ip === IP1));
 });
 
-test("searchLog with an empty filter falls back to recentLogs", () => {
-  assert.equal(metrics.searchLog("").length, metrics.recentLogs(undefined, 200).length);
+test("searchLog with an empty filter falls back to recentLogs", async () => {
+  assert.equal((await metrics.searchLog("")).length, metrics.recentLogs(undefined, 200).length);
 });
 
 // ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ test("rangeSummary('1h') reflects freshly-ingested current-time entries", () => 
 // ---------------------------------------------------------------------------
 // hostSummary() — on-demand single-host scan within a range window
 // ---------------------------------------------------------------------------
-test("hostSummary aggregates one host's recent traffic within the range window", () => {
+test("hostSummary aggregates one host's recent traffic within the range window", async () => {
   const H = "hs.example.com";
   for (let i = 0; i < 5; i++) {
     metrics.ingest({
@@ -259,14 +259,14 @@ test("hostSummary aggregates one host's recent traffic within the range window",
       status: i === 4 ? 404 : 200, bytes: 100, bytesIn: 10, ip: "203.0.113.244", country: "JP", ua: "x", ms: 3,
     });
   }
-  const s = metrics.hostSummary(H, "1h");
+  const s = await metrics.hostSummary(H, "1h");
   assert.equal(s.totalRequests, 5);
   assert.equal(s.statusClass["2xx"], 4);
   assert.equal(s.statusClass["4xx"], 1);
   assert.equal(s.topIps[0].key, "203.0.113.244");
   assert.equal(s.topIps[0].count, 5);
   // A host with no traffic returns an empty, well-formed summary.
-  const empty = metrics.hostSummary("ghost.example.com", "1h");
+  const empty = await metrics.hostSummary("ghost.example.com", "1h");
   assert.equal(empty.totalRequests, 0);
   assert.equal(empty.errorRate, 0);
 });
