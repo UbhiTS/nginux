@@ -29,6 +29,7 @@ export function setupTestEnv(): { dir: string; cleanup: () => void } {
     ACME_WEBROOT: p("acme-webroot"),
     NGINX_ACCESS_LOG: p("access.log"),
     NGINX_BANNED_FILE: p("banned.conf"),
+    NGINX_STREAM_BANNED_FILE: p("stream_banned.conf"),
     NGINX_DEFAULT_CERT: p("selfsigned.crt"),
     NGINX_DEFAULT_KEY: p("selfsigned.key"),
     // Force the "nginx not installed" path so applyConfig() is a deterministic

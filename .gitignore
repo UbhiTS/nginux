@@ -39,6 +39,7 @@ server/data/
 nginx/conf.d/*.conf
 nginx/stream.d/*.conf
 nginx/banned.conf
+nginx/stream_banned.conf
 nginx/geoip.conf
 !nginx/conf.d/.gitkeep
 !nginx/stream.d/.gitkeep
