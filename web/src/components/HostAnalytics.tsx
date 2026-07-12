@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type GeoipStatus, type LogEntry, type MetricsSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { TrafficChart } from "./TrafficChart.tsx";
-import { TrafficMap, statusColor, flag, countryName, fmtBytes } from "../pages/Logs.tsx";
+import { TrafficMap } from "./TrafficMap.tsx";
+import { statusColor, flag, countryName, fmtBytes } from "../format.ts";
 
 const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
 
