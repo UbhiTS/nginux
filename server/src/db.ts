@@ -232,6 +232,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_approvals_status   ON approvals(status, ts);
 `);
 
+// ---- additive column migrations ----------------------------------------
+// The schema above is created with CREATE TABLE IF NOT EXISTS, which never adds
+// columns to a table that already exists on an upgraded install. New columns on
+// existing tables MUST go through addColumnIfMissing so old databases pick them
+// up. SQLite's ALTER TABLE ADD COLUMN is O(1) (no table rewrite) and requires a
+// constant default so existing rows get a value.
+//
+// SAFETY: `table` and `column` are hard-coded literals at every call site below,
+// never user input - do not pass dynamic values here.
+function addColumnIfMissing(table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+}
+
+// Register every additive migration here. Idempotent: safe to run on every boot.
+function runMigrations(): void {
+  // Per-channel severity floor for alert routing (danger -> pager, info -> slack).
+  addColumnIfMissing("channels", "minSeverity", "TEXT NOT NULL DEFAULT 'info'");
+  // Optional HTTP(S) health check per host (beyond the default TCP-connect probe).
+  addColumnIfMissing("hosts", "healthCheckType", "TEXT NOT NULL DEFAULT 'tcp'");     // 'tcp' | 'http'
+  addColumnIfMissing("hosts", "healthCheckPath", "TEXT NOT NULL DEFAULT '/'");
+  addColumnIfMissing("hosts", "healthCheckStatus", "INTEGER NOT NULL DEFAULT 0");    // 0 = any 2xx/3xx
+}
+runMigrations();
+
 /** Trim the audit log so it can't grow without bound. Keeps recent rows by time
  *  and an absolute cap by count; returns how many rows were removed. */
 export function pruneAuditLog(retainDays = Number(process.env.NGINUX_AUDIT_RETAIN_DAYS ?? 90), hardCap = 50_000): number {

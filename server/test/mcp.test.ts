@@ -214,6 +214,11 @@ test("tools/list and resources/list return non-empty, well-formed lists for an a
 test("prompts/list, ping, notifications, and unknown methods behave", async () => {
   const prompts = await call(admin, "prompts/list");
   assert.ok(Array.isArray(prompts.result.prompts) && prompts.result.prompts.length > 0);
+  // The catalog carries argument schemas now (spec-compatible).
+  for (const p of prompts.result.prompts) {
+    assert.ok(typeof p.name === "string" && typeof p.description === "string");
+    assert.ok(Array.isArray(p.arguments), "each prompt advertises its arguments");
+  }
 
   const ping = await call(admin, "ping");
   assert.ok(isRpcOk(ping));
@@ -225,4 +230,31 @@ test("prompts/list, ping, notifications, and unknown methods behave", async () =
   const unknown = await call(admin, "totally/unknown");
   assert.ok(isRpcError(unknown));
   assert.equal(unknown.error.code, -32601);
+});
+
+test("prompts/get renders messages, validates required args, and rejects unknown names", async () => {
+  // A known prompt with its required arg renders a well-formed user message.
+  const got = await call(admin, "prompts/get", { name: "expose_service", arguments: { service: "Grafana" } });
+  assert.ok(isRpcOk(got), "prompts/get on a known prompt returns a result");
+  assert.equal(typeof got.result.description, "string");
+  assert.ok(Array.isArray(got.result.messages) && got.result.messages.length > 0, "messages are returned");
+  const m = got.result.messages[0];
+  assert.equal(m.role, "user");
+  assert.equal(m.content.type, "text");
+  assert.ok(m.content.text.includes("Grafana"), "the argument is templated into the message");
+
+  // An arg-less prompt renders too.
+  const weekly = await call(admin, "prompts/get", { name: "weekly_security_review" });
+  assert.ok(isRpcOk(weekly) && weekly.result.messages.length > 0);
+
+  // A missing REQUIRED argument is a -32602 invalid-params error.
+  const missing = await call(admin, "prompts/get", { name: "expose_service", arguments: {} });
+  assert.ok(isRpcError(missing));
+  assert.equal(missing.error.code, -32602);
+  assert.ok(/service/i.test(missing.error.message), "the error names the missing argument");
+
+  // An unknown prompt name is -32602.
+  const unknown = await call(admin, "prompts/get", { name: "no_such_prompt" });
+  assert.ok(isRpcError(unknown));
+  assert.equal(unknown.error.code, -32602);
 });

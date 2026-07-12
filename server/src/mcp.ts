@@ -6,6 +6,7 @@ import { summary as metricsSummary } from "./metrics.ts";
 import { PRESETS } from "./presets.ts";
 import { getSettings, redactSettings } from "./db.ts";
 import { callTool, canCallTool, toolCatalogFor, type Principal } from "./tools.ts";
+import { getPrompt, promptCatalog } from "./prompts.ts";
 import type { Scope } from "./tokens.ts";
 import { VERSION } from "./version.ts";
 
@@ -49,13 +50,6 @@ const RESOURCES: ResourceDef[] = [
   { uri: "metrics://traffic", name: "Traffic metrics", description: "Requests, bandwidth, top talkers", scope: "report", read: () => metricsSummary() },
   { uri: "bans://list", name: "IP bans", description: "Active IP bans", scope: "report", read: () => listBans() },
   { uri: "users://list", name: "Users", description: "Accounts (no secrets) - admin only", scope: "report", adminOnly: true, read: () => listUsers() },
-];
-
-const PROMPTS = [
-  { name: "expose_service", description: "Expose a new internal service safely." },
-  { name: "harden_host", description: "Review and tighten a host's security." },
-  { name: "incident_response", description: "Investigate and respond to a security incident." },
-  { name: "weekly_security_review", description: "Summarize the week's security posture." },
 ];
 
 const ok = (id: JsonRpcRequest["id"], result: unknown) => ({ jsonrpc: "2.0" as const, id, result });
@@ -127,7 +121,19 @@ export async function handleMcp(principal: Principal, msg: JsonRpcRequest): Prom
     }
 
     case "prompts/list":
-      return ok(id, { prompts: PROMPTS });
+      return ok(id, { prompts: promptCatalog() });
+
+    case "prompts/get": {
+      const name = String(params.name);
+      const args = (params.arguments as Record<string, string>) ?? {};
+      try {
+        const prompt = getPrompt(name, args);
+        if (!prompt) return err(id, -32602, `Unknown prompt: ${name}`);
+        return ok(id, prompt);
+      } catch (e) {
+        return err(id, -32602, e instanceof Error ? e.message : "Invalid prompt arguments.");
+      }
+    }
 
     default:
       return err(id, -32601, `Method not found: ${method}`);
