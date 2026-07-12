@@ -20,7 +20,7 @@ import {
 } from "./repo.ts";
 import { applyConfig, generateHostConfig, generateStreamConfig, previewConfigForHosts, redactConfig } from "./nginx.ts";
 import { buildNotifications } from "./notifications.ts";
-import { activeAllowedCountries, deleteGeoipDb, downloadGeoipDb, geoipStatus, writeGeoipConf } from "./geoip.ts";
+import { activeAllowedCountries, writeGeoipConf } from "./geoip.ts";
 import {
   adminSetPassword,
   beginTwofaSetup,
@@ -74,17 +74,14 @@ import {
 } from "./certs.ts";
 import {
   bearerFrom,
-  createToken,
   listTokens,
   resolveToken,
-  revokeToken,
   seedTokensIfEmpty,
   type Scope,
 } from "./tokens.ts";
 import { decideApproval, listApprovals, scopesForRole, toolCatalog, type Principal } from "./tools.ts";
-import { createWebhook, deleteWebhook, listWebhooks, subscribe } from "./events.ts";
-import { isSyslogUrl, parseSyslogUrl } from "./syslog.ts";
-import { listProfiles, getProfile, createProfile, updateProfile, deleteProfile, profilePatch, profileInput, seedBuiltinProfiles } from "./profiles.ts";
+import { listWebhooks, subscribe } from "./events.ts";
+import { seedBuiltinProfiles } from "./profiles.ts";
 import { handleMcp } from "./mcp.ts";
 import {
   prometheus,
@@ -113,7 +110,6 @@ import { addBan, listBans, removeBan, startBanEngine } from "./bans.ts";
 import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert, writeClientCrl } from "./clientcerts.ts";
 import { generateSniPassthrough } from "./nginx.ts";
 import {
-  assertSafeOutboundUrl,
   isDangerousHost,
   isHost,
   isHostname,
@@ -122,16 +118,13 @@ import {
 import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
 import { realmForHost } from "./realms.ts";
-import {
-  createChannel,
-  deleteChannel,
-  initAlertEngine,
-  listChannels,
-  setChannelEnabled,
-  setChannelRouting,
-  testChannel,
-  type ChannelType,
-} from "./notify.ts";
+import type { RouteCtx } from "./routes/context.ts";
+import { registerGeoipRoutes } from "./routes/geoip.ts";
+import { registerTokenRoutes } from "./routes/tokens.ts";
+import { registerProfileRoutes } from "./routes/profiles.ts";
+import { registerWebhookRoutes } from "./routes/webhooks.ts";
+import { registerChannelRoutes } from "./routes/channels.ts";
+import { initAlertEngine } from "./notify.ts";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1503,106 +1496,15 @@ app.delete("/api/certificates/:domain", async (req, reply) => {
   return { ok: true, apply };
 });
 
-// ---------- GeoIP (country lock) ----------
-app.get("/api/geoip/status", async () => geoipStatus());
+// Route groups extracted into server/src/routes/*.ts (registered on the same
+// app instance). The auth preHandler + core helpers stay here; each module
+// receives the shared identity/role helpers via routeCtx.
+const routeCtx: RouteCtx = { currentUser, requireAdmin, requireRole, userRoleAtLeast, clientIp };
+registerGeoipRoutes(app, routeCtx);
 
-app.post("/api/geoip/download", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  let result: { sizeBytes: number };
-  try {
-    result = await downloadGeoipDb();
-  } catch (e) {
-    return reply.code(422).send({ error: e instanceof Error ? e.message : "Download failed." });
-  }
-  // Regenerate the geo config and validate it. If nginx rejects it, drop the DB
-  // and restore the allow-all include so we never leave a broken config behind.
-  writeGeoipConf();
-  const apply = await applyConfig();
-  if (!apply.ok && apply.nginxAvailable) {
-    deleteGeoipDb();
-    writeGeoipConf();
-    await applyConfig();
-    return reply.code(422).send({ error: `Database installed but nginx rejected the geo config: ${apply.message}` });
-  }
-  logEvent({ type: "geoip.updated", severity: "info", actor: currentUser(req)?.username ?? "system", summary: `Updated GeoIP database (${Math.round(result.sizeBytes / 1024)} KB)`, ip: clientIp(req), meta: {} });
-  return { ok: true, status: geoipStatus() };
-});
+registerTokenRoutes(app, routeCtx);
 
-app.delete("/api/geoip", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  deleteGeoipDb();
-  writeGeoipConf();
-  const apply = await applyConfig();
-  logEvent({ type: "geoip.deleted", severity: "notice", actor: currentUser(req)?.username ?? "system", summary: "Removed GeoIP database", ip: clientIp(req), meta: {} });
-  return { ok: true, apply };
-});
-
-// ---------- agents: tokens ----------
-app.get("/api/tokens", async (req, reply) => requireAdmin(req, reply) ? listTokens() : undefined);
-app.post("/api/tokens", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const body = z
-    .object({
-      name: z.string().min(1).max(64),
-      scopes: z.array(z.enum(["read", "report", "control", "security"])).min(1),
-      trust: z.enum(["untrusted", "trusted"]).default("untrusted"),
-    })
-    .parse(req.body);
-  const { token, record } = createToken(body);
-  logEvent({ type: "agent.token_created", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Created API token "${body.name}"`, ip: clientIp(req), meta: { scopes: body.scopes } });
-  return reply.code(201).send({ token, record }); // raw token shown once
-});
-app.delete("/api/tokens/:id", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { id } = req.params as { id: string };
-  revokeToken(id);
-  logEvent({ type: "token.revoked", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Revoked API token ${id}`, ip: clientIp(req), meta: { id } });
-  return { ok: true };
-});
-
-// ---------- security profiles (reusable named security bundles) ----------
-app.get("/api/security-profiles", async (req, reply) => requireRole(req, reply, "admin", "editor") ? listProfiles() : undefined);
-app.post("/api/security-profiles", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const parsed = profileInput.safeParse(req.body);
-  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  const p = createProfile(parsed.data);
-  logEvent({ type: "security.profile_created", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Created security profile "${p.name}"`, ip: clientIp(req), meta: { id: p.id } });
-  return reply.code(201).send(p);
-});
-app.put("/api/security-profiles/:id", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const { id } = req.params as { id: string };
-  const parsed = profileInput.partial().safeParse(req.body);
-  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  const p = updateProfile(id, parsed.data);
-  if (!p) return reply.code(404).send({ error: "Profile not found" });
-  return p;
-});
-app.delete("/api/security-profiles/:id", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const { id } = req.params as { id: string };
-  if (!deleteProfile(id)) return reply.code(400).send({ error: "That profile can't be deleted (built-in or not found)." });
-  return { ok: true };
-});
-// Apply a profile's security fields to one or many services, with a single reload.
-app.post("/api/security-profiles/:id/apply", async (req, reply) => {
-  if (!requireRole(req, reply, "admin", "editor")) return;
-  const { id } = req.params as { id: string };
-  const profile = getProfile(id);
-  if (!profile) return reply.code(404).send({ error: "Profile not found" });
-  const parsed = z.object({ ids: z.array(z.string().max(64)).min(1).max(500) }).safeParse(req.body);
-  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  const patch = profilePatch(profile);
-  const actor = currentUser(req)?.username ?? "system";
-  snapshot(`Before applying profile "${profile.name}"`, actor);
-  let affected = 0;
-  for (const hostId of parsed.data.ids) { if (getHost(hostId) && updateHost(hostId, patch)) affected++; }
-  const apply = await applyConfig();
-  void syncGitOps(`Apply profile "${profile.name}" to ${affected} service(s)`);
-  logEvent({ type: "host.updated", severity: "notice", actor, summary: `Applied profile "${profile.name}" to ${affected} service${affected === 1 ? "" : "s"}`, ip: clientIp(req), meta: { profile: profile.id, affected } });
-  return { affected, apply };
-});
+registerProfileRoutes(app, routeCtx);
 
 // ---------- agents: tools, approvals, overview ----------
 app.get("/api/agents/tools", async () => toolCatalog());
@@ -1635,89 +1537,9 @@ app.get("/api/agents/overview", async (req, reply) => {
   };
 });
 
-// ---------- agents: webhooks ----------
-app.get("/api/webhooks", async (req, reply) => requireAdmin(req, reply) ? listWebhooks() : undefined);
-app.post("/api/webhooks", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const parsed = z.object({ url: z.string().min(1).max(2048), events: z.array(z.string().max(64)).max(50).default(["*"]) }).safeParse(req.body);
-  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  // A syslog:// sink (SIEM) validates its host separately; an http(s) sink goes
-  // through the standard outbound-URL SSRF guard.
-  if (isSyslogUrl(parsed.data.url)) {
-    const t = parseSyslogUrl(parsed.data.url);
-    if (!t) return reply.code(400).send({ error: "Invalid syslog URL (expected syslog://host:port)." });
-    if (isDangerousHost(t.host)) return reply.code(400).send({ error: "That destination host is not allowed." });
-  } else {
-    try { assertSafeOutboundUrl(parsed.data.url); }
-    catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid URL." }); }
-  }
-  const { webhook, secret } = createWebhook(parsed.data.url, parsed.data.events);
-  logEvent({ type: "webhook.created", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Created webhook → ${parsed.data.url}`, ip: clientIp(req), meta: { id: webhook.id, events: parsed.data.events } });
-  return reply.code(201).send({ webhook, secret }); // secret shown once
-});
-app.delete("/api/webhooks/:id", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { id } = req.params as { id: string };
-  deleteWebhook(id);
-  logEvent({ type: "webhook.deleted", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Deleted webhook ${id}`, ip: clientIp(req), meta: { id } });
-  return { ok: true };
-});
+registerWebhookRoutes(app, routeCtx);
 
-// ---------- notification channels ----------
-app.get("/api/channels", async (req, reply) => requireAdmin(req, reply) ? listChannels() : undefined);
-app.post("/api/channels", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const parsed = z
-    .object({
-      type: z.enum(["ntfy", "gotify", "pushover", "discord", "slack", "telegram", "webhook", "email"]),
-      name: z.string().min(1).max(64),
-      config: z.record(z.string(), z.string().max(2048)).default({}),
-      events: z.array(z.string().max(64)).max(50).default(["*"]),
-      minSeverity: z.enum(["info", "notice", "warn", "danger"]).default("info"),
-    })
-    .safeParse(req.body);
-  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  const body = parsed.data;
-  // SSRF guard: any user-supplied destination URL must be a safe http(s) target.
-  for (const key of ["url", "server"]) {
-    const v = body.config[key];
-    if (v) { try { assertSafeOutboundUrl(v); } catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid URL." }); } }
-  }
-  const ch = createChannel({ type: body.type as ChannelType, name: body.name, config: body.config, events: body.events, minSeverity: body.minSeverity });
-  logEvent({ type: "alert.channel_added", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Added ${body.type} notification channel "${body.name}"`, ip: clientIp(req), meta: {} });
-  return reply.code(201).send(ch);
-});
-app.put("/api/channels/:id/enabled", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { id } = req.params as { id: string };
-  const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
-  setChannelEnabled(id, enabled);
-  return { ok: true };
-});
-// Edit a channel's routing: which event types + the severity floor it alerts on.
-app.put("/api/channels/:id/routing", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { id } = req.params as { id: string };
-  const parsed = z.object({
-    events: z.array(z.string().max(64)).max(50).optional(),
-    minSeverity: z.enum(["info", "notice", "warn", "danger"]).optional(),
-  }).safeParse(req.body);
-  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-  const ch = setChannelRouting(id, parsed.data);
-  if (!ch) return reply.code(404).send({ error: "Channel not found" });
-  return ch;
-});
-app.delete("/api/channels/:id", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { id } = req.params as { id: string };
-  deleteChannel(id);
-  return { ok: true };
-});
-app.post("/api/channels/:id/test", async (req, reply) => {
-  if (!requireAdmin(req, reply)) return;
-  const { id } = req.params as { id: string };
-  return testChannel(id);
-});
+registerChannelRoutes(app, routeCtx);
 
 // ---------- MCP server (JSON-RPC over HTTP; session or Bearer token) ----------
 app.post("/api/mcp", async (req, reply) => {
