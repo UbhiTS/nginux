@@ -66,6 +66,7 @@ export interface Settings {
   acmeStaging: boolean;
   updateCheckEnabled: boolean;
   agentAutoApprove: boolean;
+  require2faForManagers: boolean;
   gitOpsEnabled: boolean;
   ssoLoginUrl: string;
   ssoCookieDomain: string;

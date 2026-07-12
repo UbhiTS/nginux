@@ -349,6 +349,7 @@ const DEFAULT_SETTINGS: Settings = {
   acmeStaging: false,
   updateCheckEnabled: true,
   agentAutoApprove: false,
+  require2faForManagers: false,
   gitOpsEnabled: false,
   ssoLoginUrl: "",
   ssoCookieDomain: "",
@@ -377,6 +378,7 @@ export function getSettings(): Settings {
   merged.acmeStaging = String(merged.acmeStaging) === "true"; // stored as string
   merged.updateCheckEnabled = String(merged.updateCheckEnabled) !== "false"; // default ON
   merged.agentAutoApprove = String(merged.agentAutoApprove) === "true";
+  merged.require2faForManagers = String(merged.require2faForManagers) === "true";
   merged.gitOpsEnabled = String(merged.gitOpsEnabled) === "true";
   merged.logMaxMb = Number(merged.logMaxMb) || 0; // stored as string
   merged.logKeepFiles = Number(merged.logKeepFiles) || 0;

@@ -25,6 +25,9 @@ export interface User {
   scope: string;
   twofaEnabled: boolean;
   mustChangePassword: boolean;
+  /** Computed (not stored): this manager must enroll in 2FA before continuing,
+   *  because the require2faForManagers policy is on and they have no 2FA yet. */
+  mustEnable2fa?: boolean;
   createdAt: string;
   lastLoginAt: string | null;
 }

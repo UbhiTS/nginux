@@ -269,3 +269,44 @@ test("POST /api/update/apply is admin-only", async () => {
   const editor = await app.inject({ method: "POST", url: "/api/update/apply", headers: { cookie: cookieFor(makeUser("editor")) } });
   assert.equal(editor.statusCode, 403, "an editor may not trigger a self-update");
 });
+
+// ---------------------------------------------------------------------------
+// (13) Enforce-2FA policy (feature 4.9): when require2faForManagers is on, an
+// admin/editor without 2FA is confined to the enrollment flow; read-only/scoped
+// and already-enrolled managers are unaffected.
+// ---------------------------------------------------------------------------
+test("require2faForManagers confines a manager without 2FA to the enrollment flow", async () => {
+  saveSettings({ require2faForManagers: true });
+  const admin = cookieFor(makeUser("admin")); // makeUser sets twofaEnabled = 0
+
+  // /me still works and reports the pending enrollment.
+  const me = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: admin } });
+  assert.equal(me.statusCode, 200, "/me stays reachable");
+  assert.equal((me.json() as { mustEnable2fa: boolean }).mustEnable2fa, true, "the flag surfaces to the SPA");
+
+  // A normal endpoint is blocked with the mustEnable2fa marker.
+  const hosts = await app.inject({ method: "GET", url: "/api/hosts", headers: { cookie: admin } });
+  assert.equal(hosts.statusCode, 403, "a manager owing 2FA can't reach the app");
+  assert.equal((hosts.json() as { mustEnable2fa?: boolean }).mustEnable2fa, true, "…with the enrollment marker");
+
+  // The enrollment endpoint itself stays reachable (setup requires the password,
+  // so a 403 for the wrong reason would be a different error; we only assert it is
+  // NOT the mustEnable2fa confinement).
+  const setup = await app.inject({ method: "POST", url: "/api/auth/2fa/setup", headers: { cookie: admin }, payload: { password: "wrong" } });
+  assert.notEqual((setup.json() as { mustEnable2fa?: boolean }).mustEnable2fa, true, "the enrollment path is not self-blocked");
+  saveSettings({ require2faForManagers: false });
+});
+
+test("require2faForManagers leaves read-only/scoped users and enrolled managers alone", async () => {
+  saveSettings({ require2faForManagers: true });
+  // A readonly user is not a manager -> unaffected.
+  const ro = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: cookieFor(makeUser("readonly")) } });
+  assert.notEqual((ro.json() as { mustEnable2fa?: boolean }).mustEnable2fa, true, "read-only is exempt");
+
+  // An admin who already has 2FA -> unaffected.
+  const enrolledId = makeUser("admin");
+  db.prepare("UPDATE users SET twofaEnabled = 1 WHERE id = ?").run(enrolledId);
+  const enrolled = await app.inject({ method: "GET", url: "/api/hosts", headers: { cookie: cookieFor(enrolledId) } });
+  assert.equal(enrolled.statusCode, 200, "an admin with 2FA already enrolled is unaffected");
+  saveSettings({ require2faForManagers: false });
+});

@@ -18,6 +18,7 @@ import { AgentsApi } from "./pages/AgentsApi.tsx";
 import { Logs } from "./pages/Logs.tsx";
 import { Login } from "./pages/Login.tsx";
 import { ChangePassword } from "./pages/ChangePassword.tsx";
+import { Enable2fa } from "./pages/Enable2fa.tsx";
 
 export type RouteName =
   | "dashboard" | "services" | "host" | "wizard" | "certs"
@@ -124,6 +125,9 @@ export function App() {
   }
   if (!user) return <Login onSignedIn={setUser} />;
   if (user.mustChangePassword) return <ChangePassword user={user} onChanged={setUser} />;
+  // Policy: managers must have 2FA. The server also confines them to the enrollment
+  // endpoints, so this gate can't be skipped by editing client state.
+  if (user.mustEnable2fa) return <Enable2fa user={user} onEnabled={refreshMe} onLogout={logout} />;
 
   return (
     <div className="app">

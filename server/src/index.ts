@@ -221,6 +221,17 @@ app.setErrorHandler((err, req, reply) => {
 const OPEN_PATHS = new Set(["/api/health", "/api/auth/login", "/api/auth/forward"]);
 // While a user still holds a temporary password, only these endpoints are reachable.
 const PW_CHANGE_ALLOWED = new Set(["/api/auth/change-password", "/api/auth/logout", "/api/auth/me"]);
+// While a manager owes 2FA enrollment (require2faForManagers policy), only these are.
+const TWOFA_ENROLL_ALLOWED = new Set(["/api/auth/2fa/setup", "/api/auth/2fa/verify", "/api/auth/logout", "/api/auth/me"]);
+/** Is this user compelled to enroll in 2FA right now? Managers (admin/editor)
+ *  without 2FA, when the org policy requires it. Computed from settings, not stored. */
+function mustEnroll2fa(u: User): boolean {
+  return getSettings().require2faForManagers && (u.role === "admin" || u.role === "editor") && !u.twofaEnabled;
+}
+/** Attach computed policy flags to a user before it's sent to the client. */
+function withPolicyFlags(u: User): User {
+  return { ...u, mustEnable2fa: mustEnroll2fa(u) };
+}
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** CSRF defense: a cookie-authenticated mutation carrying a cross-origin
  *  Origin/Referer is rejected. Browsers always send Origin on cross-site
@@ -252,6 +263,9 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
     if (cu?.mustChangePassword && !PW_CHANGE_ALLOWED.has(path)) {
       return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
     }
+    if (cu && mustEnroll2fa(cu) && !TWOFA_ENROLL_ALLOWED.has(path)) {
+      return reply.code(403).send({ error: "Two-factor authentication is required for your role.", mustEnable2fa: true });
+    }
     return;
   }
   const u = currentUser(req);
@@ -260,6 +274,11 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   // sets a real password - enforced here, not just in the SPA.
   if (u.mustChangePassword && !PW_CHANGE_ALLOWED.has(path)) {
     return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
+  }
+  // Managers owing 2FA enrollment (require2faForManagers) are confined to the
+  // enrollment flow until it's set up - enforced server-side, not just in the SPA.
+  if (mustEnroll2fa(u) && !TWOFA_ENROLL_ALLOWED.has(path)) {
+    return reply.code(403).send({ error: "Two-factor authentication is required for your role.", mustEnable2fa: true });
   }
 });
 
@@ -465,6 +484,7 @@ const settingsInput = z.object({
   acmeStaging: z.boolean(),
   updateCheckEnabled: z.boolean(),
   agentAutoApprove: z.boolean(),
+  require2faForManagers: z.boolean(),
   gitOpsEnabled: z.boolean(),
   ssoLoginUrl: z.string().max(512).refine((s) => s === "" || /^https?:\/\/[^\s/]+/i.test(s), "Must be a full URL like https://nginux.example.com."),
   ssoCookieDomain: z.string().max(253).refine((s) => s === "" || /^\.?[a-z0-9.-]+$/i.test(s), "Invalid cookie domain."),
@@ -1081,7 +1101,8 @@ app.post("/api/auth/login", async (req, reply) => {
   const sessionToken = createSession(String(row.id), device(req), ip);
   logEvent({ type: "login.success", severity: "info", actor: username, summary: "Signed in", ip, meta: {} });
   reply.header("set-cookie", sessionCookie(sessionToken, cookieSecure(req.protocol === "https"), authCookieDomain()));
-  return { user: getUserById(String(row.id)) };
+  const created = getUserById(String(row.id));
+  return { user: created ? withPolicyFlags(created) : created };
 });
 
 app.post("/api/auth/logout", async (req, reply) => {
@@ -1094,7 +1115,7 @@ app.post("/api/auth/logout", async (req, reply) => {
 app.get("/api/auth/me", async (req, reply) => {
   const u = currentUser(req);
   if (!u) return reply.code(401).send({ error: "Not signed in" });
-  return u;
+  return withPolicyFlags(u);
 });
 
 // auth_request target for nginx forward-auth: 200 = allowed, 401 = block.

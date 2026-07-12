@@ -445,6 +445,8 @@ export interface AuthUser {
   scope: string;
   twofaEnabled: boolean;
   mustChangePassword: boolean;
+  /** Computed: this manager must enroll in 2FA before continuing (policy). */
+  mustEnable2fa?: boolean;
   createdAt: string;
   lastLoginAt: string | null;
 }

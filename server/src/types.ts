@@ -114,6 +114,9 @@ export interface Settings {
   updateCheckEnabled: boolean;
   /** Allow trusted agents to auto-run low/medium-risk tools without approval. */
   agentAutoApprove: boolean;
+  /** Require every admin/editor to have two-factor enabled: without it they're
+   *  confined to the 2FA-enrollment flow (like a temporary password) until set up. */
+  require2faForManagers: boolean;
   /** Commit generated config + state to a local git repo on every apply. */
   gitOpsEnabled: boolean;
   /** Public HTTPS URL where NginUX's own login is reachable (e.g.

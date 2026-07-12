@@ -96,6 +96,13 @@ export function SettingsPage({
               </div>
               <button className={`switch${settings.updateCheckEnabled ? " on" : ""}`} onClick={() => update({ updateCheckEnabled: !settings.updateCheckEnabled })} />
             </div>
+            <div className="switch-row" style={{ marginTop: 0, marginBottom: 14 }}>
+              <div className="sw-text">
+                <div className="t">Require 2FA for admins &amp; editors</div>
+                <div className="d">Managers without two-factor are confined to a one-time enrollment screen on their next request until it's set up. Read-only and scoped users are unaffected.</div>
+              </div>
+              <button className={`switch${settings.require2faForManagers ? " on" : ""}`} onClick={() => update({ require2faForManagers: !settings.require2faForManagers })} />
+            </div>
             <div className="field" style={{ marginBottom: 0 }}>
               <label>NginUX public URL</label>
               <input className="input" value={settings.ssoLoginUrl} onChange={(e) => update({ ssoLoginUrl: e.target.value })} placeholder={`https://nginux.${base}`} />
