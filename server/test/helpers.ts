@@ -55,7 +55,8 @@ export function makeHost(overrides: Partial<ProxyHost> = {}): ProxyHost {
     rateLimit: false, rateLimitRps: 10, rateLimitBurst: 20, blockExploits: true,
     ipAllow: "", ipDeny: "", customHeaders: "", customNginx: "", upstreams: "",
     lbMethod: "round_robin", protocol: "http", listenPort: 0, pathRules: "", mtls: false,
-    rateLimitKbps: 0, maxConns: 0, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+    rateLimitKbps: 0, maxConns: 0, healthCheckType: "tcp", healthCheckPath: "/", healthCheckStatus: 0,
+    createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }

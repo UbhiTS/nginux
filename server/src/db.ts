@@ -326,6 +326,9 @@ export function rowToHost(r: HostRow): ProxyHost {
     mtls: !!r.mtls,
     rateLimitKbps: Number(r.rateLimitKbps ?? 0),
     maxConns: Number(r.maxConns ?? 0),
+    healthCheckType: r.healthCheckType === "http" ? "http" : "tcp",
+    healthCheckPath: r.healthCheckPath ? String(r.healthCheckPath) : "/",
+    healthCheckStatus: Number(r.healthCheckStatus ?? 0),
     createdAt: String(r.createdAt),
     updatedAt: String(r.updatedAt),
   };

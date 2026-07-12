@@ -101,6 +101,10 @@ export const hostInput = z.object({
   mtls: z.boolean().default(false),
   rateLimitKbps: z.number().int().min(0).max(1_000_000).default(0),
   maxConns: z.number().int().min(0).max(100_000).default(0),
+  healthCheckType: z.enum(["tcp", "http"]).default("tcp"),
+  // Only used for the server's own uptime probe (not emitted into nginx config).
+  healthCheckPath: z.string().max(512).default("/").refine((s) => s === "" || /^\/[A-Za-z0-9/_.~%?=&:@!$'()*+,;-]*$/.test(s), "Health-check path must start with / and be a valid URL path."),
+  healthCheckStatus: z.number().int().min(0).max(599).default(0),
 });
 
 export type HostInput = z.infer<typeof hostInput>;

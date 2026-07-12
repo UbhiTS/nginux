@@ -71,6 +71,12 @@ export interface ProxyHost {
   rateLimitKbps: number;
   /** Max concurrent connections per client IP (0 = unlimited). */
   maxConns: number;
+  /** Uptime probe: 'tcp' just opens the port; 'http' issues a GET and checks status. */
+  healthCheckType: "tcp" | "http";
+  /** Path for the HTTP health check (e.g. /healthz). Only used when type is http. */
+  healthCheckPath: string;
+  /** Expected HTTP status (0 = accept any 2xx/3xx). Only used when type is http. */
+  healthCheckStatus: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,7 +86,8 @@ type OptionalOnCreate =
   | "health" | "certExpiresAt" | "certDomain" | "maintenanceMode" | "securityHeaders" | "hsts"
   | "rateLimit" | "blockExploits" | "ipAllow" | "ipDeny" | "customHeaders" | "customNginx"
   | "upstreams" | "lbMethod" | "protocol" | "listenPort" | "pathRules" | "mtls"
-  | "rateLimitKbps" | "maxConns" | "rateLimitRps" | "rateLimitBurst" | "iconUrl";
+  | "rateLimitKbps" | "maxConns" | "rateLimitRps" | "rateLimitBurst" | "iconUrl"
+  | "healthCheckType" | "healthCheckPath" | "healthCheckStatus";
 
 export type NewProxyHost = Omit<ProxyHost, ManagedFields | OptionalOnCreate> &
   Partial<Pick<ProxyHost, OptionalOnCreate>>;

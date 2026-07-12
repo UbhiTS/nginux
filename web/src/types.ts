@@ -45,6 +45,9 @@ export interface ProxyHost {
   mtls: boolean;
   rateLimitKbps: number;
   maxConns: number;
+  healthCheckType: "tcp" | "http";
+  healthCheckPath: string;
+  healthCheckStatus: number;
   createdAt: string;
   updatedAt: string;
 }

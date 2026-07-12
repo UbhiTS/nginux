@@ -646,6 +646,26 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
           <input className="input" style={{ maxWidth: 110 }} type="number" value={draft.forwardPort} onChange={(e) => set({ forwardPort: Number(e.target.value) })} />
         </div>
       </div>
+      <div className="field">
+        <label>Health check</label>
+        <div className="input-group">
+          <select className="input" style={{ maxWidth: 160 }} value={draft.healthCheckType} onChange={(e) => set({ healthCheckType: e.target.value as ProxyHost["healthCheckType"] })}>
+            <option value="tcp">TCP connect</option>
+            <option value="http">HTTP request</option>
+          </select>
+          {draft.healthCheckType === "http" && (
+            <>
+              <input className="input" style={{ maxWidth: 180 }} placeholder="/healthz" value={draft.healthCheckPath} onChange={(e) => set({ healthCheckPath: e.target.value })} />
+              <input className="input" style={{ maxWidth: 150 }} type="number" min={0} max={599} placeholder="any 2xx/3xx" value={draft.healthCheckStatus || ""} onChange={(e) => set({ healthCheckStatus: Number(e.target.value) })} />
+            </>
+          )}
+        </div>
+        <div className="hint">
+          {draft.healthCheckType === "http"
+            ? "Issues a GET and checks the status (0 = accept any 2xx/3xx). \"App healthy\", not just \"port open\"."
+            : "Just opens the TCP port. Switch to HTTP to check the app actually responds."}
+        </div>
+      </div>
 
       <div className="section-title" style={{ marginTop: 8 }}>Behaviour</div>
       <Toggle k="websockets" label="WebSockets" desc="Support upgrade connections." />
