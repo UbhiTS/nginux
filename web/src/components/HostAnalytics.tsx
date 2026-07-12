@@ -3,7 +3,8 @@ import { api, type GeoipStatus, type LogEntry, type MetricsSummary } from "../ap
 import { Icon } from "../icons.tsx";
 import { TrafficChart } from "./TrafficChart.tsx";
 import { TrafficMap } from "./TrafficMap.tsx";
-import { statusColor, flag, countryName, fmtBytes } from "../format.ts";
+import { StatusCodeBars, TopSourceIps, CountryBars } from "./AnalyticsPanels.tsx";
+import { statusColor, fmtBytes } from "../format.ts";
 
 const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
 
@@ -83,7 +84,6 @@ export function HostAnalytics({ domain }: { domain: string }) {
     catch { setBlockedTop((b) => { const n = { ...b }; delete n[ip]; return n; }); }
   };
 
-  const totalStatus = summary ? Object.values(summary.statusClass).reduce((a, b) => a + b, 0) || 1 : 1;
   const countryHint = geoip && !geoip.present
     ? "Add the free GeoIP database under Settings → Country lock to map visitors by source country."
     : "No located visitors yet — requests from your LAN / private IPs don't carry a country.";
@@ -119,16 +119,7 @@ export function HostAnalytics({ domain }: { domain: string }) {
           {summary && (
             <div style={{ marginTop: 14 }}>
               <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Status codes</div>
-              {(["2xx", "3xx", "4xx", "5xx"] as const).map((c) => (
-                <div key={c} style={{ marginBottom: 9 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}>
-                    <span className="mono">{c}</span><span className="muted">{summary.statusClass[c]}</span>
-                  </div>
-                  <div style={{ height: 6, background: "var(--bg-elev2)", borderRadius: 4, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${(summary.statusClass[c] / totalStatus) * 100}%`, background: statusColor(parseInt(c) * 100) }} />
-                  </div>
-                </div>
-              ))}
+              <StatusCodeBars statusClass={summary.statusClass} />
             </div>
           )}
         </div>
@@ -140,23 +131,10 @@ export function HostAnalytics({ domain }: { domain: string }) {
           <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 18 }}>
             <div>
               <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Top source IPs · click to filter the log</div>
-              {summary?.topIps.map((t) => {
-                const st = blockedTop[t.key];
-                return (
-                  <div key={t.key} className="kv">
-                    <span className="k" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                      <button className="map-ip-pick mono" style={{ flex: "0 1 auto" }} title="Show this IP in the live log" onClick={() => pickIp(t.key)}>{t.key}</button>
-                      {t.country && <span className="muted" style={{ fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{flag(t.country)} {countryName(t.country)}</span>}
-                    </span>
-                    <span className="v" style={{ display: "flex", alignItems: "center", gap: 8 }}>{t.count}
-                      <button className={`map-ip-block${st === "done" ? " done" : ""}`} disabled={!!st} title={st === "done" ? "Blocked on all services" : "Block this IP on all services"} onClick={() => blockTop(t.key)}>
-                        {st === "done" ? <Icon.check /> : st === "busy" ? <span className="spinner" style={{ width: 11, height: 11 }} /> : <Icon.shield />}
-                      </button>
-                    </span>
-                  </div>
-                );
-              })}
-              {summary && summary.topIps.length === 0 && <div className="muted">No traffic in this window.</div>}
+              {summary && (
+                <TopSourceIps ips={summary.topIps} blocked={blockedTop} onPick={pickIp} onBlock={blockTop}
+                  pickTitle="Show this IP in the live log" emptyText="No traffic in this window." />
+              )}
             </div>
             <div>
               <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Top paths</div>
@@ -176,19 +154,7 @@ export function HostAnalytics({ domain }: { domain: string }) {
           {summary && (summary.topCountries ?? []).length > 0 && (
             <div style={{ marginTop: 8 }}>
               <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Traffic by country</div>
-              {summary.topCountries.map((c) => {
-                const max = summary.topCountries[0].count || 1;
-                return (
-                  <div key={c.key} style={{ marginBottom: 9 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 4 }}>
-                      <span>{flag(c.key)} {countryName(c.key)}</span><span className="muted">{c.count}</span>
-                    </div>
-                    <div style={{ height: 6, background: "var(--bg-elev2)", borderRadius: 4, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${(c.count / max) * 100}%`, background: "var(--accent)" }} />
-                    </div>
-                  </div>
-                );
-              })}
+              <CountryBars countries={summary.topCountries} />
             </div>
           )}
         </div>
