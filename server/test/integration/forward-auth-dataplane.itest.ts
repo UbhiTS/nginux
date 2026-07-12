@@ -32,11 +32,12 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, basename } from "node:path";
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 import forge from "node-forge";
 
 // ---------------------------------------------------------------------------
@@ -64,6 +65,8 @@ const NG_HTTP = 18080;     // nginx front door (plain HTTP)
 const NG_HTTPS = 18443;    // nginx front door (TLS — for the ssl:true fixture)
 const ECHO1 = 18781;       // primary echo upstream
 const ECHO2 = 18782;       // secondary upstream (path-route test)
+const STREAM_LISTEN = 18790; // nginx L4 stream listener (A2)
+const STREAM_ECHO = 18791;   // TCP echo backend (A2)
 const SECRET = "itest-forward-secret-0123456789";
 const SSO = "https://nginux.example.com";
 
@@ -81,6 +84,7 @@ Object.assign(process.env, {
   ACME_WEBROOT: P("acme-webroot"),
   NGINX_ACCESS_LOG: P("access.log"),
   NGINX_BANNED_FILE: P("banned.conf"),
+  NGINX_STREAM_BANNED_FILE: P("stream_banned.conf"),
   NGINX_DEFAULT_CERT: P("selfsigned.crt"),
   NGINX_DEFAULT_KEY: P("selfsigned.key"),
   NGINUX_CONTROL_URL: `http://127.0.0.1:${CP_PORT}`,
@@ -101,7 +105,10 @@ let app: Any, db: Any, saveSettings: Any, createSession: Any, createHost: Any, m
 let nginx: ChildProcess | null = null;
 let cookies: Record<string, string> = {};
 let sslOk = false; // set once a self-signed cert is minted, gating the ssl:true fixture
+let streamOk = false; // set when nginx can run a stream{} block, gating the L4 ban fixture
+let streamLoadModule: string | null = null; // dynamic ngx_stream_module path on Linux (null if static)
 const echoServers: http.Server[] = [];
+const tcpServers: net.Server[] = [];
 
 // A user row, inserted directly so we can pin role/scope/2FA/mustChange precisely.
 function seedUser(opts: { role: string; scope?: string; twofa?: 0 | 1; mustChange?: 0 | 1 }): string {
@@ -146,13 +153,64 @@ function makeSelfSignedCert(certPath: string, keyPath: string) {
   writeFileSync(keyPath, forge.pki.privateKeyToPem(keys.privateKey));
 }
 
+// Can THIS nginx run a stream{} block with ngx_stream_access `deny`? Static builds
+// (nginx.org Windows) have stream compiled in; Debian/Ubuntu ships it as a dynamic module
+// that must be load_module'd (and isn't auto-loaded when we pass our own -c). Probe both:
+// try a stream+deny config with no module, then with each candidate .so path. Returns the
+// load_module path needed (or null for static); { ok:false } if stream is unavailable → A2 skips.
+function detectStream(): { ok: boolean; loadModule: string | null } {
+  const probe = P("streamprobe.conf");
+  const candidates: (string | null)[] = [
+    null,
+    "/usr/lib/nginx/modules/ngx_stream_module.so",
+    "/usr/lib/x86_64-linux-gnu/nginx/modules/ngx_stream_module.so",
+    "/usr/share/nginx/modules/ngx_stream_module.so",
+  ];
+  for (const mod of candidates) {
+    if (mod && !existsSync(mod)) continue;
+    // Set pid + error_log to the (already-existing) temp dir: nginx -t opens the error log
+    // early, and the default `logs/error.log` under the prefix doesn't exist yet, which
+    // would make -t fail for the wrong reason (and skip A2 on a stream-capable nginx).
+    writeFileSync(probe, `${mod ? `load_module ${mod};\n` : ""}worker_processes 1;\npid ${P("streamprobe.pid")};\nerror_log ${P("streamprobe-err.log")} crit;\nevents { worker_connections 16; }\nstream {\n  server { listen 19999; deny 203.0.113.1; proxy_pass 127.0.0.1:1; }\n}\n`);
+    const r = spawnSync(NGINX_BIN, ["-p", `${DIR.replace(/\\/g, "/")}/`, "-c", probe, "-t"], { encoding: "utf8", timeout: 15_000 });
+    if (r.status === 0) return { ok: true, loadModule: mod };
+  }
+  return { ok: false, loadModule: null };
+}
+
+// A raw TCP echo backend: any byte that reaches it proves the L4 gate was passed.
+function startTcpEcho(port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer((sock) => { sock.end("STREAM_OK"); });
+    tcpServers.push(srv);
+    srv.on("error", reject);
+    srv.listen(port, "127.0.0.1", () => resolve());
+  });
+}
+
+// Connect to a TCP port and return whatever bytes come back before close. A ban drops the
+// connection AFTER the handshake with zero payload (ngx_stream_access), so a banned probe
+// resolves to "" while an allowed one resolves to the "STREAM_OK" marker.
+function tcpProbe(port: number): Promise<string> {
+  return new Promise((resolve) => {
+    let buf = "";
+    const sock = net.connect(port, "127.0.0.1");
+    sock.setTimeout(3000);
+    sock.on("data", (d) => { buf += d.toString(); });
+    sock.on("close", () => resolve(buf));
+    sock.on("error", () => resolve(buf)); // RST/refused -> whatever we got (usually "")
+    sock.on("timeout", () => { sock.destroy(); resolve(buf); });
+  });
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Low-level GET so we can set an explicit Host header. NOTE: fetch()/undici silently
 // DROPS the Host header (it's a "forbidden header name" in the fetch spec) — which would
 // send every probe to nginx's default_server. node:http honors an explicit Host, and
 // never auto-follows redirects, so a 302-to-login is observed as a 302.
-function rawGet(opts: { port: number; host: string; path?: string; cookie?: string; headers?: Record<string, string> }): Promise<{ status: number; body: string; location: string | null }> {
+type Resp = { status: number; body: string; location: string | null; headers: http.IncomingHttpHeaders };
+function rawGet(opts: { port: number; host: string; path?: string; cookie?: string; headers?: Record<string, string> }): Promise<Resp> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       { hostname: "127.0.0.1", port: opts.port, path: opts.path ?? "/", method: "GET",
@@ -161,7 +219,7 @@ function rawGet(opts: { port: number; host: string; path?: string; cookie?: stri
         let body = "";
         res.setEncoding("utf8");
         res.on("data", (c) => { body += c; });
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, body, location: res.headers.location ?? null }));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body, location: res.headers.location ?? null, headers: res.headers }));
       },
     );
     req.on("error", reject);
@@ -170,7 +228,7 @@ function rawGet(opts: { port: number; host: string; path?: string; cookie?: stri
 }
 
 // TLS sibling of rawGet: sets SNI (servername) + Host, and accepts the self-signed cert.
-function rawGetTls(opts: { host: string; path?: string; cookie?: string }): Promise<{ status: number; body: string; location: string | null }> {
+function rawGetTls(opts: { host: string; path?: string; cookie?: string }): Promise<Resp> {
   return new Promise((resolve, reject) => {
     const req = https.request(
       { hostname: "127.0.0.1", port: NG_HTTPS, servername: opts.host, path: opts.path ?? "/", method: "GET",
@@ -179,7 +237,7 @@ function rawGetTls(opts: { host: string; path?: string; cookie?: string }): Prom
         let body = "";
         res.setEncoding("utf8");
         res.on("data", (c) => { body += c; });
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, body, location: res.headers.location ?? null }));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body, location: res.headers.location ?? null, headers: res.headers }));
       },
     );
     req.on("error", reject);
@@ -254,6 +312,8 @@ before(async () => {
   H({ id: "banned", name: "BanHost", domain: "banhost.example.com", requireLogin: false, ipAllow: "127.0.0.1" }); // ban-vs-ipAllow
   H({ id: "pathhost", name: "PathHost", domain: "pathhost.example.com", requireLogin: true,
      pathRules: `/grafana 127.0.0.1:${ECHO2}` }); // "/path host:port" per line (not JSON)
+  // A3: securityHeaders on + a customNginx add_header — the managed headers must survive.
+  H({ id: "hdr", name: "Hdr", domain: "hdr.example.com", requireLogin: true, securityHeaders: true, customNginx: "add_header X-Custom foo;" });
   // ssl:true fixture — exercises the gate inside a real `listen 443 ssl` block AND proves
   // the paired `listen 80` redirect server 301s without proxying to the backend.
   try {
@@ -262,6 +322,15 @@ before(async () => {
     sslOk = true;
   } catch (e) {
     console.log("[integration] self-signed cert generation failed; skipping SSL fixtures:", (e as Error).message);
+  }
+  // A2: L4 stream ban fixture — only when this nginx can run a stream{} block (see detectStream).
+  const sd = detectStream();
+  streamOk = sd.ok;
+  streamLoadModule = sd.loadModule;
+  if (streamOk) {
+    H({ id: "tcp", name: "TCP", domain: "tcp.example.com", protocol: "tcp", listenPort: STREAM_LISTEN, forwardHost: "127.0.0.1", forwardPort: STREAM_ECHO });
+  } else {
+    console.log("[integration] nginx has no usable stream{} module — skipping the L4 ban test (A2).");
   }
 
   // --- users + sessions ---
@@ -280,6 +349,7 @@ before(async () => {
   // --- generate REAL config into the temp prefix (pure writers, no nginx invoked) ---
   await startEcho(ECHO1, "primary");
   await startEcho(ECHO2, "grafana");
+  if (streamOk) await startTcpEcho(STREAM_ECHO);
   writeGeoipConf();
   writeBannedConf();
   writeGeneratedConfigs();     // app's real buildDesiredConfigs(), filesystem-safe filenames
@@ -329,9 +399,17 @@ function writeWrapperConf() {
   mkdirSync(P("logs"), { recursive: true });
   mkdirSync(P("temp"), { recursive: true }); // nginx creates the leaf temp dirs under here
   // Mirrors docker/nginx.conf's http{} contract (shared zones + the geoip/banned includes
-  // that define $nginux_allowed_country and $nginux_banned) but with harness-local paths
-  // and NO load_module lines (test hosts are plain HTTP, no stream/geoip2 modules needed).
-  writeFileSync(P("nginx.conf"), `
+  // that define $nginux_allowed_country and $nginux_banned) with harness-local paths.
+  // The stream{} block mirrors docker/nginx.conf's — the same stream_banned.conf include
+  // the container ships — so the L4 ban path is proven against the real generated deny list.
+  const loadStream = streamLoadModule ? `load_module ${streamLoadModule};\n` : "";
+  const streamBlock = streamOk ? `
+stream {
+    include ${P("stream_banned.conf")};
+    include ${P("stream.d")}/*.conf;
+}
+` : "";
+  writeFileSync(P("nginx.conf"), `${loadStream}
 worker_processes 1;
 daemon off;
 pid ${P("logs", "nginx.pid")};
@@ -351,7 +429,7 @@ http {
     server { listen ${NG_HTTP} default_server; server_name _; return 444; }
     include ${P("conf.d")}/*.conf;
 }
-`);
+${streamBlock}`);
 }
 
 after(async () => {
@@ -365,6 +443,7 @@ after(async () => {
     } catch { /* already gone */ }
   }
   for (const s of echoServers) s.close();
+  for (const s of tcpServers) s.close();
   try { await app?.close(); } catch { /* ignore */ }
   try { rmSync(DIR, { recursive: true, force: true }); } catch { /* best effort */ }
 });
@@ -521,17 +600,46 @@ test("sanity  a non-login host serves the upstream with no session", { skip: SKI
 });
 
 // ===========================================================================
-// ASPIRATIONAL — the 3 DEFERRED data-plane items. Expected to FAIL against current
-// code, so they are TODO/skip and must be un-skipped only when the item is fixed.
+// DATA-PLANE HARDENING — formerly-deferred items A1–A3, now implemented and proven.
 // ===========================================================================
 
-test("A1  [deferred] nginux_session cookie is stripped before proxy_pass to the backend", { skip: true }, async () => {
+test("A1  the NginUX session cookie is stripped before proxy_pass; other cookies survive", { skip: SKIP }, async () => {
+  // The Domain=.base SSO cookie reaches every subdomain; a proxied backend must never see
+  // (and so can never log/replay) it. The echo upstream reflects the Cookie it received.
   const r = await via("plex.example.com", { cookie: `${cookies.admin}; other=x` });
-  assert.ok(!/nginux_session=/.test(r.body), "backend must not receive the NginUX session cookie");
+  assertAllowed(r, "valid session still reaches upstream (auth subrequest keeps the cookie)");
+  assert.ok(!/nginux_session=/.test(r.body), "backend must NOT receive the nginux_session cookie");
+  assert.match(r.body, /cookie=\[other=x\]/, "other cookies pass through intact");
+  // Middle-ordering: the exact case a wrong regex would corrupt (merging neighbours).
+  const mid = await via("plex.example.com", { cookie: `a=1; ${cookies.admin}; b=2` });
+  assert.ok(!/nginux_session=/.test(mid.body), "middle nginux_session stripped");
+  assert.match(mid.body, /cookie=\[a=1; b=2\]/, "neighbours of a middle cookie are preserved, not merged");
 });
-test("A2  [deferred] L4/stream proxies enforce bans + country-lock", { skip: true }, () => {
-  assert.fail("stream-scope $nginux_banned/geo enforcement not implemented");
+
+test("A2  L4/TCP stream proxies enforce IP bans (ngx_stream_access, inherited)", { skip: SKIP }, async (t) => {
+  if (!streamOk) return t.skip("nginx has no usable stream{} module here");
+  // Baseline: unbanned loopback reaches the TCP backend.
+  assert.equal(await tcpProbe(STREAM_LISTEN), "STREAM_OK", "unbanned client reaches the stream backend");
+  db.prepare("INSERT INTO bans (ip, reason, source, createdAt, expiresAt) VALUES (?,?,?,?,?)")
+    .run("127.0.0.1", "itest", "manual", new Date().toISOString(), null);
+  writeBannedConf(); // also rewrites stream_banned.conf (deny 127.0.0.1;)
+  await nginxCtl(["-s", "reload"]);
+  try {
+    await waitUntil(async () => (await tcpProbe(STREAM_LISTEN)) === "", 10_000, "stream ban to take effect");
+    assert.equal(await tcpProbe(STREAM_LISTEN), "", "banned client's L4 connection is dropped (no STREAM_OK)");
+  } finally {
+    db.prepare("DELETE FROM bans WHERE ip = ?").run("127.0.0.1");
+    writeBannedConf();
+    await nginxCtl(["-s", "reload"]);
+    await waitUntil(async () => (await tcpProbe(STREAM_LISTEN)) === "STREAM_OK", 10_000, "stream ban lifted").catch(() => {});
+  }
 });
-test("A3  [deferred] customNginx add_header must not shadow managed security headers", { skip: true }, () => {
-  assert.fail("managed security headers can be shadowed by a location-scope add_header");
+
+test("A3  a customNginx add_header does NOT shadow the managed security headers", { skip: SKIP }, async () => {
+  const r = await via("hdr.example.com", { cookie: cookies.admin });
+  assertAllowed(r, "header host reachable with a valid session");
+  assert.equal(r.headers["x-custom"], "foo", "customNginx add_header applies");
+  assert.equal(r.headers["x-frame-options"], "SAMEORIGIN", "managed X-Frame-Options survives alongside customNginx");
+  assert.equal(r.headers["x-content-type-options"], "nosniff", "managed X-Content-Type-Options survives");
+  assert.equal(r.headers["referrer-policy"], "strict-origin-when-cross-origin", "managed Referrer-Policy survives");
 });

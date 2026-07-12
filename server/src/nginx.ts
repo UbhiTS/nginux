@@ -237,16 +237,30 @@ ${ACME_CHALLENGE_LOCATION}    location / {
 
   const extra = preset.extraDirectives.map((d) => `    ${d}`).join("\n");
 
-  // --- protections (server-level) ---
-  const protections: string[] = [];
+  // --- managed response headers (emitted at LOCATION scope, via headerBlock) ---
+  // nginx add_header inheritance is all-or-nothing: a location with ANY add_header
+  // stops inheriting server-level ones, so a single `customNginx` add_header would
+  // otherwise silently drop every managed security header. Emit them inside each
+  // app-serving location instead, where multiple add_header in the SAME context all
+  // apply and coexist with customNginx. (Security audit follow-up 2026-07-12.)
+  const managedHeaders: string[] = [];
   if (h.securityHeaders) {
-    protections.push(`    add_header X-Frame-Options SAMEORIGIN always;`);
-    protections.push(`    add_header X-Content-Type-Options nosniff always;`);
-    protections.push(`    add_header Referrer-Policy strict-origin-when-cross-origin always;`);
+    managedHeaders.push(`        add_header X-Frame-Options SAMEORIGIN always;`);
+    managedHeaders.push(`        add_header X-Content-Type-Options nosniff always;`);
+    managedHeaders.push(`        add_header Referrer-Policy strict-origin-when-cross-origin always;`);
   }
   if (h.hsts && h.ssl) {
-    protections.push(`    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;`);
+    managedHeaders.push(`        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;`);
   }
+  // custom response headers ("Name: value" per line) - also add_header, so same scope.
+  for (const line of splitLines(h.customHeaders)) {
+    const idx = line.indexOf(":");
+    if (idx > 0) managedHeaders.push(`        add_header ${line.slice(0, idx).trim()} "${line.slice(idx + 1).trim()}" always;`);
+  }
+  const headerBlock = managedHeaders.length ? "\n" + managedHeaders.join("\n") : "";
+
+  // --- protections (server-level: access control only - NOT add_header) ---
+  const protections: string[] = [];
   // Order matters: nginx's access module is first-match-wins. Emit the specific
   // denies FIRST, then the allow-range, then `deny all` - so "allow this range but
   // block these hosts" works. A `deny <ip>` placed AFTER a covering `allow` (or
@@ -267,11 +281,6 @@ ${ACME_CHALLENGE_LOCATION}    location / {
     if (h.preset !== "wordpress") blockedPaths.push(`/wp-admin`, `/wp-login`, `/xmlrpc\\.php`);
     protections.push(`    location ~* (${blockedPaths.join("|")}) { return 403; }`);
   }
-  // custom response headers ("Name: value" per line)
-  for (const line of splitLines(h.customHeaders)) {
-    const idx = line.indexOf(":");
-    if (idx > 0) protections.push(`    add_header ${line.slice(0, idx).trim()} "${line.slice(idx + 1).trim()}" always;`);
-  }
 
   const rateLimitDirective = h.rateLimit ? `\n        limit_req zone=${rlZone} burst=${Math.max(0, h.rateLimitBurst)} nodelay;` : "";
   const bwParts: string[] = [];
@@ -287,17 +296,19 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   // close this nginx string), so it can't inject HTML or break out of the directive.
   const safeName = htmlEscape(h.name);
   const locationBody = h.maintenanceMode
-    ? `        default_type text/html;
+    ? `        default_type text/html;${headerBlock}
         return 503 '<!doctype html><html><head><meta charset="utf-8"><title>Be right back</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}h1{font-size:22px}</style></head><body><div><h1>🔧 Be right back</h1><p>${safeName} is down for maintenance.</p></div></body></html>';`
     : h.protocol === "grpc"
     ? `        grpc_pass grpc://${extraTargets.length ? proxyPass.replace(/^https?:\/\//, "") : `${h.forwardHost}:${h.forwardPort}`};
-        grpc_set_header Host $host;${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${customNginx}
+        grpc_set_header Host $host;
+        grpc_set_header Cookie $backend_cookie;${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 `
     : `        proxy_pass ${proxyPass};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${customNginx}
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Cookie $backend_cookie;${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 ${extra ? extra + "\n" : ""}`;
 
   // Per-path routing: send specific paths to different backends. These are
@@ -313,7 +324,7 @@ ${extra ? extra + "\n" : ""}`;
   // one) behaves identically to the root. Maintenance mode short-circuits the
   // WHOLE host, so skip path routes entirely then (else /grafana keeps serving
   // live traffic while `/` shows the "be right back" page).
-  const pathProtections = `${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}`;
+  const pathProtections = `${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}`;
   const pathBlocks = h.maintenanceMode ? "" : splitLines(h.pathRules).map((line) => {
     const [p, t] = line.split(/\s+/);
     if (!p || !t) return "";
@@ -323,7 +334,8 @@ ${extra ? extra + "\n" : ""}`;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;${pathProtections}
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Cookie $backend_cookie;${pathProtections}
     }
 `;
   }).join("");
@@ -353,21 +365,46 @@ export interface WriteResult {
   rollback: () => void;
 }
 
+/** http-scope map that strips the NginUX SSO session cookie (nginux_session) out of the
+ *  Cookie header before it is proxied upstream, so a compromised/logging backend can never
+ *  see or replay the shared session; ALL other cookies pass through. Defined ONCE (single
+ *  generated file, single $backend_cookie variable) and pulled into http{} by the conf.d
+ *  glob include. Two first-match regexes: the first handles nginux_session appearing first
+ *  or alone; the second handles it preceded by other cookies, removing exactly one leading
+ *  separator so a middle cookie's neighbours are never merged. A name that merely ends in
+ *  `nginux_session` (e.g. `foo_nginux_session`) is not matched (the ^ / `; ` boundary).
+ *  (Security audit follow-up 2026-07-12.) */
+const COOKIE_STRIP_MAP = `# Managed by NginUX - strip nginux_session from the upstream Cookie header (see nginx.ts).
+map $http_cookie $backend_cookie {
+    default $http_cookie;
+    "~^nginux_session=[^;]*(?:;[ \\t]*)?(?<rest>.*)$"          $rest;
+    "~^(?<head>.*?);[ \\t]*nginux_session=[^;]*(?<tail>.*)$"   "\${head}\${tail}";
+}
+`;
+
 /** Build the full desired config set (absolute path -> content) for a given host
  *  list WITHOUT touching disk. Pure - the single generator shared by writeAllConfigs
  *  (persist) and the preview/dry-run path (diff a proposed change before applying). */
 export function buildDesiredConfigs(hosts: ProxyHost[]): Map<string, string> {
   const desired = new Map<string, string>();
   const sniHosts: ProxyHost[] = [];
+  let haveHttpHost = false;
   for (const h of hosts) {
     if (!h.enabled) continue;
     if (h.protocol === "sni") { sniHosts.push(h); continue; }
     const isStream = h.protocol === "tcp" || h.protocol === "udp";
     const file = join(isStream ? STREAM_DIR : CONF_DIR, `${h.domain}.conf`);
     desired.set(file, isStream ? generateStreamConfig(h) : generateHostConfig(h));
+    if (!isStream) haveHttpHost = true;
   }
   if (sniHosts.length) {
     desired.set(join(STREAM_DIR, "_sni_passthrough.conf"), generateSniPassthrough(sniHosts));
+  }
+  // Emit the cookie-strip map (defines $backend_cookie) exactly once, only when an HTTP
+  // host exists - so the variable is always defined where the proxy_set_header references
+  // it, and never orphaned when the deployment is stream-only.
+  if (haveHttpHost) {
+    desired.set(join(CONF_DIR, "_nginux_cookie_strip.conf"), COOKIE_STRIP_MAP);
   }
   return desired;
 }

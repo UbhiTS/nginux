@@ -67,12 +67,15 @@ scoped access (C5/C6) and its **`X-Forwarded-Host` spoof defence (C6b)**, the
 301 without proxying (C15)**, plus a non-gated `sanity` control and a hard-required-nginx
 guard (see below).
 
-Three assertions (A1–A3) are `skip`ped on purpose — they encode the **deferred** data-plane
-items (session-cookie stripping, L4/stream bans, `add_header` shadowing) and should be
-un-skipped only when each item is actually fixed.
+Three further hardening items — once deferred, now **implemented and proven** here:
+**A1** the `nginux_session` cookie is stripped before proxy_pass (other cookies survive),
+**A2** L4/TCP stream proxies enforce IP bans (ngx_stream_access, capability-gated on the
+runner having a usable `stream{}` module), and **A3** a `customNginx add_header` no longer
+shadows the managed security headers.
 
 The suite is proven non-vacuous: reverting the fail-closed host check reddens C8+C9;
-reverting the case-insensitive lookup reddens C7.
+reverting the case-insensitive lookup reddens C7; and each of A1/A2/A3 reddens if its fix
+is reverted.
 
 ## CI
 

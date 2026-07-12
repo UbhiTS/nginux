@@ -8,6 +8,12 @@ import { applyConfig } from "./nginx.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BANNED_FILE = process.env.NGINX_BANNED_FILE ?? join(__dirname, "..", "..", "nginx", "banned.conf");
+// Stream (L4 TCP/UDP/SNI) proxies live in nginx's stream{} context, where the http-scope
+// `geo $nginux_banned` map is invisible and there is no `if`/`return 403`. So the same ban
+// list is ALSO emitted as ngx_stream_access `deny <ip>;` lines, included at stream{} scope
+// and inherited by every stream server (which define no allow/deny of their own — so, unlike
+// the http path, plain deny lines are not shadowed). (Security audit follow-up 2026-07-12.)
+export const STREAM_BANNED_FILE = process.env.NGINX_STREAM_BANNED_FILE ?? join(__dirname, "..", "..", "nginx", "stream_banned.conf");
 
 // auto-ban policy
 const THRESHOLD = 5; // failures
@@ -97,10 +103,19 @@ export function writeBannedConf(): void {
   // ipAllow/ipDeny) — a variable check applies unconditionally, so bans are no longer
   // silently bypassed on the exact hosts an admin bothered to lock down. Mirrors how the
   // country-lock ($nginux_allowed_country) already works. (Security audit 2026-07-12.)
-  const entries = listBans().map((b) => `    ${b.ip} 1;`).join("\n");
+  const bans = listBans();
+  const entries = bans.map((b) => `    ${b.ip} 1;`).join("\n");
   writeFileSync(
     BANNED_FILE,
     `# Managed by NginUX - auto + manual IP bans (geo map; enforced per-server via $nginux_banned)\ngeo $nginux_banned {\n    default 0;\n${entries}${entries ? "\n" : ""}}\n`,
+  );
+  // Stream-context sibling: ngx_stream_access deny lines, inherited by every stream server.
+  // A matched deny drops the connection after the handshake; an empty list (comment only) is
+  // a valid, includable file that denies nothing. Same ban set, same source of truth.
+  const denyLines = bans.map((b) => `    deny ${b.ip};`).join("\n");
+  writeFileSync(
+    STREAM_BANNED_FILE,
+    `# Managed by NginUX - stream-scope IP bans (ngx_stream_access; inherited by all stream servers)\n${denyLines}${denyLines ? "\n" : ""}`,
   );
 }
 

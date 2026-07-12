@@ -15,7 +15,7 @@ set -eu
 
 # Persistent dirs on the mounted volume
 mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs /data/geoip /data/acme-webroot
-touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/nginx/banned.conf
+touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/nginx/banned.conf /data/nginx/stream_banned.conf
 
 # Adopt the data-dir owner unless PUID/PGID were set explicitly.
 PUID="${PUID:-$(stat -c %u /data 2>/dev/null || echo 0)}"
