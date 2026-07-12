@@ -102,8 +102,8 @@ export function HostAnalytics({ domain }: { domain: string }) {
 
   return (
     <div className="host-analytics" style={{ marginTop: 18 }}>
-      <div className="section-title" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        Traffic &amp; logs
+      <div className="section-title animate-rise" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span className="ch-t"><Icon.activity /> Traffic &amp; logs</span>
         <div className="range-tabs" role="tablist" aria-label="Time range" style={{ marginLeft: "auto" }}>
           {RANGES.map((r) => (
             <button key={r} role="tab" aria-selected={range === r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
@@ -113,7 +113,7 @@ export function HostAnalytics({ domain }: { domain: string }) {
         </div>
       </div>
 
-      <Collapsible title="Traffic & errors" badge={<span className="pill n">{range}</span>} open={trafficOpen} onToggle={setTrafficOpen} onFirstOpen={() => setNeedSummary(true)}>
+      <Collapsible title={<><Icon.chart /> Traffic & errors</>} badge={<span className="pill n">{range}</span>} open={trafficOpen} onToggle={setTrafficOpen} onFirstOpen={() => setNeedSummary(true)}>
         <div className="card-pad">
           <div className="stats" style={{ marginBottom: 14 }}>
             <Kpi label="Requests" value={summary ? summary.totalRequests.toLocaleString() : (loadingNote ?? "—")} />
@@ -136,7 +136,7 @@ export function HostAnalytics({ domain }: { domain: string }) {
         </div>
       </Collapsible>
 
-      <Collapsible title="Top clients & paths" onFirstOpen={() => setNeedSummary(true)}>
+      <Collapsible title={<><Icon.users /> Top clients & paths</>} onFirstOpen={() => setNeedSummary(true)}>
         <div className="card-pad">
           {loadingNote}
           <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 18 }}>
@@ -158,7 +158,7 @@ export function HostAnalytics({ domain }: { domain: string }) {
         </div>
       </Collapsible>
 
-      <Collapsible title="Geography" onFirstOpen={() => { setNeedSummary(true); ensureGeo(); }}>
+      <Collapsible title={<><Icon.globe /> Geography</>} onFirstOpen={() => { setNeedSummary(true); ensureGeo(); }}>
         <div className="card-pad">
           {loadingNote}
           {summary && <TrafficMap countries={summary.topCountries ?? []} emptyHint={countryHint} homeCountry={homeCountry} onPickIp={pickIp} onBlockIp={blockIp} />}
@@ -171,7 +171,7 @@ export function HostAnalytics({ domain }: { domain: string }) {
         </div>
       </Collapsible>
 
-      <Collapsible title="Live access log" keepMounted={false} open={logOpen} onToggle={setLogOpen}
+      <Collapsible title={<><Icon.logs /> Live access log</>} keepMounted={false} open={logOpen} onToggle={setLogOpen}
         badge={logFilter ? <span className="pill n">filtered: {logFilter}</span> : undefined}>
         <HostLiveLog domain={domain} filter={logFilter} onClearFilter={() => setLogFilter("")} />
       </Collapsible>

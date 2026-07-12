@@ -87,7 +87,7 @@ describe("SecurityCenter — security score ring", () => {
     vi.mocked(api.securityOverview).mockResolvedValue(makeOverview({ score: 40 }));
     const { container } = render(<SecurityCenter tab="overview" setTab={vi.fn()} />);
     expect(await screen.findByText(/Security score: At risk/)).toBeInTheDocument();
-    const arc = container.querySelectorAll("circle")[1];
+    const arc = container.querySelector(".ring")!.querySelectorAll("circle")[1];
     expect(arc.getAttribute("stroke")).toBe("var(--red)");
   });
 
@@ -95,14 +95,14 @@ describe("SecurityCenter — security score ring", () => {
     vi.mocked(api.securityOverview).mockResolvedValue(makeOverview({ score: 60 }));
     const { container } = render(<SecurityCenter tab="overview" setTab={vi.fn()} />);
     expect(await screen.findByText(/Security score: Fair/)).toBeInTheDocument();
-    expect(container.querySelectorAll("circle")[1].getAttribute("stroke")).toBe("var(--yellow)");
+    expect(container.querySelector(".ring")!.querySelectorAll("circle")[1].getAttribute("stroke")).toBe("var(--yellow)");
   });
 
   it("uses green / 'Strong' for a high score", async () => {
     vi.mocked(api.securityOverview).mockResolvedValue(makeOverview({ score: 92 }));
     const { container } = render(<SecurityCenter tab="overview" setTab={vi.fn()} />);
     expect(await screen.findByText(/Security score: Strong/)).toBeInTheDocument();
-    expect(container.querySelectorAll("circle")[1].getAttribute("stroke")).toBe("var(--green)");
+    expect(container.querySelector(".ring")!.querySelectorAll("circle")[1].getAttribute("stroke")).toBe("var(--green)");
   });
 
   it("turns the 'reachable without a login' advice into a link to the exposure tab", async () => {

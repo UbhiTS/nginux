@@ -198,8 +198,8 @@ export function UsersAccess({
       </div>
       <div className="content">
         <div className="sectabs" role="tablist">
-          <button type="button" role="tab" aria-selected={tab === "users"} className={`sectab${tab === "users" ? " active" : ""}`} onClick={() => setTab("users")}>Users &amp; roles</button>
-          <button type="button" role="tab" aria-selected={tab === "sessions"} className={`sectab${tab === "sessions" ? " active" : ""}`} onClick={() => setTab("sessions")}>Active sessions</button>
+          <button type="button" role="tab" aria-selected={tab === "users"} className={`sectab${tab === "users" ? " active" : ""}`} onClick={() => setTab("users")}><Icon.users /> Users &amp; roles</button>
+          <button type="button" role="tab" aria-selected={tab === "sessions"} className={`sectab${tab === "sessions" ? " active" : ""}`} onClick={() => setTab("sessions")}><Icon.clock /> Active sessions</button>
         </div>
 
         {tab === "users" && (
@@ -209,7 +209,7 @@ export function UsersAccess({
             )}
 
             {!currentUser.twofaEnabled && (
-              <div className="nudge" style={{ marginBottom: 18 }}>
+              <div className="nudge animate-rise" style={{ marginBottom: 18 }}>
                 <Icon.lock />
                 <div style={{ flex: 1 }}>
                   <div className="nt">Protect your account with 2FA</div>
@@ -372,7 +372,7 @@ export function UsersAccess({
             </div>
 
             <div className="caption" style={{ marginTop: 12 }}>
-              <div className="overline" style={{ marginBottom: 6 }}>What each role can do</div>
+              <div className="overline" style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}><Icon.shield /> What each role can do</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px" }}>
                 <span><b>admin</b> - full control, incl. users</span>
                 <span><b>editor</b> - manage services &amp; certs</span>

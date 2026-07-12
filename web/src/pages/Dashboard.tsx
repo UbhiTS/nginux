@@ -3,6 +3,7 @@ import { routeHash, type Route } from "../App.tsx";
 import { api, certForHost, type MetricsSummary, type Certificate } from "../api.ts";
 import type { ProxyHost, Topology as TopologyData } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { useCountUp } from "../hooks.ts";
 import { NetworkTraffic } from "../components/NetworkTraffic.tsx";
 
 const fmtCount = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
@@ -87,6 +88,10 @@ export function Dashboard({
     : null;
   const unprotected = hosts.filter((h) => h.ssl && !h.requireLogin).length;
 
+  // Gentle count-up for the single biggest headline number (total requests).
+  // Called unconditionally before the early returns so hook order stays stable.
+  const requestsCount = useCountUp(summary?.totalRequests ?? 0);
+
   // Still waiting on the first host load: show a skeleton, not the "expose your first
   // service" hero. App seeds hosts=[] before the fetch settles, so gating on hostsLoaded
   // stops the hero from flashing for users who actually have services.
@@ -162,13 +167,17 @@ export function Dashboard({
     <>
       <div className="topbar">
         <h1>Dashboard</h1>
-        {version && <span className="pill n" style={{ marginLeft: "auto" }} title="Running NginUX version">v{version}</span>}
+        {version && (
+          <span className="pill n" style={{ marginLeft: "auto" }} title="Running NginUX version">
+            <Icon.bolt />v{version}
+          </span>
+        )}
       </div>
       <div className="content">
-        <div className="stats">
+        <div className="stats animate-rise-stagger">
           <div className="card stat">
             <div className="label">
-              <Icon.check />
+              <Icon.server />
               Services online
             </div>
             <div className="value">
@@ -220,7 +229,7 @@ export function Dashboard({
               Requests
             </div>
             <div className="value">
-              {summary ? fmtCount(summary.totalRequests) : "-"} <small>total</small>
+              {summary ? fmtCount(requestsCount) : "-"} <small>total</small>
             </div>
             <div className="trend" style={{ color: summary && summary.errorRate > 5 ? "var(--yellow)" : "var(--text-dim)" }}>
               {summary ? `${summary.errorRate}% errors · ${summary.p95}ms p95` : "Since the proxy started"}

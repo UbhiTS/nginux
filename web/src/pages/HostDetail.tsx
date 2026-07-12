@@ -245,7 +245,7 @@ export function HostDetail({
             <div>{actionErr}</div>
           </div>
         )}
-        <div className={`summary-banner ${host.enabled ? b.cls : "warn"}`}>
+        <div className={`summary-banner animate-rise ${host.enabled ? b.cls : "warn"}`}>
           <div className="big-check">{host.enabled ? b.icon : <Icon.alert />}</div>
           <div>
             <div className="st">{host.enabled ? b.title : "Paused - this service isn't being served."}</div>
@@ -274,7 +274,7 @@ export function HostDetail({
           <div>
             <div className="card" style={{ marginBottom: 18 }}>
               <div className="card-head">
-                Routing
+                <span className="ch-t"><Icon.network /> Routing</span>
                 <button
                   className={`pill n preset-chip${presetOpen ? " open" : ""}`}
                   title="What this preset applies"
@@ -353,7 +353,7 @@ export function HostDetail({
             {uptime && (
               <div className="card">
                 <div className="card-head">
-                  Uptime · last checks
+                  <span className="ch-t"><Icon.activity /> Uptime · last checks</span>
                   <span className={`pill ${uptime.uptimePct >= 99 ? "g" : uptime.uptimePct >= 90 ? "y" : "r"}`}>
                     {uptime.uptimePct}%
                   </span>
@@ -379,7 +379,7 @@ export function HostDetail({
           <div>
             <div className="card" style={{ marginBottom: 18 }}>
               <div className="card-head">
-                Certificate
+                <span className="ch-t"><Icon.cert /> Certificate</span>
                 {cert && (
                   <button className="pill n preset-chip" title="View certificate details" onClick={() => setCertDetail(true)}>
                     View details <Icon.chevron className="chev" />
@@ -417,7 +417,7 @@ export function HostDetail({
               </div>
             </div>
             <div className="card">
-              <div className="card-head">Protection</div>
+              <div className="card-head"><span className="ch-t"><Icon.shield /> Protection</span></div>
               <div className="card-pad">
                 <Check ok={host.ssl} label="HTTPS encryption" wrong={host.ssl && cert?.status === "expired"} />
                 <Check ok={host.requireLogin} label="Login required" />
@@ -468,7 +468,7 @@ function ClientCerts({ hostId }: { hostId: string }) {
 
   return (
     <div className="card" style={{ marginTop: 18 }}>
-      <div className="card-head">Client certificates</div>
+      <div className="card-head"><span className="ch-t"><Icon.lock /> Client certificates</span></div>
       <div className="card-pad">
         <div style={{ display: "flex", gap: 8 }}>
           <input className="input" placeholder="cert name (e.g. laptop)" value={name} onChange={(e) => setName(e.target.value)} />
@@ -727,13 +727,13 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
         </div>
       </div>
 
-      <div className="section-title" style={{ marginTop: 8 }}>Behaviour</div>
+      <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.sliders /> Behaviour</span></div>
       <Toggle k="websockets" label="WebSockets" desc="Support upgrade connections." />
       <Toggle k="maintenanceMode" label="Maintenance mode" desc="Show visitors a 'be right back' page - the service stays reachable (unlike Disable, which takes it fully offline)." />
 
       {certApplies && (
         <>
-          <div className="section-title" style={{ marginTop: 8 }}>Certificate</div>
+          <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.cert /> Certificate</span></div>
           <div className="field">
             <label>How {draft.domain} is served</label>
             <select className="input" value={certChoice} onChange={(e) => onCertChoice(e.target.value)} disabled={!!certBusy}>
@@ -785,7 +785,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
         </>
       )}
 
-      <div className="section-title" style={{ marginTop: 8 }}>Access</div>
+      <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.lock /> Access</span></div>
       <Toggle
         k="requireLogin"
         label="Require login"
@@ -806,7 +806,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       />
       <Toggle k="mtls" label="Require client certificate (mTLS)" desc="Only clients with a cert from this host's managed CA may connect." />
 
-      <div className="section-title" style={{ marginTop: 8 }}>Protections</div>
+      <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.shield /> Protections</span></div>
       <Toggle k="securityHeaders" label="Security headers" desc="X-Frame-Options, X-Content-Type-Options, Referrer-Policy." />
       <Toggle k="hsts" label="HSTS" desc="Strict-Transport-Security - force HTTPS in browsers." req="Turn HTTPS on first (pick a certificate above) - HSTS has no effect over plain HTTP." met={draft.ssl} />
       <Toggle k="rateLimit" label="Rate limiting" desc="Cap requests per second per IP (HTTP 429 over the limit)." />
@@ -833,11 +833,11 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       <div className="field"><label>Custom nginx directives (advanced)</label><textarea className="input mono" rows={3} value={draft.customNginx} onChange={(e) => set({ customNginx: e.target.value })} placeholder="proxy_read_timeout 120s;" /></div>
       <div className="field"><label>Per-path routing ("/path host:port" per line)</label><textarea className="input mono" rows={2} value={draft.pathRules} onChange={(e) => set({ pathRules: e.target.value })} placeholder={"/grafana 192.168.1.70:3000\n/portainer 192.168.1.71:9000"} /></div>
 
-      <div className="section-title" style={{ marginTop: 8 }}>Limits & quotas</div>
+      <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.sliders /> Limits & quotas</span></div>
       <div className="field"><label>Download speed limit per connection (KB/s, 0 = unlimited)</label><input className="input" style={{ maxWidth: 200 }} type="number" min={0} value={draft.rateLimitKbps || ""} onChange={(e) => set({ rateLimitKbps: Number(e.target.value) })} placeholder="0" /></div>
       <div className="field"><label>Max concurrent connections per client IP (0 = unlimited)</label><input className="input" style={{ maxWidth: 200 }} type="number" min={0} value={draft.maxConns || ""} onChange={(e) => set({ maxConns: Number(e.target.value) })} placeholder="0" /></div>
 
-      <div className="section-title" style={{ marginTop: 8 }}>Load balancing</div>
+      <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.layers /> Load balancing</span></div>
       <div className="field"><label>Extra upstream targets ("host:port" per line - primary is {draft.forwardHost}:{draft.forwardPort})</label><textarea className="input mono" rows={2} value={draft.upstreams} onChange={(e) => set({ upstreams: e.target.value })} placeholder="192.168.1.51:32400" /></div>
       <div className="field" style={{ marginBottom: 0 }}>
         <label>Method</label>

@@ -151,7 +151,9 @@ describe("SettingsPage - GeoIP config grouped under Country lock (fix 3)", () =>
     await renderReady();
 
     const homeSelect = await screen.findByLabelText(/Home country/i);
-    const lockHeading = screen.getByText("Country lock (GeoIP)");
+    // The heading text lives inside a `.ch-t` span (leading icon), so climb to the
+    // `.section-title` div whose next sibling is the Country lock card.
+    const lockHeading = screen.getByText("Country lock (GeoIP)").closest(".section-title") as HTMLElement;
     const card = lockHeading.nextElementSibling as HTMLElement;
     // Both GeoIP pickers now live in the Country lock card, not Network & SSL.
     expect(card.contains(homeSelect)).toBe(true);

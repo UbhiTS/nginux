@@ -137,7 +137,7 @@ export function SettingsPage({
           </div>
         )}
         <div className="set-section">
-          <div className="section-title">Instance</div>
+          <div className="section-title"><span className="ch-t"><Icon.gear /> Instance</span></div>
           <div className="card card-pad" style={{ marginBottom: 20 }}>
             <Field label="Instance name">
               <input className="input" value={settings.instanceName} onChange={(e) => update({ instanceName: e.target.value })} />
@@ -173,7 +173,7 @@ export function SettingsPage({
             )}
           </div>
 
-          <div className="section-title">Login gate (sign-in for protected services)</div>
+          <div className="section-title"><span className="ch-t"><Icon.lock /> Login gate (sign-in for protected services)</span></div>
           <div className="card card-pad">
             <Field
               label="Shared cookie domain"
@@ -196,7 +196,7 @@ export function SettingsPage({
             </div>
           </div>
 
-          <div className="section-title" style={{ marginTop: 20 }}>Network &amp; SSL</div>
+          <div className="section-title" style={{ marginTop: 20 }}><span className="ch-t"><Icon.globe /> Network &amp; SSL</span></div>
           <div className="card card-pad">
             <Field label="Let's Encrypt email (renewal notices)">
               <input className="input" value={settings.letsEncryptEmail} onChange={(e) => update({ letsEncryptEmail: e.target.value })} placeholder="you@example.com" />
@@ -223,7 +223,7 @@ export function SettingsPage({
 
           <CountryLock settings={settings} update={update} onSaveGeoip={saveGeoipOnly} />
 
-          <div className="section-title" style={{ marginTop: 20 }}>DNS provider</div>
+          <div className="section-title" style={{ marginTop: 20 }}><span className="ch-t"><Icon.network /> DNS provider</span></div>
           <div className="card card-pad">
             <div className="kv"><label className="k" htmlFor={`${uid}-dns`}>Provider</label>
               <select
@@ -270,7 +270,7 @@ export function SettingsPage({
             )}
           </div>
 
-          <div className="section-title" style={{ marginTop: 20 }}>Log rotation</div>
+          <div className="section-title" style={{ marginTop: 20 }}><span className="ch-t"><Icon.logs /> Log rotation</span></div>
           <div className="card card-pad">
             <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <Field label="Max log size (MB)" hint={<>Rotate an nginx log once it passes this size. <b>0</b> disables rotation.</>}>
@@ -307,8 +307,8 @@ function About() {
   useEffect(() => { api.health().then((h) => setVersion(h.version)).catch(() => {}); }, []);
   return (
     <>
-      <div className="section-title" style={{ marginTop: 20 }}>About</div>
-      <div className="card card-pad">
+      <div className="section-title" style={{ marginTop: 20 }}><span className="ch-t"><Icon.info /> About</span></div>
+      <div className="card card-pad animate-rise">
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
           <BrandLogo size={40} className="brand-logo" />
           <div>
@@ -377,7 +377,7 @@ function CountryLock({ settings, update, onSaveGeoip }: { settings: Settings; up
 
   return (
     <>
-      <div className="section-title" style={{ marginTop: 20 }}>Country lock (GeoIP)</div>
+      <div className="section-title" style={{ marginTop: 20 }}><span className="ch-t"><Icon.flag /> Country lock (GeoIP)</span></div>
       <div className="card card-pad">
         <p className="muted" style={{ fontSize: 12.5, marginTop: 0, marginBottom: 14 }}>
           Powers the "Only allow my country" toggle on services. Needs the free MaxMind GeoLite2 database - sign up at maxmind.com and create a license key (Account → Manage License Keys). Your own LAN is always allowed.
@@ -567,7 +567,7 @@ function BackupsGitOps({ settings, update }: { settings: Settings; update: (p: P
   return (
     <>
       <div className="section-title" style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        Backups &amp; GitOps
+        <span className="ch-t"><Icon.database /> Backups &amp; GitOps</span>
         <span style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-sm" onClick={openBackup} title="Portable bundle: hosts + settings + bans + channels">Backup</button>
           <label className="btn btn-sm" style={{ cursor: "pointer", margin: 0 }}>
@@ -736,7 +736,7 @@ function Notifications() {
 
   return (
     <>
-      <div className="section-title" style={{ marginTop: 20 }}>Notifications &amp; alerts</div>
+      <div className="section-title" style={{ marginTop: 20 }}><span className="ch-t"><Icon.bell /> Notifications &amp; alerts</span></div>
       <div className="card card-pad" style={{ marginBottom: 12 }}>
         <div className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
           Get alerted on cert expiry, a service going down, brute-force attempts, and agent approval requests.

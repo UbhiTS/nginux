@@ -5,6 +5,7 @@ import { TrafficChart } from "../components/TrafficChart.tsx";
 import { TrafficMap } from "../components/TrafficMapLazy.tsx";
 import { StatusCodeBars, TopSourceIps, CountryBars } from "../components/AnalyticsPanels.tsx";
 import { statusColor, fmtBytes } from "../format.ts";
+import { useCountUp } from "../hooks.ts";
 
 const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
 const METRICS = ["requests", "bandwidth"] as const;
@@ -130,6 +131,9 @@ export function Logs() {
     catch { setBlockedTop((b) => { const n = { ...b }; delete n[ip]; return n; }); }
   };
 
+  // Count up the single biggest headline number (total requests) on load.
+  const requestsCount = useCountUp(summary?.totalRequests ?? 0);
+
   const f = filter.trim().toLowerCase();
   const shown = f
     ? lines.filter((e) => e.host.toLowerCase().includes(f) || e.path.toLowerCase().includes(f) || e.ip.includes(f) || String(e.status) === f)
@@ -171,29 +175,29 @@ export function Logs() {
           </div>
         )}
         {summary && (
-          <div className="stats">
-            <div className="card stat"><div className="label">Requests</div><div className="value">{summary.totalRequests.toLocaleString()}</div></div>
-            <div className="card stat"><div className="label">Bandwidth</div><div className="value">{fmtBytes(summary.totalBytes)}</div></div>
-            <div className="card stat"><div className="label">Response p95</div><div className="value">{summary.p95}<small>ms</small></div></div>
-            <div className="card stat"><div className="label">Error rate</div><div className="value" style={{ color: summary.errorRate > 5 ? "var(--yellow)" : "var(--green)" }}>{summary.errorRate}%</div></div>
+          <div className="stats animate-rise-stagger">
+            <div className="card stat"><div className="label"><Icon.chart /> Requests</div><div className="value">{requestsCount.toLocaleString()}</div></div>
+            <div className="card stat"><div className="label"><Icon.download /> Bandwidth</div><div className="value">{fmtBytes(summary.totalBytes)}</div></div>
+            <div className="card stat"><div className="label"><Icon.clock /> Response p95</div><div className="value">{summary.p95}<small>ms</small></div></div>
+            <div className="card stat"><div className="label"><Icon.alert /> Error rate</div><div className="value" style={{ color: summary.errorRate > 5 ? "var(--yellow)" : "var(--green)" }}>{summary.errorRate}%</div></div>
           </div>
         )}
 
         <div className="card" style={{ marginBottom: 18 }}>
-          <div className="card-head">Traffic <span className="pill n">{range === "live" ? "live" : range}</span></div>
+          <div className="card-head"><span className="ch-t"><Icon.chart /> Traffic</span> <span className="pill n">{range === "live" ? "live" : range}</span></div>
           <TrafficChart range={range} metric={metric} />
         </div>
 
         <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", marginBottom: 18 }}>
           {summary && (
             <div className="card">
-              <div className="card-head">Status codes</div>
+              <div className="card-head"><span className="ch-t"><Icon.activity /> Status codes</span></div>
               <div className="card-pad"><StatusCodeBars statusClass={summary.statusClass} /></div>
             </div>
           )}
           {summary && (
             <div className="card">
-              <div className="card-head">Top source IPs <span className="pill n">click to filter</span></div>
+              <div className="card-head"><span className="ch-t"><Icon.users /> Top source IPs</span> <span className="pill n">click to filter</span></div>
               <div className="card-pad">
                 <TopSourceIps ips={summary.topIps} blocked={blockedTop} onPick={pickIp} onBlock={blockTop} />
               </div>
@@ -205,7 +209,7 @@ export function Logs() {
 
         {summary && (
           <div className="card" style={{ marginBottom: 18 }}>
-            <div className="card-head">Traffic by country</div>
+            <div className="card-head"><span className="ch-t"><Icon.flag /> Traffic by country</span></div>
             <div className="card-pad">
               <CountryBars countries={summary.topCountries ?? []} emptyHint={countryHint} />
             </div>
@@ -214,7 +218,7 @@ export function Logs() {
 
         <div className="card" ref={logCardRef}>
           <div className="card-head">
-            Live access log <span className="pill n">{shown.length} shown{filter ? " · filtered" : ""}{paused ? " · paused" : ""}</span>
+            <span className="ch-t"><Icon.logs /> Live access log</span> <span className="pill n">{shown.length} shown{filter ? " · filtered" : ""}{paused ? " · paused" : ""}</span>
             <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
               <div className="search" style={{ maxWidth: 240 }}>
                 <Icon.search />

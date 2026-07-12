@@ -58,7 +58,7 @@ function AcmeActivityPanel({ active, onSettled }: { active: boolean; onSettled: 
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="card-head">
-        Let's Encrypt activity
+        <span className="ch-t"><Icon.activity /> Let's Encrypt activity</span>
         {(busy || active) && <span className="pill g" style={{ marginLeft: 8 }}><span className="dot g" />working</span>}
         <span style={{ marginLeft: "auto", display: "flex", gap: 12 }}>
           <a className="muted" style={{ fontSize: 11.5, fontWeight: 400 }} href="https://letsencrypt.org/docs/rate-limits/" target="_blank" rel="noreferrer">rate limits ↗</a>
@@ -253,10 +253,10 @@ export function Certificates() {
           </div>
         )}
 
-        <div className="stats" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
-          <div className="card stat"><div className="label">Valid</div><div className="value" style={{ color: "var(--green)" }}>{valid}</div></div>
-          <div className="card stat"><div className="label">Expiring / expired</div><div className="value" style={{ color: expiring ? "var(--yellow)" : undefined }}>{expiring}</div></div>
-          <div className="card stat"><div className="label">Auto-renew on</div><div className="value">{autoRenew} <small>/ {certs.length}</small></div></div>
+        <div className="stats animate-rise-stagger" style={{ gridTemplateColumns: "repeat(3,1fr)" }}>
+          <div className="card stat"><div className="label"><Icon.cert /> Valid</div><div className="value" style={{ color: "var(--green)" }}>{valid}</div></div>
+          <div className="card stat"><div className="label"><Icon.clock /> Expiring / expired</div><div className="value" style={{ color: expiring ? "var(--yellow)" : undefined }}>{expiring}</div></div>
+          <div className="card stat"><div className="label"><Icon.refresh /> Auto-renew on</div><div className="value">{autoRenew} <small>/ {certs.length}</small></div></div>
         </div>
 
         <div className="card">

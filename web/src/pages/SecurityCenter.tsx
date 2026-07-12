@@ -239,18 +239,18 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
       </div>
       <div className="content">
         <div className="sectabs" role="tablist">
-          <button type="button" role="tab" aria-selected={tab === "overview"} className={`sectab${tab === "overview" ? " active" : ""}`} onClick={() => setTab("overview")}>Overview</button>
+          <button type="button" role="tab" aria-selected={tab === "overview"} className={`sectab${tab === "overview" ? " active" : ""}`} onClick={() => setTab("overview")}><Icon.shield /> Overview</button>
           <button type="button" role="tab" aria-selected={tab === "denylist"} className={`sectab${tab === "denylist" ? " active" : ""}`} onClick={() => setTab("denylist")}>
-            Deny list {bans.length > 0 && <span className="badge">{bans.length}</span>}
+            <Icon.ban /> Deny list {bans.length > 0 && <span className="badge">{bans.length}</span>}
           </button>
           <button type="button" role="tab" aria-selected={tab === "exposure"} className={`sectab${tab === "exposure" ? " active" : ""}`} onClick={() => setTab("exposure")}>
-            What's exposed {unprotected > 0 && <span className="badge">{unprotected}</span>}
+            <Icon.eye /> What's exposed {unprotected > 0 && <span className="badge">{unprotected}</span>}
           </button>
-          <button type="button" role="tab" aria-selected={tab === "logins"} className={`sectab${tab === "logins" ? " active" : ""}`} onClick={() => setTab("logins")}>Login activity</button>
+          <button type="button" role="tab" aria-selected={tab === "logins"} className={`sectab${tab === "logins" ? " active" : ""}`} onClick={() => setTab("logins")}><Icon.activity /> Login activity</button>
           <button type="button" role="tab" aria-selected={tab === "failures"} className={`sectab${tab === "failures" ? " active" : ""}`} onClick={() => setTab("failures")}>
-            Login failures {failures.length > 0 && <span className="badge">{failures.length}</span>}
+            <Icon.alert /> Login failures {failures.length > 0 && <span className="badge">{failures.length}</span>}
           </button>
-          <button type="button" role="tab" aria-selected={tab === "profiles"} className={`sectab${tab === "profiles" ? " active" : ""}`} onClick={() => setTab("profiles")}>Profiles</button>
+          <button type="button" role="tab" aria-selected={tab === "profiles"} className={`sectab${tab === "profiles" ? " active" : ""}`} onClick={() => setTab("profiles")}><Icon.layers /> Profiles</button>
         </div>
 
         {tab === "profiles" && <ProfilesPanel />}
@@ -260,7 +260,7 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
             {(overview) => (
               <>
                 <div className="grid-2" style={{ marginBottom: 18 }}>
-                  <div className="card score-card">
+                  <div className="card score-card animate-rise">
                     <div className="ring">
                       <svg width="96" height="96">
                         <circle cx="48" cy="48" r="40" fill="none" stroke="var(--border)" strokeWidth="9" />
@@ -288,15 +288,15 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
                       </div>
                     </div>
                   </div>
-                  <div className="stats grid-3" style={{ marginBottom: 0 }}>
-                    <Stat label="Failed logins (24h)" value={overview.failedLogins24h} color={overview.failedLogins24h ? "var(--yellow)" : undefined} />
-                    <Stat label="Exposed services" value={overview.exposed} />
-                    <Stat label="Active sessions" value={overview.activeSessions} />
+                  <div className="stats grid-3 animate-rise-stagger" style={{ marginBottom: 0 }}>
+                    <Stat label={<><Icon.alert /> Failed logins (24h)</>} value={overview.failedLogins24h} color={overview.failedLogins24h ? "var(--yellow)" : undefined} />
+                    <Stat label={<><Icon.eye /> Exposed services</>} value={overview.exposed} />
+                    <Stat label={<><Icon.users /> Active sessions</>} value={overview.activeSessions} />
                   </div>
                 </div>
 
                 <div className="card">
-                  <div className="card-head">Recent security events</div>
+                  <div className="card-head"><span className="ch-t"><Icon.activity /> Recent security events</span></div>
                   <Loadable q={eventsQ} skeletonRows={5}>
                     {(evs) => (
                       <div className="atable">
@@ -323,7 +323,7 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
                 {blockedQ.status === "ready" && blockedQ.data && blockedQ.data.total > 0 && (
                   <div className="grid-2" style={{ marginTop: 18 }}>
                     <div className="card">
-                      <div className="card-head">Blocked attempts by country <span className="muted" style={{ fontWeight: 400 }}>· {blockedQ.data.total} denied recently</span></div>
+                      <div className="card-head"><span className="ch-t"><Icon.globe /> Blocked attempts by country</span> <span className="muted" style={{ fontWeight: 400 }}>· {blockedQ.data.total} denied recently</span></div>
                       <div className="atable">
                         {blockedQ.data.byCountry.map((c) => (
                           <div key={c.country} className="arow" style={{ gridTemplateColumns: "1fr auto" }}>
@@ -340,7 +340,7 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
                       </div>
                     </div>
                     <div className="card">
-                      <div className="card-head">Top blocked IPs</div>
+                      <div className="card-head"><span className="ch-t"><Icon.ban /> Top blocked IPs</span></div>
                       <div className="atable">
                         {blockedQ.data.topIps.map((t) => (
                           <div key={t.ip} className="arow" style={{ gridTemplateColumns: "1fr auto auto", gap: 12 }}>
@@ -429,7 +429,7 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
         {tab === "denylist" && (
           <div className="card" style={{ marginBottom: 18 }}>
             <div className="card-head">
-              Global deny list <span className="pill r">{bans.length}</span>
+              <span className="ch-t"><Icon.ban /> Global deny list</span> <span className="pill r">{bans.length}</span>
               <form className="search" style={{ maxWidth: 280, marginLeft: "auto" }} onSubmit={submitBlock}>
                 <input aria-label="IP address or CIDR range to block" placeholder="Block an IP / CIDR…" value={banIp} onChange={(e) => setBanIp(e.target.value)} />
                 <button type="submit" className="btn btn-sm btn-danger" disabled={!banTarget.valid}>Block</button>
@@ -500,7 +500,7 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
   );
 }
 
-function Stat({ label, value, color }: { label: string; value: number; color?: string }) {
+function Stat({ label, value, color }: { label: ReactNode; value: number; color?: string }) {
   return (
     <div className="card stat">
       <div className="label">{label}</div>

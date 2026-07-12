@@ -222,7 +222,7 @@ export function Services({
               </Field>
             </div>
             <div className="sectabs" role="group" aria-label="Filter by status" style={{ marginBottom: 0 }}>
-              {([["all", "All"], ["online", "Online"], ["down", "Down"], ["paused", "Paused"]] as const).map(([val, lbl]) => (
+              {([["all", "All", null], ["online", "Online", Icon.check], ["down", "Down", Icon.alert], ["paused", "Paused", null]] as const).map(([val, lbl, Ico]) => (
                 <button
                   key={val}
                   type="button"
@@ -230,6 +230,7 @@ export function Services({
                   aria-pressed={status === val}
                   onClick={() => setStatus(val)}
                 >
+                  {Ico && <Ico />}
                   {lbl}
                 </button>
               ))}
@@ -269,7 +270,7 @@ export function Services({
             <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setSelected(new Set())}>Clear</button>
           </div>
         )}
-        <div className="card">
+        <div className="card animate-rise">
           <div className="col-head" style={{ gridTemplateColumns: "34px 1fr 1fr 1fr 1fr auto" }}>
             <div style={{ display: "flex", alignItems: "center" }}>
               <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all services" />

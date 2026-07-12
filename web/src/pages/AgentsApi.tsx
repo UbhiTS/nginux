@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
   type ApiToken,
@@ -112,7 +112,7 @@ export function AgentsApi({ tab: tabProp, setTab }: { tab?: string; setTab: (t: 
           : bundle.status === "error" ? <ErrorNote message={bundle.error} onRetry={bundle.reload} />
           : data && (
             <>
-              <div className="card" style={{ marginBottom: 18, background: "linear-gradient(100deg, var(--accent-soft), transparent)" }}>
+              <div className="card animate-rise" style={{ marginBottom: 18, background: "linear-gradient(100deg, var(--accent-soft), transparent)" }}>
                 <div className="card-pad" style={{ display: "flex", gap: 16, alignItems: "center" }}>
                   <div style={{ width: 46, height: 46, borderRadius: 12, background: "var(--accent)", display: "grid", placeItems: "center", flexShrink: 0 }}>
                     <Icon.bot />
@@ -127,17 +127,17 @@ export function AgentsApi({ tab: tabProp, setTab }: { tab?: string; setTab: (t: 
                 </div>
               </div>
 
-              <div className="stats">
-                <Stat label="Connected agents" value={data.ov.agents} />
-                <Stat label="Tools exposed" value={data.ov.tools} />
-                <Stat label="Pending approvals" value={data.ov.pendingApprovals} color={data.ov.pendingApprovals ? "var(--yellow)" : undefined} />
-                <Stat label="Webhooks" value={data.ov.webhooks} />
+              <div className="stats animate-rise-stagger">
+                <Stat label="Connected agents" value={data.ov.agents} icon={<Icon.bot />} />
+                <Stat label="Tools exposed" value={data.ov.tools} icon={<Icon.plug />} />
+                <Stat label="Pending approvals" value={data.ov.pendingApprovals} color={data.ov.pendingApprovals ? "var(--yellow)" : undefined} icon={<Icon.bell />} />
+                <Stat label="Webhooks" value={data.ov.webhooks} icon={<Icon.globe />} />
               </div>
 
               {pending.length > 0 && <ApprovalsCard pending={pending} decide={decide} />}
 
               <div className="card" style={{ marginTop: 18 }}>
-                <div className="card-head">Recent agent activity</div>
+                <div className="card-head"><span className="ch-t"><Icon.activity /> Recent agent activity</span></div>
                 <div className="atable">
                   {data.events.slice(0, 8).map((e) => (
                     <div key={e.id} className="arow" style={{ gridTemplateColumns: "150px 1fr 130px" }}>
@@ -176,10 +176,10 @@ export function AgentsApi({ tab: tabProp, setTab }: { tab?: string; setTab: (t: 
   );
 }
 
-function Stat({ label, value, color }: { label: string; value: number; color?: string }) {
+function Stat({ label, value, color, icon }: { label: string; value: number; color?: string; icon?: ReactNode }) {
   return (
     <div className="card stat">
-      <div className="label">{label}</div>
+      <div className="label">{icon}{label}</div>
       <div className="value" style={{ color }}>{value}</div>
     </div>
   );
@@ -207,7 +207,7 @@ function ApprovalsCard({ pending, decide }: { pending: Approval[]; decide: (id: 
 
   return (
     <div className="card">
-      <div className="card-head">Pending approvals <span className="pill y">{pending.length}</span></div>
+      <div className="card-head"><span className="ch-t"><Icon.bell /> Pending approvals</span> <span className="pill y">{pending.length}</span></div>
       {err && (
         <div role="alert" className="info-line" style={{ color: "var(--red)", padding: "0 var(--sp-4) var(--sp-2)" }}>
           <Icon.alert /> {err}
@@ -277,7 +277,7 @@ function McpTab({ origin }: { origin: string }) {
 
   return (
     <>
-      <div className="section-title">Endpoints</div>
+      <div className="section-title"><span className="ch-t"><Icon.plug /> Endpoints</span></div>
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <Endpoint tag="HTTP" url={`${origin}/api/mcp`} note="streamable JSON-RPC" />
         <Endpoint tag="SSE" url={`${origin}/api/events/sse`} note="event stream" />
@@ -286,7 +286,7 @@ function McpTab({ origin }: { origin: string }) {
         </div>
       </div>
 
-      <div className="section-title">Drop-in config</div>
+      <div className="section-title"><span className="ch-t"><Icon.copy /> Drop-in config</span></div>
       <div className="code" style={{ marginBottom: 18 }}>{`{
   "mcpServers": {
     "nginux": {
@@ -296,7 +296,7 @@ function McpTab({ origin }: { origin: string }) {
   }
 }`}</div>
 
-      <div className="section-title">API tokens</div>
+      <div className="section-title"><span className="ch-t"><Icon.key /> API tokens</span></div>
       <div className="card card-pad" style={{ marginBottom: 12 }}>
         <form onSubmit={(e) => { e.preventDefault(); create(); }} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
           <div style={{ maxWidth: 200 }}>
@@ -363,7 +363,7 @@ function McpTab({ origin }: { origin: string }) {
           </div>
         )}
 
-      <div className="section-title">Tool catalog</div>
+      <div className="section-title"><span className="ch-t"><Icon.bot /> Tool catalog</span></div>
       <div style={{ display: "flex", gap: 16, margin: "-4px 0 12px", fontSize: 11.5, color: "var(--text-dim)", flexWrap: "wrap" }}>
         <span style={{ fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", fontSize: 10.5 }}>Risk →</span>
         <span><span className="pill n">Read-only</span> always allowed</span>
@@ -418,7 +418,7 @@ function SafetyTab({ pending, decide, settings, onPolicy }: { pending: Approval[
       {pending.length > 0 ? <ApprovalsCard pending={pending} decide={decide} /> : (
         <div className="card"><div className="state-note"><Icon.check /><div>No actions are waiting for approval.</div></div></div>
       )}
-      <div className="section-title" style={{ marginTop: 22 }}>Auto-approval policy</div>
+      <div className="section-title" style={{ marginTop: 22 }}><span className="ch-t"><Icon.check /> Auto-approval policy</span></div>
       <div className="switch-row">
         <div className="sw-icon"><Icon.shield /></div>
         <div className="sw-text">
@@ -480,13 +480,13 @@ function EventsTab({ origin }: { origin: string }) {
 
   return (
     <>
-      <div className="section-title">Stream endpoints</div>
+      <div className="section-title"><span className="ch-t"><Icon.activity /> Stream endpoints</span></div>
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <Endpoint tag="SSE" url={`${origin}/api/events/sse`} note="" />
         <div className="info-line" style={{ marginTop: 6 }}><Icon.lock /> Same Bearer token as MCP; events are filtered to the token's scopes.</div>
       </div>
 
-      <div className="section-title">Live events</div>
+      <div className="section-title"><span className="ch-t"><Icon.activity /> Live events</span></div>
       <div className="card" style={{ marginBottom: 18 }}>
         <div className="atable">
           {live.length === 0 && <div className="placeholder"><p><span className="spinner" /> Listening… trigger an action (e.g. switch theme or call a tool) to see events.</p></div>}
@@ -499,7 +499,7 @@ function EventsTab({ origin }: { origin: string }) {
         </div>
       </div>
 
-      <div className="section-title">Outbound webhooks</div>
+      <div className="section-title"><span className="ch-t"><Icon.globe /> Outbound webhooks</span></div>
       <div className="card card-pad" style={{ marginBottom: 12 }}>
         <form onSubmit={(e) => { e.preventDefault(); addWebhook(); }} style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
           <div style={{ flex: 1 }}>
