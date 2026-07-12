@@ -5,7 +5,7 @@ import {
   createChannel, deleteChannel, listChannels, setChannelEnabled,
   setChannelRouting, testChannel, type ChannelType,
 } from "../notify.ts";
-import { assertSafeOutboundUrl } from "../validate.ts";
+import { assertSafeOutboundUrl, isDangerousHost } from "../validate.ts";
 import { logEvent } from "../auth.ts";
 
 // Notification channels (admin only) + per-channel severity routing.
@@ -30,6 +30,11 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: RouteCtx): void
     for (const key of ["url", "server"]) {
       const v = body.config[key];
       if (v) { try { assertSafeOutboundUrl(v); } catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid URL." }); } }
+    }
+    // The email channel connects to config.host:port directly (nodemailer), so it needs
+    // the same link-local/metadata guard as the URL channels. (Security audit 2026-07-12.)
+    if (body.type === "email" && body.config.host && isDangerousHost(body.config.host)) {
+      return reply.code(400).send({ error: "That SMTP host is not allowed." });
     }
     const ch = createChannel({ type: body.type as ChannelType, name: body.name, config: body.config, events: body.events, minSeverity: body.minSeverity });
     logEvent({ type: "alert.channel_added", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Added ${body.type} notification channel "${body.name}"`, ip: clientIp(req), meta: {} });

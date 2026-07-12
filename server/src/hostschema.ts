@@ -56,11 +56,15 @@ export const validIconUrl = (s: string): boolean =>
   s === "" || /^https:\/\/cdn\.jsdelivr\.net\//.test(s) || /^data:image\//.test(s);
 
 // ---- zod field builders (thin wrappers so REST error messages stay put) ----
-const ipListField = z.string().default("").refine(validIpList, "IP allow/deny entries must be valid IPv4/IPv6 addresses or CIDRs.");
-const customHeadersField = z.string().default("").refine(validCustomHeaders, 'Custom headers must be "Header-Name: value" per line (no quotes).');
-const pathRulesField = z.string().default("").refine(validPathRules, 'Path rules must be "/path host:port" per line.');
-const upstreamsField = z.string().default("").refine(validUpstreams, 'Upstream targets must be "host:port" per line.');
-const customNginxField = z.string().default("").refine(validCustomNginx, "Custom nginx directives may not contain { or }.");
+// Length caps on the free-text/list fields — every one reaches the generated nginx
+// config verbatim and every applyConfig() then runs `nginx -t` + reload over it. Without
+// a cap a single write could be ~2 MB (the global bodyLimit), bloating the config on
+// every reload. (Security audit 2026-07-12.)
+const ipListField = z.string().max(4096).default("").refine(validIpList, "IP allow/deny entries must be valid IPv4/IPv6 addresses or CIDRs.");
+const customHeadersField = z.string().max(8192).default("").refine(validCustomHeaders, 'Custom headers must be "Header-Name: value" per line (no quotes).');
+const pathRulesField = z.string().max(8192).default("").refine(validPathRules, 'Path rules must be "/path host:port" per line.');
+const upstreamsField = z.string().max(8192).default("").refine(validUpstreams, 'Upstream targets must be "host:port" per line.');
+const customNginxField = z.string().max(8192).default("").refine(validCustomNginx, "Custom nginx directives may not contain { or }.");
 
 export const hostInput = z.object({
   name: z.string().min(1).max(100).refine(validName, "Name may not contain ; { } or line breaks."),

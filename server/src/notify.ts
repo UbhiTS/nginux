@@ -121,43 +121,43 @@ async function deliver(ch: Channel, title: string, message: string): Promise<{ o
     switch (ch.type) {
       case "ntfy":
         res = await fetch(`${c.server || "https://ntfy.sh"}/${c.topic}`, {
-          method: "POST", body: message, headers: { Title: title }, signal: AbortSignal.timeout(5000),
+          method: "POST", body: message, headers: { Title: title }, redirect: "manual", signal: AbortSignal.timeout(5000),
         });
         break;
       case "gotify":
         res = await fetch(`${c.server}/message?token=${c.token}`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, message, priority: 5 }), signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ title, message, priority: 5 }), redirect: "manual", signal: AbortSignal.timeout(5000),
         });
         break;
       case "pushover":
         res = await fetch("https://api.pushover.net/1/messages.json", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: c.token, user: c.user, title, message }), signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ token: c.token, user: c.user, title, message }), redirect: "manual", signal: AbortSignal.timeout(5000),
         });
         break;
       case "discord":
         res = await fetch(c.url, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: `**${title}**\n${message}` }), signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ content: `**${title}**\n${message}` }), redirect: "manual", signal: AbortSignal.timeout(5000),
         });
         break;
       case "slack":
         res = await fetch(c.url, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: `*${title}*\n${message}` }), signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ text: `*${title}*\n${message}` }), redirect: "manual", signal: AbortSignal.timeout(5000),
         });
         break;
       case "telegram":
         res = await fetch(`https://api.telegram.org/bot${c.token}/sendMessage`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: c.chatId, text: `${title}\n${message}` }), signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ chat_id: c.chatId, text: `${title}\n${message}` }), redirect: "manual", signal: AbortSignal.timeout(5000),
         });
         break;
       case "webhook":
         res = await fetch(c.url, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, message }), signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ title, message }), redirect: "manual", signal: AbortSignal.timeout(5000),
         });
         break;
       case "email": {

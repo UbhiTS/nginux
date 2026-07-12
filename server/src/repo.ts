@@ -16,7 +16,12 @@ export function getHost(id: string): ProxyHost | null {
 }
 
 export function getHostByDomain(domain: string): ProxyHost | null {
-  const row = db.prepare("SELECT * FROM hosts WHERE domain = ?").get(domain) as
+  // Case-INSENSITIVE: nginx routes case-insensitively and stamps a lowercased $host on
+  // the forward-auth subrequest, while stored domains may carry uppercase. An exact,
+  // case-sensitive match here let a login-gated host with an uppercase domain FAIL OPEN
+  // (require2fa + scope checks skipped). This also collapses case-variant duplicates on
+  // create. (Security audit 2026-07-12.)
+  const row = db.prepare("SELECT * FROM hosts WHERE lower(domain) = lower(?)").get(domain) as
     | Record<string, unknown>
     | undefined;
   return row ? rowToHost(row) : null;
@@ -32,7 +37,16 @@ export function getHostByDomainCached(domain: string): ProxyHost | null {
   const hit = hostByDomainCache.get(domain);
   if (hit !== undefined) return hit;
   if (hostByDomainCache.size > 1000) hostByDomainCache.clear();
-  const h = getHostByDomain(domain);
+  let h = getHostByDomain(domain);
+  if (!h) {
+    // Wildcard fallback so a `*.parent` login-gated host enforces its policy on any
+    // subdomain, matching nginx's server_name wildcard (which stamps the concrete
+    // subdomain as $host). Without this, a wildcard gated host FAILS OPEN. Scoped to
+    // the forward-auth hot path only — getHostByDomain (dup detection) stays exact, so
+    // a specific host + a wildcard host can still coexist. (Security audit 2026-07-12.)
+    const dot = domain.indexOf(".");
+    if (dot > 0) h = getHostByDomain("*." + domain.slice(dot + 1));
+  }
   hostByDomainCache.set(domain, h);
   return h;
 }

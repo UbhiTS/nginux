@@ -71,11 +71,15 @@ test("a CIDR ban round-trips into listBans and the nginx deny-list", () => {
 
   writeBannedConf(); // addBan already writes it, but assert the generated snippet directly
   const conf = readFileSync(BANNED_FILE, "utf8");
-  assert.ok(conf.includes(`deny ${cidr};`), `banned.conf must contain: deny ${cidr};`);
+  // banned.conf is a `geo $nginux_banned` map (enforced per-server via `if`), so bans
+  // survive nginx's allow/deny non-inheritance on hosts using ipAllow/ipDeny.
+  assert.match(conf, /geo \$nginux_banned \{/, "banned.conf must be a geo map");
+  assert.match(conf, /default 0;/, "geo map needs a default");
+  assert.ok(conf.includes(`${cidr} 1;`), `banned.conf must map: ${cidr} 1;`);
   removeBan(cidr);
 
   const after = readFileSync(BANNED_FILE, "utf8");
-  assert.ok(!after.includes(`deny ${cidr};`), "removing a ban must drop it from the deny-list");
+  assert.ok(!after.includes(`${cidr} 1;`), "removing a ban must drop it from the geo map");
 });
 
 test("an EXPIRED ban is never served by listBans (pinned: read path filters expiry)", () => {
@@ -85,7 +89,7 @@ test("an EXPIRED ban is never served by listBans (pinned: read path filters expi
   assert.ok(ban.expiresAt, "the stored row still carries the (past) expiry");
   assert.equal(isBanned(ip), false, "expired bans must not appear in listBans");
   const conf = readFileSync(BANNED_FILE, "utf8");
-  assert.ok(!conf.includes(`deny ${ip};`), "expired bans must not reach the deny-list");
+  assert.ok(!conf.includes(`${ip} 1;`), "expired bans must not reach the geo map");
 });
 
 test("ttlMs=0 creates a permanent ban (null expiry) that is always listed", () => {

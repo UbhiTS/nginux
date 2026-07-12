@@ -97,6 +97,9 @@ async function deliverWebhooks(e: NgxEvent): Promise<void> {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-NginUX-Signature": `sha256=${signature}`, "X-NginUX-Event": e.type },
           body,
+          // Don't follow a 3xx to a link-local/metadata target (the isDangerousHost
+          // guard only checks the initial hostname). (Security audit 2026-07-12.)
+          redirect: "manual",
           signal: AbortSignal.timeout(5000),
         });
         status = res.ok ? `${res.status}` : `error ${res.status}`;

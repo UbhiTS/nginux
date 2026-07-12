@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { isHostname } from "./validate.ts";
 
+// A full http(s) URL safe to interpolate into a generated nginx `return 302 <url>`
+// directive: ANCHORED (^…$) and free of the characters that could break out of the
+// directive — quotes, semicolons, braces, whitespace, backslash, angle brackets. The
+// old `/^https?:\/\/[^\s/]+/i` was front-matched only, so `https://ok" ; return 200; #`
+// passed and reached the sink. (Security audit 2026-07-12.)
+const SAFE_URL = /^https?:\/\/[a-z0-9.\-]+(:\d+)?(\/[a-zA-Z0-9._~%\-/]*)?$/i;
+
 // Single source of truth for settings-write validation, shared by the REST
 // boundary (PUT /api/settings) and the agent tool path (update_settings). Both
 // validate through the SAME schema, so the agent path can't be looser than REST -
@@ -31,7 +38,7 @@ export const settingsInput = z.object({
   agentAutoApprove: z.boolean(),
   require2faForManagers: z.boolean(),
   gitOpsEnabled: z.boolean(),
-  ssoLoginUrl: z.string().max(512).refine((s) => s === "" || /^https?:\/\/[^\s/]+/i.test(s), "Must be a full URL like https://nginux.example.com."),
+  ssoLoginUrl: z.string().max(512).refine((s) => s === "" || SAFE_URL.test(s), "Must be a full URL like https://nginux.example.com."),
   ssoCookieDomain: z.string().max(253).refine((s) => s === "" || /^\.?[a-z0-9.-]+$/i.test(s), "Invalid cookie domain."),
   // JSON array of { baseDomain, loginUrl }: each base domain a valid hostname, each
   // login URL a full http(s) URL. Empty = single global realm.
@@ -41,10 +48,13 @@ export const settingsInput = z.object({
       const arr = JSON.parse(s);
       return Array.isArray(arr) && arr.every((r) =>
         r && typeof r.baseDomain === "string" && /^[a-z0-9.-]+$/i.test(r.baseDomain) &&
-        typeof r.loginUrl === "string" && /^https?:\/\/[^\s/]+/i.test(r.loginUrl));
+        typeof r.loginUrl === "string" && SAFE_URL.test(r.loginUrl));
     } catch { return false; }
   }, "Realms must be a JSON array of { baseDomain, loginUrl } with valid domains and URLs."),
-  ssoForwardSecret: z.string().max(256),
+  // The forward-auth secret is emitted UNescaped into an nginx header value, so it must
+  // never carry quotes/;/newlines/braces. It's auto-generated hex, so a strict charset
+  // is safe and closes the restore-injection sink. (Security audit 2026-07-12.)
+  ssoForwardSecret: z.string().max(256).regex(/^[A-Za-z0-9._-]*$/, "Only letters, digits, dot, underscore, hyphen."),
   logMaxMb: z.number().int().min(0).max(100000),
   logKeepFiles: z.number().int().min(0).max(50),
 }).partial();

@@ -91,8 +91,17 @@ export function replaceAllBans(bans: Ban[]): number {
 /** Write the deny-list snippet included by the base nginx http block. */
 export function writeBannedConf(): void {
   if (!existsSync(dirname(BANNED_FILE))) mkdirSync(dirname(BANNED_FILE), { recursive: true });
-  const lines = listBans().map((b) => `deny ${b.ip};`);
-  writeFileSync(BANNED_FILE, `# Managed by NginUX - auto + manual IP bans\n${lines.join("\n")}\n`);
+  // A `geo` map (http scope), NOT `deny` lines. Each generated server block enforces it
+  // with `if ($nginux_banned) return 403;`. Unlike http-level `deny` — which nginx's
+  // access module STOPS inheriting the moment a server defines its own allow/deny (per
+  // ipAllow/ipDeny) — a variable check applies unconditionally, so bans are no longer
+  // silently bypassed on the exact hosts an admin bothered to lock down. Mirrors how the
+  // country-lock ($nginux_allowed_country) already works. (Security audit 2026-07-12.)
+  const entries = listBans().map((b) => `    ${b.ip} 1;`).join("\n");
+  writeFileSync(
+    BANNED_FILE,
+    `# Managed by NginUX - auto + manual IP bans (geo map; enforced per-server via $nginux_banned)\ngeo $nginux_banned {\n    default 0;\n${entries}${entries ? "\n" : ""}}\n`,
+  );
 }
 
 // ---- auto-ban engine ----

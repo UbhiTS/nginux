@@ -331,6 +331,7 @@ ${extra ? extra + "\n" : ""}`;
   lines.push(`server {
     listen ${listen};${http2}
     server_name ${h.domain};${sslBlock}${authRedirect}
+    if ($nginux_banned) { return 403; }
 ${protections.length ? protections.join("\n") + "\n" : ""}
 ${ACME_CHALLENGE_LOCATION}${loginLocation}${authLocation}${pathBlocks}    location / {
 ${locationBody}    }
@@ -476,19 +477,23 @@ export function previewConfigForHosts(hosts: ProxyHost[]): ConfigPreview {
   const files: ConfigFileDiff[] = [];
   const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
+  // The diff is shown to editors (not just admins), so redact the forward-auth secret
+  // out of BOTH sides before diffing — matching GET /api/hosts/:id/config. Change is
+  // still detected on the raw content; only the rendered diff is redacted. (Security
+  // audit 2026-07-12.)
   for (const [path, content] of desired) {
     const current = live.get(path);
     if (current === undefined) {
-      const d = unifiedLineDiff("", content);
+      const d = unifiedLineDiff("", redactConfig(content));
       files.push({ name: base(path), status: "added", additions: d.additions, deletions: 0, diff: d.text });
     } else if (current !== content) {
-      const d = unifiedLineDiff(current, content);
+      const d = unifiedLineDiff(redactConfig(current), redactConfig(content));
       files.push({ name: base(path), status: "modified", additions: d.additions, deletions: d.deletions, diff: d.text });
     }
   }
   for (const [path, content] of live) {
     if (!desired.has(path)) {
-      const d = unifiedLineDiff(content, "");
+      const d = unifiedLineDiff(redactConfig(content), "");
       files.push({ name: base(path), status: "removed", additions: 0, deletions: d.deletions, diff: d.text });
     }
   }

@@ -252,7 +252,12 @@ export async function searchLog(filter: string, limit = 200): Promise<LogEntry[]
   // pre-filter skips obvious non-matches before the JSON.parse.
   try {
     if (out.length < limit) {
-      for await (const t of readLinesReverse(ACCESS_LOG)) {
+      // Clamp the interactive-search tail: a filter matching nothing would otherwise
+      // never hit the early-break and drain the full 32 MB (a low-priv 'report' token
+      // could amplify a tiny GET into a 32 MB disk+CPU scan). 4 MB still covers the
+      // recent window for interactive search. (Security audit 2026-07-12.)
+      const SEARCH_MAX_BYTES = 4 * 1024 * 1024;
+      for await (const t of readLinesReverse(ACCESS_LOG, SEARCH_MAX_BYTES)) {
         if (out.length >= limit) break;
         if (!t.toLowerCase().includes(f)) continue;
         try {

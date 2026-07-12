@@ -96,7 +96,7 @@ import { gitLog, syncGitOps } from "./gitops.ts";
 import { importNginxConf, previewNginxConf } from "./importer.ts";
 import { buildBundle, restoreBundle } from "./backup.ts";
 import { encryptJson, decryptJson, isEncryptedEnvelope } from "./cryptobox.ts";
-import { startBanEngine } from "./bans.ts";
+import { startBanEngine, writeBannedConf } from "./bans.ts";
 import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert, writeClientCrl } from "./clientcerts.ts";
 import { generateSniPassthrough } from "./nginx.ts";
 import {
@@ -135,6 +135,9 @@ const seeded = await seedAuthIfEmpty();
 seedTokensIfEmpty();
 seedBuiltinProfiles(); // idempotent starter security profiles
 writeGeoipConf(); // keep the country-lock include in sync with settings on boot
+writeBannedConf(); // regenerate banned.conf in the geo-map format BEFORE the boot apply,
+                   // so an instance upgraded from the old `deny`-line format can't fail
+                   // `nginx -t` on the new `if ($nginux_banned)` server-scope check.
 reconcileImportedCerts(); // pick up any cert files dropped into /data/certs (migrations)
 
 // Profile avatars live as raw image files under the data volume, keyed by user id
@@ -1188,6 +1191,10 @@ app.get("/api/auth/forward", async (req, reply) => {
   // confined to the change-password flow on the control plane; it must NOT satisfy
   // per-host login gates either, or default creds would reach every backend app.
   if (u.mustChangePassword) return reply.code(401).send({ ok: false });
+  // A manager still owing 2FA enrollment (require2faForManagers) is confined on the
+  // control plane; deny downstream service access too until enrolled, mirroring that
+  // confinement. (Security audit 2026-07-12.)
+  if (mustEnroll2fa(u)) return reply.code(401).send({ ok: false });
   // If we can identify the target host, enforce its per-host requirements.
   const originalHost = (req.headers["x-original-host"] as string) || (req.headers["x-forwarded-host"] as string);
   if (originalHost) {
@@ -1197,6 +1204,11 @@ app.get("/api/auth/forward", async (req, reply) => {
       // A scoped user only passes the per-host login gate for hosts in their
       // scope - otherwise one NginUX login would unlock every protected app.
       if (u.role === "scoped" && !scopedAllows(u, host)) return reply.code(403).send({ ok: false });
+    } else if (u.role === "scoped") {
+      // FAIL CLOSED: a scoped user's access is defined strictly per in-scope host; a
+      // login-gated request that can't be tied to a known host must NOT fall through to
+      // 200 for them (defends the wildcard/case fail-open class). (Security audit 2026-07-12.)
+      return reply.code(403).send({ ok: false });
     }
   }
   return reply.code(200).send({ ok: true });
@@ -1205,6 +1217,10 @@ app.get("/api/auth/forward", async (req, reply) => {
 app.post("/api/auth/change-password", async (req, reply) => {
   const u = currentUser(req);
   if (!u) return reply.code(401).send({ error: "Not signed in" });
+  // Step-up reauth is password-checked (scrypt) with no lockout otherwise; throttle it
+  // so a session-hijacker can't online-brute-force the current password. Shared key
+  // with 2fa/setup so attempts across both count together. (Security audit 2026-07-12.)
+  if (rateLimited(`reauth:${u.id}`, 10, LOGIN_WINDOW_MS)) return reply.code(429).send({ error: "Too many attempts — wait a minute and try again." });
   const parsed = z.object({
     currentPassword: z.string().min(1),
     newPassword: z.string().min(8, "Use at least 8 characters.").max(200),
@@ -1226,6 +1242,8 @@ app.post("/api/auth/change-password", async (req, reply) => {
 
 app.post("/api/auth/2fa/setup", async (req, reply) => {
   const u = currentUser(req)!;
+  // Throttle the password reauth (shared budget with change-password). (Security audit 2026-07-12.)
+  if (rateLimited(`reauth:${u.id}`, 10, LOGIN_WINDOW_MS)) return reply.code(429).send({ error: "Too many attempts — wait a minute and try again." });
   // Require the password to (re)bind 2FA so a hijacked session can't silently
   // rebind the authenticator to the attacker's device.
   const { password } = z.object({ password: z.string().min(1) }).parse(req.body ?? {});

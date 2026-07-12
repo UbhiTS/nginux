@@ -28,6 +28,11 @@ const FORBIDDEN_TOOL_FIELDS = new Set([
   "id", "domain", "customNginx", "health", "certExpiresAt", "createdAt", "updatedAt",
   "requireLogin", "require2fa", "mtls", "countryLock", "securityHeaders", "hsts",
   "blockExploits", "ipAllow", "ipDeny",
+  // Transport + TLS are admin/UI-only: `protocol`/`listenPort` could turn a login-gated
+  // HTTP host into an un-gated TCP/UDP/SNI stream passthrough (no auth_request), and
+  // `ssl:false` downgrades HTTPS→plaintext; `preset` can disable exploit-path blocking.
+  // None may be changed via the low-trust agent path (security audit 2026-07-12).
+  "protocol", "listenPort", "ssl", "preset",
 ]);
 
 /** Strip forbidden fields, then validate the rest through the SAME schema the
@@ -299,7 +304,11 @@ export const TOOLS: Record<string, Tool> = {
     description: "Add the NginUX login gate back to a host (raises protection).",
     inputSchema: obj({ id: { type: "string" }, require2fa: { type: "boolean" } }, ["id"]),
     summarize: (a) => `require login on service ${a.id}`,
-    handler: async (a) => { const prev = getHost(String(a.id)); const h = updateHost(String(a.id), { requireLogin: true, require2fa: a.require2fa === true }); await applyOrRevert(() => { if (prev) updateHost(String(a.id), prev); }); return h; },
+    // enable_login must only RAISE protection (its stated contract). Omitting
+    // require2fa must NEVER lower an existing require2fa=true — that would let a
+    // low-trust, auto-approvable agent strip the second factor. Lowering 2FA is
+    // reserved for the security-scope, approval-gated disable_login.
+    handler: async (a) => { const prev = getHost(String(a.id)); const h = updateHost(String(a.id), { requireLogin: true, require2fa: a.require2fa === true || prev?.require2fa === true }); await applyOrRevert(() => { if (prev) updateHost(String(a.id), prev); }); return h; },
   },
 
   // ---------------- control: certificates ----------------
@@ -432,7 +441,13 @@ export function toolCatalog() {
 /** True if this caller is allowed to invoke the tool (scope + adminOnly). */
 export function canCallTool(principal: Principal, t: { scope: Scope; adminOnly?: boolean }): boolean {
   if (!principal.scopes.includes(t.scope)) return false;
-  if (t.adminOnly && principal.kind === "user" && principal.user.role !== "admin") return false;
+  if (t.adminOnly) {
+    // adminOnly = admin-level trust. A user must be an admin. A token (which has no
+    // role) must hold the top-trust `security` scope — otherwise a low-trust report/
+    // read token would reach an adminOnly tool (the scope check alone let a report
+    // token call list_users and read the whole user roster). Security audit 2026-07-12.
+    return principal.kind === "user" ? principal.user.role === "admin" : principal.scopes.includes("security");
+  }
   return true;
 }
 
@@ -499,10 +514,12 @@ export async function callTool(principal: Principal, name: string, rawArgs: Reco
   if (!principal.scopes.includes(tool.scope)) {
     return { status: "error", tool: name, message: `This caller lacks the "${tool.scope}" scope needed for ${name}.` };
   }
-  // adminOnly tools: a non-admin USER may not run them (matches the REST UI).
-  // Agent tokens still need the scope, which an admin granted deliberately.
-  if (tool.adminOnly && principal.kind === "user" && principal.user.role !== "admin") {
-    return { status: "error", tool: name, message: `${name} requires an admin.` };
+  // adminOnly = admin-level trust. A user must be an admin (matches the REST UI); a
+  // TOKEN must hold the top-trust `security` scope — otherwise a low-trust report/read
+  // token reached an adminOnly tool (list_users leaked the whole roster). This mirrors
+  // canCallTool exactly; the two MUST agree. (Security audit 2026-07-12.)
+  if (tool.adminOnly && !(principal.kind === "user" ? principal.user.role === "admin" : principal.scopes.includes("security"))) {
+    return { status: "error", tool: name, message: `${name} requires admin-level access.` };
   }
   const args = rawArgs ?? {};
 

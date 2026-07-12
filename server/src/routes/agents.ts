@@ -8,7 +8,10 @@ import { listWebhooks } from "../events.ts";
 export function registerAgentRoutes(app: FastifyInstance, ctx: RouteCtx): void {
   const { requireAdmin, currentUser } = ctx;
 
-  app.get("/api/agents/tools", async () => toolCatalog());
+  // Admin-only, matching its sibling routes: the catalog exposes every tool's schema
+  // + tier + adminOnly flag (incl. security tools), which readonly/scoped users must
+  // not enumerate. (Security audit 2026-07-12.)
+  app.get("/api/agents/tools", async (req, reply) => { if (!requireAdmin(req, reply)) return; return toolCatalog(); });
   app.get("/api/agents/approvals", async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const { status } = req.query as { status?: string };

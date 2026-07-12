@@ -211,3 +211,35 @@ test("role change: a non-admin can't change roles", async () => {
   const res = await app.inject({ method: "PATCH", url: `/api/users/${targetId}/role`, headers: { cookie: cookieFor(editorId) }, payload: { role: "admin" } });
   assert.equal(res.statusCode, 403);
 });
+
+// ---------------------------------------------------------------------------
+// Route-split guard matrix. The routes were extracted from index.ts into
+// server/src/routes/*.ts; this pins that EVERY sensitive endpoint still (a) rejects
+// unauthenticated callers and (b) enforces its role floor — so any future extraction
+// that silently drops a requireAdmin/requireRole fails this test loudly. This is the
+// exact "unauthenticated / under-privileged reaches an admin surface" regression class.
+// ---------------------------------------------------------------------------
+test("route-split guard matrix: extracted endpoints keep auth + RBAC", async () => {
+  const readonly = cookieFor(makeUser("readonly"));
+  const editor = cookieFor(makeUser("editor"));
+  const adminOnly = [
+    "/api/users", "/api/tokens", "/api/webhooks", "/api/channels",
+    "/api/agents/approvals", "/api/agents/overview", "/api/update/status",
+    "/api/sessions", "/api/config/export",
+  ];
+  const adminEditor = [
+    "/api/audit", "/api/security/overview", "/api/security/exposure",
+    "/api/security/blocked", "/api/certificates", "/api/bans",
+  ];
+  for (const url of [...adminOnly, ...adminEditor]) {
+    assert.equal((await app.inject({ method: "GET", url })).statusCode, 401, `${url} must reject unauthenticated`);
+  }
+  for (const url of adminOnly) {
+    assert.equal((await app.inject({ method: "GET", url, headers: { cookie: readonly } })).statusCode, 403, `${url} must reject readonly`);
+    assert.equal((await app.inject({ method: "GET", url, headers: { cookie: editor } })).statusCode, 403, `${url} is admin-only, must reject editor`);
+  }
+  for (const url of adminEditor) {
+    assert.equal((await app.inject({ method: "GET", url, headers: { cookie: readonly } })).statusCode, 403, `${url} must reject readonly`);
+    assert.equal((await app.inject({ method: "GET", url, headers: { cookie: editor } })).statusCode, 200, `${url} must allow editor`);
+  }
+});
