@@ -260,7 +260,9 @@ test("GET /api/update/status is admin-only and reports the running build", async
   assert.equal(admin.statusCode, 200, "an admin may read update status");
   const body = admin.json() as { current: string; canSelfUpdate: boolean };
   assert.ok(typeof body.current === "string" && body.current.length > 0, "status reports the current version");
-  assert.equal(body.canSelfUpdate, false, "no docker socket on the test runner");
+  // canSelfUpdate depends on a live Docker socket, which varies by runner (GitHub's
+  // ubuntu runners have one) - assert the type, not a fixed value.
+  assert.equal(typeof body.canSelfUpdate, "boolean", "self-update capability is a boolean");
 });
 
 test("POST /api/update/apply is admin-only", async () => {

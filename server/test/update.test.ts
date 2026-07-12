@@ -84,9 +84,12 @@ test("checkForUpdate: a network/API failure is captured (not thrown) and recorde
   assert.ok(s.checkedAt, "the check timestamp is still stamped");
 });
 
-test("updateStatus returns the current build identity and never self-updates without docker", async () => {
+test("updateStatus reports the current build identity and a well-typed self-update capability", async () => {
   const s = updateStatus();
   assert.equal(s.current, VERSION, "reports the running version");
   assert.equal(s.buildSha, "abc1234", "reports the baked build sha");
-  assert.equal(s.canSelfUpdate, false, "no docker socket on the test runner -> cannot self-update");
+  // canSelfUpdate reflects whether a Docker socket is live, which is environment-
+  // dependent (false on Windows/most runners, but GitHub's ubuntu runners DO have a
+  // docker socket) - so pin the type/gating, not a fixed value.
+  assert.equal(typeof s.canSelfUpdate, "boolean", "self-update capability is a boolean");
 });
