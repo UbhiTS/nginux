@@ -366,6 +366,7 @@ const DEFAULT_SETTINGS: Settings = {
   gitOpsEnabled: false,
   ssoLoginUrl: "",
   ssoCookieDomain: "",
+  ssoRealms: "",
   ssoForwardSecret: "",
   logMaxMb: 50,
   logKeepFiles: 2,

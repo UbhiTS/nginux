@@ -123,6 +123,11 @@ export function SettingsPage({
               <input className="input" value={settings.ssoCookieDomain} onChange={(e) => update({ ssoCookieDomain: e.target.value })} placeholder={`.${base} (auto from the NginUX URL if blank)`} />
               <div className="hint">So one sign-in covers every subdomain. Leave blank to derive it from the NginUX public URL above.</div>
             </div>
+            <div className="field">
+              <label>Extra login realms (for services on a second base domain)</label>
+              <RealmsEditor value={settings.ssoRealms} onChange={(v) => update({ ssoRealms: v })} />
+              <div className="hint">Only needed if you gate services on a <b>different</b> base domain. Each realm gives that domain its own sign-in portal + cookie, so it doesn't loop back here. Leave empty for a single-domain setup.</div>
+            </div>
             <div className="field" style={{ marginBottom: 0 }}>
               <label>Forward-auth secret</label>
               <div style={{ display: "flex", gap: 8 }}>
@@ -658,5 +663,31 @@ function Notifications() {
         {channels.length === 0 && <div className="placeholder"><p>No notification channels yet.</p></div>}
       </div>
     </>
+  );
+}
+
+interface Realm { baseDomain: string; loginUrl: string }
+/** Edit the per-base-domain login realms (backlog 3.3). Serialises rows to the
+ *  ssoRealms JSON string; tolerant of an existing invalid value (starts empty). */
+function RealmsEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const parse = (raw: string): Realm[] => {
+    try { const a = JSON.parse(raw || "[]"); return Array.isArray(a) ? a.filter((r) => r && typeof r.baseDomain === "string") : []; }
+    catch { return []; }
+  };
+  const rows = parse(value);
+  const commit = (next: Realm[]) => onChange(next.length ? JSON.stringify(next) : "");
+  const setRow = (i: number, patch: Partial<Realm>) => commit(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  return (
+    <div>
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+          <input className="input" style={{ maxWidth: 200 }} placeholder="base domain (example.com)" value={r.baseDomain} onChange={(e) => setRow(i, { baseDomain: e.target.value })} />
+          <input className="input" placeholder="https://nginux.example.com" value={r.loginUrl} onChange={(e) => setRow(i, { loginUrl: e.target.value })} />
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => commit(rows.filter((_, j) => j !== i))}>Remove</button>
+        </div>
+      ))}
+      <button type="button" className="btn btn-sm" onClick={() => commit([...rows, { baseDomain: "", loginUrl: "" }])}>Add realm</button>
+    </div>
   );
 }

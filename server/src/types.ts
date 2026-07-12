@@ -133,6 +133,11 @@ export interface Settings {
   /** Cookie Domain so one sign-in covers every subdomain (e.g. .example.com).
    *  Empty = derived from ssoLoginUrl, or a host-only cookie if that's unset. */
   ssoCookieDomain: string;
+  /** Optional per-base-domain login realms as JSON: [{baseDomain, loginUrl}].
+   *  A gated service on a second base domain redirects to (and gets a cookie
+   *  scoped to) its own realm, so it doesn't hit the single-domain redirect loop.
+   *  Empty = single global realm (ssoLoginUrl/ssoCookieDomain), unchanged. */
+  ssoRealms: string;
   /** Shared secret nginx sends with each forward-auth subrequest so the login
    *  check can't be called directly and bypassed. Auto-generated on first boot;
    *  rotatable from Settings → Login gate. Empty only if an admin cleared it. */

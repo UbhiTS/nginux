@@ -33,6 +33,17 @@ export const settingsInput = z.object({
   gitOpsEnabled: z.boolean(),
   ssoLoginUrl: z.string().max(512).refine((s) => s === "" || /^https?:\/\/[^\s/]+/i.test(s), "Must be a full URL like https://nginux.example.com."),
   ssoCookieDomain: z.string().max(253).refine((s) => s === "" || /^\.?[a-z0-9.-]+$/i.test(s), "Invalid cookie domain."),
+  // JSON array of { baseDomain, loginUrl }: each base domain a valid hostname, each
+  // login URL a full http(s) URL. Empty = single global realm.
+  ssoRealms: z.string().max(4096).refine((s) => {
+    if (!s.trim()) return true;
+    try {
+      const arr = JSON.parse(s);
+      return Array.isArray(arr) && arr.every((r) =>
+        r && typeof r.baseDomain === "string" && /^[a-z0-9.-]+$/i.test(r.baseDomain) &&
+        typeof r.loginUrl === "string" && /^https?:\/\/[^\s/]+/i.test(r.loginUrl));
+    } catch { return false; }
+  }, "Realms must be a JSON array of { baseDomain, loginUrl } with valid domains and URLs."),
   ssoForwardSecret: z.string().max(256),
   logMaxMb: z.number().int().min(0).max(100000),
   logKeepFiles: z.number().int().min(0).max(50),

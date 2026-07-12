@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { getPreset } from "./presets.ts";
 import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
+import { realmForHost } from "./realms.ts";
 import { writeGeoipConf } from "./geoip.ts";
 // Canonical tokenisers (shared with the validators in hostschema.ts, so a value
 // is generated exactly the way it was validated). splitEntries == the old splitList.
@@ -215,7 +216,10 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   // When the gate denies (401), send the visitor to the NginUX sign-in page with
   // the original URL as ?rd=, instead of a bare 401. Needs the SSO login URL set
   // in Settings; without it the gate just denies (and a notification warns).
-  const ssoLoginUrl = getSettings().ssoLoginUrl.replace(/\/+$/, "");
+  // Multi-realm: a gated host redirects to the login portal of ITS OWN base domain
+  // (if a realm is configured for it), so a second-domain service doesn't loop back
+  // to the primary domain's portal. Falls back to the single global ssoLoginUrl.
+  const ssoLoginUrl = (realmForHost(h.domain)?.loginUrl ?? getSettings().ssoLoginUrl).replace(/\/+$/, "");
   const authRedirect = h.requireLogin && ssoLoginUrl ? `\n    error_page 401 = @nginux_login;` : "";
   const loginLocation = h.requireLogin && ssoLoginUrl
     ? `    location @nginux_login {

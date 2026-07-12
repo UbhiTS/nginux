@@ -121,6 +121,7 @@ import {
 } from "./validate.ts";
 import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
+import { realmForHost } from "./realms.ts";
 import {
   createChannel,
   deleteChannel,
@@ -500,7 +501,7 @@ app.put("/api/settings", async (req, reply) => {
   // Several settings are baked into generated nginx config (the geo include, the
   // login-gate 401→login redirect, and the forward-auth secret header) - re-apply
   // so a change here takes effect immediately instead of on the next host edit.
-  if (geoChanged || parsed.data.ssoLoginUrl !== undefined || parsed.data.ssoForwardSecret !== undefined) {
+  if (geoChanged || parsed.data.ssoLoginUrl !== undefined || parsed.data.ssoForwardSecret !== undefined || parsed.data.ssoRealms !== undefined) {
     await applyConfig();
   }
   return saved;
@@ -1105,8 +1106,15 @@ function rateLimited(key: string, max: number, windowMs: number): boolean {
 /** Cookie Domain for the session cookie - the configured ssoCookieDomain, or
  *  derived from ssoLoginUrl's host (strip the leftmost label), or "" (host-only).
  *  Lets one sign-in cover every subdomain so login-gated services work. */
-function authCookieDomain(): string {
+function authCookieDomain(req?: FastifyRequest): string {
   const s = getSettings();
+  // Multi-realm: if the request's host belongs to a configured realm, scope the
+  // cookie to THAT base domain, so a sign-in on a second base domain works.
+  if (req) {
+    const host = ((req.headers["x-forwarded-host"] as string) || req.hostname || "").split(":")[0];
+    const realm = host ? realmForHost(host) : null;
+    if (realm) return realm.cookieDomain;
+  }
   if (s.ssoCookieDomain) return s.ssoCookieDomain.replace(/^\.?/, ".");
   try {
     const host = new URL(s.ssoLoginUrl).hostname;
@@ -1175,7 +1183,7 @@ app.post("/api/auth/login", async (req, reply) => {
 
   const sessionToken = createSession(String(row.id), device(req), ip);
   logEvent({ type: "login.success", severity: "info", actor: username, summary: "Signed in", ip, meta: {} });
-  reply.header("set-cookie", sessionCookie(sessionToken, cookieSecure(req.protocol === "https"), authCookieDomain()));
+  reply.header("set-cookie", sessionCookie(sessionToken, cookieSecure(req.protocol === "https"), authCookieDomain(req)));
   const created = getUserById(String(row.id));
   return { user: created ? withPolicyFlags(created) : created };
 });
@@ -1183,7 +1191,7 @@ app.post("/api/auth/login", async (req, reply) => {
 app.post("/api/auth/logout", async (req, reply) => {
   const tok = parseCookie(req.headers.cookie)[SESSION_COOKIE];
   if (tok) destroySession(tok);
-  reply.header("set-cookie", clearCookie(cookieSecure(req.protocol === "https"), authCookieDomain()));
+  reply.header("set-cookie", clearCookie(cookieSecure(req.protocol === "https"), authCookieDomain(req)));
   return { ok: true };
 });
 
@@ -1247,7 +1255,7 @@ app.post("/api/auth/change-password", async (req, reply) => {
   // changePassword revoked all sessions; issue a fresh one so the current client
   // stays signed in while any other (possibly stolen) sessions are now dead.
   const fresh = createSession(u.id, device(req), clientIp(req));
-  reply.header("set-cookie", sessionCookie(fresh, cookieSecure(req.protocol === "https"), authCookieDomain()));
+  reply.header("set-cookie", sessionCookie(fresh, cookieSecure(req.protocol === "https"), authCookieDomain(req)));
   logEvent({ type: "security.password_changed", severity: "notice", actor: u.username, summary: "Changed account password", ip: clientIp(req), meta: {} });
   return { ok: true, user: getUserById(u.id) };
 });

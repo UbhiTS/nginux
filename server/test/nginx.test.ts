@@ -184,6 +184,19 @@ test("path route includes the websocket upgrade headers when websockets is on", 
   assert.ok(block.includes('proxy_set_header Connection "upgrade";'), "path route must set the Connection: upgrade header");
 });
 
+// --- 7e. Multi-realm login gate: a gated host on a configured realm redirects to
+// THAT realm's login portal, not the global one (backlog 3.3). ---
+test("a gated host on a realm base domain redirects to its own realm login URL", () => {
+  saveSettings({ ssoLoginUrl: "https://nginux.primary.com", ssoRealms: JSON.stringify([{ baseDomain: "second.com", loginUrl: "https://sso.second.com" }]) });
+  // A host on the SECOND base domain uses the realm login URL.
+  const conf2 = generateHostConfig(makeHost({ requireLogin: true, domain: "app.second.com" }));
+  assert.ok(conf2.includes("return 302 https://sso.second.com/login?rd="), "second-domain host redirects to its realm portal");
+  // A host on the primary (no realm) falls back to the global ssoLoginUrl.
+  const conf1 = generateHostConfig(makeHost({ requireLogin: true, domain: "app.primary.com" }));
+  assert.ok(conf1.includes("return 302 https://nginux.primary.com/login?rd="), "unmatched host uses the global login URL");
+  saveSettings({ ssoRealms: "", ssoLoginUrl: "" }); // restore
+});
+
 // --- 8. stream (TCP) config ---
 test("generateStreamConfig emits a listen + proxy_pass for a TCP service", () => {
   const conf = generateStreamConfig(makeHost({

@@ -73,6 +73,7 @@ export interface Settings {
   gitOpsEnabled: boolean;
   ssoLoginUrl: string;
   ssoCookieDomain: string;
+  ssoRealms: string;
   ssoForwardSecret: string;
   logMaxMb: number;
   logKeepFiles: number;
