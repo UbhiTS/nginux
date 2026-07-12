@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, type AuthUser } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { BrandLogo } from "../components/BrandLogo.tsx";
+import { Field } from "../components/Field.tsx";
 
 /** Forced on first login when the account still has the default password. */
 export function ChangePassword({ user, onChanged }: { user: AuthUser; onChanged: (u: AuthUser) => void }) {
@@ -42,21 +43,54 @@ export function ChangePassword({ user, onChanged }: { user: AuthUser; onChanged:
         </p>
 
         <form onSubmit={submit}>
-          <div className="field">
-            <label>Current password</label>
-            <input className="input" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoFocus />
-          </div>
-          <div className="field">
-            <label>New password</label>
-            <input className="input" type="password" value={next} onChange={(e) => setNext(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Confirm new password</label>
-            <input className="input" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-          </div>
+          {/* Hidden username so password managers associate the new credential with this account. */}
+          <input
+            type="text"
+            name="username"
+            autoComplete="username"
+            value={user.username}
+            readOnly
+            hidden
+            aria-hidden="true"
+            tabIndex={-1}
+          />
+          <Field label="Current password">
+            <input
+              className="input"
+              id="current-password"
+              name="current-password"
+              type="password"
+              autoComplete="current-password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              autoFocus
+            />
+          </Field>
+          <Field label="New password">
+            <input
+              className="input"
+              id="new-password"
+              name="new-password"
+              type="password"
+              autoComplete="new-password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+            />
+          </Field>
+          <Field label="Confirm new password">
+            <input
+              className="input"
+              id="confirm-new-password"
+              name="confirm-new-password"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
+          </Field>
 
           {error && (
-            <div className="test-result bad" style={{ marginTop: 0, marginBottom: 14 }}>
+            <div className="test-result bad" role="alert" style={{ marginTop: 0, marginBottom: 14 }}>
               <Icon.x />
               <div>{error}</div>
             </div>

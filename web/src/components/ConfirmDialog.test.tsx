@@ -19,11 +19,16 @@ describe("ConfirmDialog", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
 
-  it("exposes the dialog role labelled by the title", () => {
+  it("exposes the dialog role labelled by the .modal-title heading", () => {
     render(<ConfirmDialog title="Are you sure?" message="msg" onConfirm={() => {}} onCancel={() => {}} />);
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    expect(dialog).toHaveAttribute("aria-label", "Are you sure?");
+    // The heading is the accessible name via aria-labelledby (was a raw aria-label).
+    const heading = screen.getByText("Are you sure?");
+    expect(heading).toHaveClass("modal-title");
+    expect(dialog).toHaveAttribute("aria-labelledby", heading.id);
+    // Accessible-name resolution wires the two together.
+    expect(screen.getByRole("dialog", { name: "Are you sure?" })).toBe(dialog);
   });
 
   it("honours custom confirm/cancel labels", () => {
@@ -107,6 +112,57 @@ describe("ConfirmDialog", () => {
     await userEvent.keyboard("{Escape}");
     await userEvent.keyboard("{Enter}");
     expect(onCancel).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("moves focus into the dialog on open and restores it on close", () => {
+    const { rerender } = render(
+      <>
+        <button data-testid="trigger">Open</button>
+      </>,
+    );
+    const trigger = screen.getByTestId("trigger");
+    trigger.focus();
+    expect(trigger).toHaveFocus();
+
+    rerender(
+      <>
+        <button data-testid="trigger">Open</button>
+        <ConfirmDialog title="t" message="m" onConfirm={() => {}} onCancel={() => {}} />
+      </>,
+    );
+    // Focus lands on the first focusable control inside the dialog.
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    // Unmounting the dialog restores focus to the element that had it before.
+    rerender(
+      <>
+        <button data-testid="trigger">Open</button>
+      </>,
+    );
+    expect(screen.getByTestId("trigger")).toHaveFocus();
+  });
+
+  it("traps Tab within the dialog instead of walking the page behind it", async () => {
+    render(<ConfirmDialog title="t" message="m" onConfirm={() => {}} onCancel={() => {}} />);
+    const dialog = screen.getByRole("dialog");
+    // Cycling forward and backward always keeps focus among the dialog's controls.
+    await userEvent.tab();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await userEvent.tab({ shift: true });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it("does NOT confirm on Enter pressed outside the dialog (scoped, not window-bound)", async () => {
+    const onConfirm = vi.fn();
+    render(<ConfirmDialog title="Delete host" message="m" danger onConfirm={onConfirm} onCancel={() => {}} />);
+    // Move focus out of the dialog (as if a stray element on the page held it) and
+    // press Enter. The old window-level listener would have fired the destructive
+    // confirm from anywhere; the scoped handler must not.
+    (document.activeElement as HTMLElement | null)?.blur();
+    document.body.focus();
+    await userEvent.keyboard("{Enter}");
     expect(onConfirm).not.toHaveBeenCalled();
   });
 });

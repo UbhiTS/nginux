@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, type AuthUser } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { BrandLogo } from "../components/BrandLogo.tsx";
+import { Field } from "../components/Field.tsx";
 
 // A login-gated service redirects unauthenticated visitors here with the original
 // URL as ?rd=. After sign-in we bounce back to it - but only if it's on this same
@@ -85,20 +86,36 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
         <form onSubmit={submit}>
           {!needs2fa ? (
             <>
-              <div className="field">
-                <label>Username</label>
-                <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-              </div>
-              <div className="field">
-                <label>Password</label>
-                <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-              </div>
+              <Field label="Username">
+                <input
+                  className="input"
+                  id="username"
+                  name="username"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoFocus
+                />
+              </Field>
+              <Field label="Password">
+                <input
+                  className="input"
+                  id="current-password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </Field>
             </>
           ) : (
-            <div className="field">
-              <label>6-digit code</label>
+            <Field label="6-digit code">
               <input
                 className="input mono"
+                id="one-time-code"
+                name="one-time-code"
+                autoComplete="one-time-code"
                 value={token}
                 inputMode="numeric"
                 maxLength={6}
@@ -106,11 +123,11 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
                 autoFocus
                 style={{ fontSize: 20, letterSpacing: 6, textAlign: "center" }}
               />
-            </div>
+            </Field>
           )}
 
           {error && (
-            <div className="test-result bad" style={{ marginTop: 0, marginBottom: 14 }}>
+            <div className="test-result bad" role="alert" style={{ marginTop: 0, marginBottom: 14 }}>
               <Icon.x />
               <div>{error}</div>
             </div>

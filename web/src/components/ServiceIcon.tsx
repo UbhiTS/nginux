@@ -22,14 +22,24 @@ export function ServiceIcon({ iconUrl, size = 20 }: { iconUrl?: string; size?: n
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [iconUrl]); // retry when the URL changes
   if (!iconUrl || failed) return <GenericIcon size={size} />;
+  // Render the generic glyph as an absolute underlay: on a firewalled homelab the
+  // CDN request can hang forever (never firing onError), so without an underlay the
+  // box would stay blank. The <img> paints on top once (if) it actually loads.
   return (
-    <img
-      src={iconUrl}
-      alt=""
-      width={size}
-      height={size}
-      style={{ width: size, height: size, objectFit: "contain", display: "inline-block", verticalAlign: "middle", borderRadius: 4 }}
-      onError={() => setFailed(true)}
-    />
+    <span style={{ position: "relative", display: "inline-block", width: size, height: size, verticalAlign: "middle" }}>
+      <span style={{ position: "absolute", inset: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }} aria-hidden="true">
+        <GenericIcon size={size} />
+      </span>
+      <img
+        src={iconUrl}
+        alt=""
+        width={size}
+        height={size}
+        loading="lazy"
+        decoding="async"
+        style={{ position: "relative", width: size, height: size, objectFit: "contain", display: "inline-block", verticalAlign: "middle", borderRadius: 4 }}
+        onError={() => setFailed(true)}
+      />
+    </span>
   );
 }

@@ -78,6 +78,42 @@ describe("Login", () => {
     expect(onSignedIn).not.toHaveBeenCalled();
   });
 
+  it("announces the rejection through a role=alert banner", async () => {
+    vi.mocked(api.login).mockRejectedValue(new Error("Invalid credentials"));
+    render(<Login onSignedIn={() => {}} />);
+
+    await userEvent.type(screen.getByRole("textbox"), "admin");
+    await userEvent.type(passwordInput(), "wrong");
+    await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Invalid credentials");
+  });
+
+  it("wires the credential fields with autocomplete tokens for password managers", () => {
+    render(<Login onSignedIn={() => {}} />);
+    const username = screen.getByRole("textbox") as HTMLInputElement;
+    expect(username).toHaveAttribute("name", "username");
+    expect(username).toHaveAttribute("autocomplete", "username");
+    // The label is tied to the control via htmlFor/id (Field primitive).
+    expect(username).toHaveAccessibleName("Username");
+    const password = passwordInput();
+    expect(password).toHaveAttribute("name", "password");
+    expect(password).toHaveAttribute("autocomplete", "current-password");
+  });
+
+  it("labels the 2FA code input with a one-time-code autocomplete", async () => {
+    vi.mocked(api.login).mockResolvedValue({ twofaRequired: true });
+    render(<Login onSignedIn={() => {}} />);
+
+    await userEvent.type(screen.getByRole("textbox"), "admin");
+    await userEvent.type(passwordInput(), "hunter2");
+    await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+
+    const code = (await screen.findByLabelText("6-digit code")) as HTMLInputElement;
+    expect(code).toHaveAttribute("autocomplete", "one-time-code");
+  });
+
   it("submits the form when Enter is pressed in a field", async () => {
     vi.mocked(api.login).mockResolvedValue({ user: sampleUser });
     render(<Login onSignedIn={() => {}} />);

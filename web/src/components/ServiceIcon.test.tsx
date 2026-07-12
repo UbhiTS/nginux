@@ -19,8 +19,21 @@ describe("ServiceIcon", () => {
     const img = container.querySelector("img");
     expect(img).toBeInTheDocument();
     expect(img).toHaveAttribute("src", "https://example.com/logo.svg");
-    // No generic-glyph fallback while the image is showing.
-    expect(container.querySelector("svg")).not.toBeInTheDocument();
+  });
+
+  it("renders the generic glyph as an always-present underlay so the box is never blank while loading", () => {
+    // On a firewalled homelab the CDN request can hang forever without firing
+    // onError; the underlay glyph guarantees something is always painted.
+    const { container } = render(<ServiceIcon iconUrl="https://example.com/logo.svg" />);
+    expect(container.querySelector("img")).toBeInTheDocument();
+    expect(container.querySelector("svg")).toBeInTheDocument();
+  });
+
+  it("marks the image lazy-loading and async-decoding so a hanging CDN never blocks", () => {
+    const { container } = render(<ServiceIcon iconUrl="https://example.com/logo.svg" />);
+    const img = container.querySelector("img")!;
+    expect(img).toHaveAttribute("loading", "lazy");
+    expect(img).toHaveAttribute("decoding", "async");
   });
 
   it("applies the size prop to the image dimensions", () => {
@@ -68,6 +81,18 @@ describe("Avatar", () => {
     expect(img).toBeInTheDocument();
     expect(api.avatarUrl).toHaveBeenCalledWith("user-1", 0);
     expect(img).toHaveAttribute("src", "/api/users/user-1/avatar");
+  });
+
+  it("shows the initials underlay even while the image is still loading", () => {
+    // The initial is rendered up-front (not only on error), so the avatar is
+    // never blank while the photo loads or if it never resolves.
+    render(<Avatar userId="user-1" name="Alice" />);
+    expect(screen.getByText("A")).toBeInTheDocument();
+  });
+
+  it("marks the avatar image lazy-loading", () => {
+    const { container } = render(<Avatar userId="user-1" name="Alice" />);
+    expect(container.querySelector("img")).toHaveAttribute("loading", "lazy");
   });
 
   it("falls back to the uppercased initial when the image fails to load", () => {

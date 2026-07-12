@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ProxyHost, SecurityProfile } from "../types.ts";
 
@@ -146,7 +146,7 @@ describe("Services", () => {
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Jellyfin" }));
 
     expect(screen.getByText("1 selected")).toBeInTheDocument();
-    for (const label of ["Enable", "Pause", "Maintenance on", "Maintenance off", "Delete", "Clear"]) {
+    for (const label of ["Resume", "Pause", "Maintenance on", "Maintenance off", "Delete", "Clear"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
   });
@@ -179,7 +179,7 @@ describe("Services", () => {
     await waitFor(() => expect(api.certificates).toHaveBeenCalled());
 
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Jellyfin" }));
-    await userEvent.click(screen.getByRole("button", { name: "Enable" }));
+    await userEvent.click(screen.getByRole("button", { name: "Resume" }));
 
     expect(api.batchHosts).toHaveBeenCalledWith(["h1"], "enable");
     await waitFor(() => expect(reload).toHaveBeenCalled());
@@ -191,10 +191,101 @@ describe("Services", () => {
     const { navigate } = renderServices([makeHost({ id: "h1", name: "Jellyfin", enabled: true })]);
     await waitFor(() => expect(api.certificates).toHaveBeenCalled());
 
-    // an enabled host's switch is labelled "Pause <name>"
-    await userEvent.click(screen.getByRole("button", { name: "Pause Jellyfin" }));
+    // an enabled host's switch (role=switch) is labelled "Pause <name>"
+    await userEvent.click(screen.getByRole("switch", { name: "Pause Jellyfin" }));
     expect(api.updateHost).toHaveBeenCalledWith("h1", { enabled: false });
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("filters the shown list by the debounced search query", async () => {
+    renderServices([
+      makeHost({ id: "h1", name: "Jellyfin", domain: "media.example.com" }),
+      makeHost({ id: "h2", name: "Grafana", domain: "stats.example.com" }),
+    ]);
+    await waitFor(() => expect(api.certificates).toHaveBeenCalled());
+
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search services" }), "graf");
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open Jellyfin" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Open Grafana" })).toBeInTheDocument();
+  });
+
+  it("shows a no-match state-note when the filter excludes every host", async () => {
+    renderServices([makeHost({ id: "h1", name: "Jellyfin" })]);
+    await waitFor(() => expect(api.certificates).toHaveBeenCalled());
+
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search services" }), "zzz");
+
+    await waitFor(() => expect(screen.getByText("No matching services")).toBeInTheDocument());
+    // still not the "no services at all" placeholder
+    expect(screen.queryByRole("heading", { name: "No services yet" })).not.toBeInTheDocument();
+  });
+
+  it("filters by status (Paused shows only disabled hosts)", async () => {
+    renderServices([
+      makeHost({ id: "h1", name: "Jellyfin", enabled: true }),
+      makeHost({ id: "h2", name: "Grafana", enabled: false }),
+    ]);
+    await waitFor(() => expect(api.certificates).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole("button", { name: "Paused" }));
+
+    expect(screen.getByRole("button", { name: "Open Grafana" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Jellyfin" })).not.toBeInTheDocument();
+  });
+
+  it("sorts hosts by name", async () => {
+    renderServices([
+      makeHost({ id: "h1", name: "Zzz" }),
+      makeHost({ id: "h2", name: "Aaa" }),
+    ]);
+    await waitFor(() => expect(api.certificates).toHaveBeenCalled());
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Sort services" }), "name");
+    const rows = screen.getAllByRole("button", { name: /^Open / });
+    expect(rows[0]).toHaveAccessibleName("Open Aaa");
+    expect(rows[1]).toHaveAccessibleName("Open Zzz");
+  });
+
+  it("does not navigate when Space is pressed on a row's checkbox", async () => {
+    const { navigate } = renderServices([makeHost({ id: "h1", name: "Jellyfin" })]);
+    await waitFor(() => expect(api.certificates).toHaveBeenCalled());
+
+    const box = screen.getByRole("checkbox", { name: "Select Jellyfin" });
+    box.focus();
+    await userEvent.keyboard(" ");
+    expect(navigate).not.toHaveBeenCalled();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+  });
+
+  it("confirms a bulk delete via the ConfirmDialog before calling the API", async () => {
+    const { reload } = renderServices([makeHost({ id: "h1", name: "Jellyfin" })]);
+    await waitFor(() => expect(api.certificates).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Jellyfin" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    // the dialog is shown; the API has NOT been called yet
+    const dialog = await screen.findByRole("dialog", { name: /Delete 1 service\?/ });
+    expect(dialog).toBeInTheDocument();
+    expect(api.batchHosts).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(api.batchHosts).toHaveBeenCalledWith(["h1"], "delete");
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+  });
+
+  it("surfaces an inline error and reverts when a toggle fails", async () => {
+    vi.mocked(api.updateHost).mockRejectedValueOnce(new Error("nginx reload failed"));
+    const { reload } = renderServices([makeHost({ id: "h1", name: "Jellyfin", enabled: true })]);
+    await waitFor(() => expect(api.certificates).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole("switch", { name: "Pause Jellyfin" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/nginx reload failed/));
+    // reverted: the switch is back to its enabled ("Pause") resting label, not "Resume"
+    expect(screen.getByRole("switch", { name: "Pause Jellyfin" })).toBeInTheDocument();
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("offers the security-profile picker in the bulk bar when profiles exist", async () => {
@@ -204,8 +295,8 @@ describe("Services", () => {
 
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Jellyfin" }));
 
-    const picker = await screen.findByRole("combobox");
-    expect(picker).toBeInTheDocument();
+    // the bulk bar's profile picker (there is also a sort combobox now)
+    expect(await screen.findByRole("option", { name: "Apply profile…" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Locked down" })).toBeInTheDocument();
   });
 });

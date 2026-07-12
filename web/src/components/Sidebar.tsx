@@ -1,8 +1,9 @@
-import { useState } from "react";
-import type { Route } from "../App.tsx";
+import { useEffect, useState } from "react";
+import { routeHash, type Route } from "../App.tsx";
 import type { ProxyHost } from "../types.ts";
 import type { AuthUser } from "../api.ts";
 import { healthClass } from "../types.ts";
+import { useFocusTrap } from "../hooks.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "./Avatar.tsx";
 import { BrandLogo } from "./BrandLogo.tsx";
@@ -18,6 +19,16 @@ interface Props {
   user: AuthUser;
   onLogout: () => void;
   open?: boolean;
+  /** Close the mobile drawer (Escape / after nav). No-op above the breakpoint. */
+  onClose?: () => void;
+  /** Open the ⌘K command palette from the sidebar search trigger. */
+  onOpenPalette?: () => void;
+}
+
+// A plain left click on a nav link is intercepted for SPA navigation; Cmd/Ctrl/Shift
+// clicks and non-primary buttons fall through so the browser opens a real new tab.
+function isPlainClick(e: React.MouseEvent): boolean {
+  return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 }
 
 const themeIcon: Record<Theme, (p: { className?: string }) => React.ReactNode> = {
@@ -31,30 +42,73 @@ const themeLabel: Record<Theme, string> = {
   dark: "Dark", "less-dark": "Less dark", medium: "Medium", "less-light": "Less light", light: "Light",
 };
 
-export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = false }: Props) {
+export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = false, onClose, onOpenPalette }: Props) {
   const [svcOpen, setSvcOpen] = useState(true);
   const ThemeIcon = themeIcon[theme.theme];
 
-  const item = (name: Route["name"], label: string, IconC: (p: { className?: string }) => React.ReactNode) => (
-    <button
-      type="button"
-      className={`nav-item${route.name === name ? " active" : ""}`}
-      aria-current={route.name === name ? "page" : undefined}
-      onClick={() => navigate({ name })}
+  // Below the CSS breakpoint the sidebar is an off-canvas drawer: when it's closed its
+  // ~15 controls must not be reachable by Tab (inert), and when it's open focus is
+  // trapped inside it and Escape closes it, restoring focus to the toggle.
+  const [isMobile, setIsMobile] = useState(
+    () => typeof matchMedia === "function" && matchMedia("(max-width: 760px)").matches,
+  );
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const mq = matchMedia("(max-width: 760px)");
+    const on = () => setIsMobile(mq.matches);
+    on();
+    mq.addEventListener?.("change", on);
+    return () => mq.removeEventListener?.("change", on);
+  }, []);
+
+  const asideRef = useFocusTrap<HTMLElement>(isMobile && open, onClose);
+  // Off-canvas + closed → hide the whole panel from the tab order and a11y tree.
+  useEffect(() => {
+    asideRef.current?.toggleAttribute("inert", isMobile && !open);
+  }, [asideRef, isMobile, open]);
+
+  // A nav target rendered as a real <a href> so Cmd/middle-click open a new tab and the
+  // status bar shows the destination; a plain left click is hijacked for SPA nav.
+  const navLink = (r: Route, className: string, active: boolean, children: React.ReactNode, key?: string) => (
+    <a
+      key={key}
+      href={routeHash(r)}
+      className={className + (active ? " active" : "")}
+      aria-current={active ? "page" : undefined}
+      onClick={(e) => {
+        if (!isPlainClick(e)) return; // let the browser handle modified / new-tab clicks
+        e.preventDefault();
+        navigate(r);
+      }}
     >
-      <IconC />
-      {label}
-    </button>
+      {children}
+    </a>
   );
 
+  const item = (name: Route["name"], label: string, IconC: (p: { className?: string }) => React.ReactNode) =>
+    navLink({ name }, "nav-item", route.name === name, (
+      <>
+        <IconC />
+        {label}
+      </>
+    ));
+
   return (
-    <aside className={`sidebar${open ? " open" : ""}`}>
+    <aside ref={asideRef} className={`sidebar${open ? " open" : ""}`}>
       <div className="brand">
         <BrandLogo className="brand-logo" />
         <div className="brand-name">
           NginUX<small>Secure ingress, simplified</small>
         </div>
       </div>
+
+      {onOpenPalette && (
+        <button type="button" className="search" style={{ maxWidth: "none", cursor: "pointer" }} onClick={onOpenPalette}>
+          <Icon.search />
+          <span style={{ flex: 1, textAlign: "left" }}>Search…</span>
+          <span className="kbd">⌘K</span>
+        </button>
+      )}
 
       <nav className="nav">
         <div className="nav-label">Manage</div>
@@ -94,19 +148,21 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
           </button>
         </div>
         <div className={`nav-children${svcOpen ? "" : " collapsed"}`}>
-          {hosts.map((h) => (
-            <button
-              type="button"
-              key={h.id}
-              className={`nav-child${route.name === "host" && route.hostId === h.id ? " active" : ""}${h.enabled ? "" : " is-paused"}`}
-              aria-current={route.name === "host" && route.hostId === h.id ? "page" : undefined}
-              onClick={() => navigate({ name: "host", hostId: h.id })}
-            >
-              <span className="ce"><ServiceIcon iconUrl={h.iconUrl} size={16} /></span>
-              {h.name}
-              <span className={`dot ${h.enabled ? healthClass[h.health] : "n"}`} title={h.enabled ? undefined : "Paused"} />
-            </button>
-          ))}
+          {hosts.map((h) =>
+            navLink(
+              { name: "host", hostId: h.id },
+              `nav-child${h.enabled ? "" : " is-paused"}`,
+              route.name === "host" && route.hostId === h.id,
+              (
+                <>
+                  <span className="ce"><ServiceIcon iconUrl={h.iconUrl} size={16} /></span>
+                  {h.name}
+                  <span className={`dot ${h.enabled ? healthClass[h.health] : "n"}`} title={h.enabled ? undefined : "Paused"} />
+                </>
+              ),
+              h.id,
+            ),
+          )}
         </div>
 
         {item("certs", "Certificates", Icon.cert)}

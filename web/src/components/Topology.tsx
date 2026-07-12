@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Route } from "../App.tsx";
-import type { Topology as TopologyData } from "../types.ts";
+import type { HealthStatus, Topology as TopologyData } from "../types.ts";
 import { healthClass } from "../types.ts";
 import { api, type Reachability } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { usePrefersReducedMotion } from "../hooks.ts";
 import { ServiceIcon } from "./ServiceIcon.tsx";
+
+/** Human-readable status for the (previously title-only) service health dots. */
+const healthLabel = (enabled: boolean, health: HealthStatus): string => {
+  if (!enabled) return "Paused";
+  switch (health) {
+    case "online": return "Online";
+    case "degraded": return "Degraded";
+    case "down": return "Unreachable";
+    default: return "Status unknown";
+  }
+};
 
 interface PulsePhase { t0: number; t1: number; width: number; }
 interface Pulse { dur: number; begin: string; phases: PulsePhase[]; }
@@ -53,16 +65,18 @@ export function Topology({
   data,
   navigate,
   range,
-  hovered,
-  onHover,
+  scoped,
+  onScope,
 }: {
   data: TopologyData;
   navigate: (r: Route) => void;
   range: string;
-  metric: "requests" | "bandwidth";
-  hovered: string | null;
-  onHover: (domain: string | null) => void;
+  /** Domain the views are pinned to, or null. Pinned via a tile click. */
+  scoped: string | null;
+  /** Toggle the pin for a service domain. */
+  onScope: (domain: string) => void;
 }) {
+  const reducedMotion = usePrefersReducedMotion();
   const wrapRef = useRef<HTMLDivElement>(null);
   const internetRef = useRef<HTMLDivElement>(null);
   const gatewayRef = useRef<HTMLDivElement>(null);
@@ -82,12 +96,15 @@ export function Topology({
   useEffect(() => { statsRef.current = stats; }, [stats]);
 
   // Live gateway reachability - is nginx serving 80/443, and has the public IP drifted?
+  // Paused while the tab is backgrounded (document.hidden) so we stop polling the API.
   useEffect(() => {
     let alive = true;
-    const pull = () => api.reachability().then((x) => { if (alive) setReach(x); }).catch(() => {});
+    const pull = () => { if (document.hidden) return; api.reachability().then((x) => { if (alive) setReach(x); }).catch(() => {}); };
     pull();
     const id = setInterval(pull, 30000);
-    return () => { alive = false; clearInterval(id); };
+    const onVis = () => { if (!document.hidden) pull(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { alive = false; clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
   // The parent refetches topology on a poll, handing us a new `data` object each
@@ -97,15 +114,21 @@ export function Topology({
   dataRef.current = data;
   const svcKey = data.servers.flatMap((s) => s.services).map((x) => `${x.id}:${x.health}:${x.enabled}`).join("|");
 
+  // Per-service traffic numbers. Also paused while backgrounded so a hidden
+  // dashboard stops hitting the API (and stops the setState → SVG re-render churn).
   useEffect(() => {
     let alive = true;
-    const pull = () =>
+    const pull = () => {
+      if (document.hidden) return;
       api.hostStats(range)
         .then((rows) => { if (alive) setStats(Object.fromEntries(rows.map((r) => [r.key, r]))); })
         .catch(() => {});
+    };
     pull();
     const id = setInterval(pull, range === "live" ? 3000 : 8000);
-    return () => { alive = false; clearInterval(id); };
+    const onVis = () => { if (!document.hidden) pull(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { alive = false; clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
   }, [range]);
 
   // Measure the shared layout (internet/gateway anchors + per-row positions).
@@ -227,6 +250,9 @@ export function Topology({
 
     services.forEach((svc, i) => {
       const run = () => {
+        // Backgrounded tab: don't commit a new generation (no SVG re-render). Re-check
+        // shortly; the poll loops above resume the instant the tab is visible again.
+        if (document.hidden) { timers.set(svc.id, window.setTimeout(run, 500)); return; }
         const layout = measure();
         if (!layout) { timers.set(svc.id, window.setTimeout(run, 200)); return; }
         setBox(layout.box);
@@ -263,10 +289,12 @@ export function Topology({
   const nodeMinH = Math.min(480, Math.max(0, (svcCount - 1) * 24 + 32));
 
   return (
-      <div className="topo" ref={wrapRef}>
-        <svg className="topo-lines" viewBox={`0 0 ${box.w} ${box.h}`} preserveAspectRatio="none">
+      <div className="topo" ref={wrapRef} style={{ minHeight: Math.max(280, nodeMinH + 90) }}>
+        {/* Purely decorative flow visualisation - the same information is available as
+            text in the tiles below, so it's hidden from assistive tech. */}
+        <svg className="topo-lines" viewBox={`0 0 ${box.w} ${box.h}`} preserveAspectRatio="none" aria-hidden="true">
           {Object.entries(anim).flatMap(([host, a]) => a.strokes.map((s, si) => {
-            const dim = hovered ? s.host !== hovered : false;
+            const dim = scoped ? s.host !== scoped : false;
             const p = s.pulse;
             // Build a keyframe envelope: min between phases, swell to each phase's
             // width while that batch is in flight.
@@ -282,18 +310,22 @@ export function Topology({
               kt.push(1); val.push(s.width);
               env = { keyTimes: kt.join(";"), values: val.join(";") };
             }
+            // Reduced motion: no width-pulsing SMIL. Render statically at the peak
+            // width so line thickness still encodes bandwidth.
+            const peakW = p && p.phases.length ? Math.max(s.width, ...p.phases.map((ph) => ph.width)) : s.width;
+            const staticStroke = reducedMotion;
             return (
               <path
                 key={`${host}-g${a.gen}-s${si}`}
                 d={s.d}
                 fill="none"
                 stroke={s.color}
-                strokeWidth={s.width}
+                strokeWidth={staticStroke ? peakW : s.width}
                 strokeLinecap="round"
                 strokeOpacity={dim ? 0.07 : s.dashed ? 0.3 : 0.45}
                 strokeDasharray={s.dashed ? "5 5" : undefined}
               >
-                {env && p && (
+                {!staticStroke && env && p && (
                   <animate
                     attributeName="stroke-width"
                     dur={`${p.dur}s`}
@@ -308,8 +340,24 @@ export function Topology({
             );
           }))}
           {Object.entries(anim).flatMap(([host, a]) => a.flows.flatMap((f, fi) => {
-            // When a service is hovered, only its dots animate.
-            if (hovered && f.host !== hovered) return [];
+            // When a service is pinned, only its dots show.
+            if (scoped && f.host !== scoped) return [];
+            // Reduced motion: no travelling dots. Draw the path as static "beads"
+            // (round-capped dashes) so the request flow is still legible, unanimated.
+            if (reducedMotion) {
+              return [(
+                <path
+                  key={`${host}-g${a.gen}-f${fi}-static`}
+                  d={f.path}
+                  fill="none"
+                  stroke={f.color}
+                  strokeWidth={3.4}
+                  strokeLinecap="round"
+                  strokeDasharray="0.1 9"
+                  strokeOpacity={scoped ? 0.9 : 0.7}
+                />
+              )];
+            }
             return Array.from({ length: f.count }).map((_, k) => {
               const f0 = +(f.t0 + k * f.step).toFixed(4);
               const f1 = +(f0 + f.travel).toFixed(4);
@@ -365,24 +413,30 @@ export function Topology({
             </div>
             {(() => {
               const r = reach;
-              let cls = "g", text = "NginUX · ports 80 / 443", title = "Checking reachability…";
+              let cls = "g", text = "NginUX · ports 80 / 443", detail = "Checking reachability…", problem = false;
               if (r) {
                 if (!r.nginxUp) {
-                  cls = "r"; text = "nginx down on 80 / 443";
-                  title = "nginx isn't responding on ports 80/443 - the proxy data plane may be down.";
+                  cls = "r"; text = "nginx down on 80 / 443"; problem = true;
+                  detail = "nginx isn't responding on ports 80/443 - the proxy data plane may be down.";
                 } else if (r.ipMismatch) {
-                  cls = "y"; text = "Public IP changed";
-                  title = `Your public IP looks like ${r.detectedPublicIp}, but ${r.configuredPublicIp} is configured. DNS A records may now point to the wrong address - update them (and Settings).`;
+                  cls = "y"; text = "Public IP changed"; problem = true;
+                  detail = `Your public IP looks like ${r.detectedPublicIp}, but ${r.configuredPublicIp} is configured. DNS A records may now point to the wrong address - update them (and Settings).`;
                 } else {
                   cls = "g"; text = "Serving 80 / 443";
                   const extOk = r.ext443 === true || r.ext80 === true;
-                  title = `nginx is serving on 80/443. Externally reachable: ${extOk ? "yes ✓" : "couldn't confirm from inside your network (test from outside / check the port-forward)"}.`;
+                  detail = `nginx is serving on 80/443. Externally reachable: ${extOk ? "yes ✓" : "couldn't confirm from inside your network (test from outside / check the port-forward)"}.`;
                 }
               }
+              // role=status + aria-live: the status text (and, when there's a problem,
+              // its explanation) is announced to screen readers on change - it used to
+              // live only in a hover title. On a problem the explanation is also shown.
               return (
-                <div className="node-foot" title={title}>
-                  <span className={`dot ${cls}`} />
-                  {text}
+                <div className="node-foot" role="status" aria-live="polite" title={detail}>
+                  <span className={`dot ${cls}`} aria-hidden="true" />
+                  <span>{text}</span>
+                  {problem && (
+                    <span className="caption" style={{ display: "block", width: "100%", marginTop: 3, lineHeight: 1.35 }}>{detail}</span>
+                  )}
                 </div>
               );
             })()}
@@ -399,21 +453,24 @@ export function Topology({
               </div>
               {server.services.map((s) => {
                 const idx = data.servers.flatMap((sv) => sv.services).findIndex((x) => x.id === s.id);
+                const pinned = scoped === s.domain;
                 return (
                   <div
                     key={s.id}
                     className={`svc${s.enabled ? "" : " svc-paused"}`}
                     role="button"
                     tabIndex={0}
-                    aria-label={`Open ${s.name}`}
+                    aria-pressed={pinned}
+                    aria-label={`${pinned ? "Stop filtering traffic to" : "Filter traffic to"} ${s.name}`}
                     ref={(el) => {
                       if (el) svcRefs.current.set(s.id, el);
                       else svcRefs.current.delete(s.id);
                     }}
-                    onMouseEnter={() => onHover(s.domain)}
-                    onMouseLeave={() => onHover(null)}
-                    onClick={() => navigate({ name: "host", hostId: s.id })}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate({ name: "host", hostId: s.id }); } }}
+                    // Click-to-pin: toggle scoping of both the map and the chart. Only the
+                    // tile itself responds to keys (nested link/button handle their own).
+                    onClick={(e) => { if (e.target === e.currentTarget || !(e.target as HTMLElement).closest("a,button")) onScope(s.domain); }}
+                    onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onScope(s.domain); } }}
+                    style={pinned ? { outline: "2px solid var(--accent)", outlineOffset: -2, borderRadius: "var(--radius-lg, 8px)" } : undefined}
                   >
                     <span className="svc-tag" style={{ background: PALETTE[idx % PALETTE.length] }} />
                     <a
@@ -429,7 +486,16 @@ export function Topology({
                     </a>
                     <div className="svc-body">
                       <div className="svc-name">
-                        {s.name} <span className="port">:{s.port}</span>
+                        <button
+                          type="button"
+                          className="svc-name-link"
+                          title={`Open ${s.name} details`}
+                          onClick={(e) => { e.stopPropagation(); navigate({ name: "host", hostId: s.id }); }}
+                          style={{ background: "none", border: 0, padding: 0, margin: 0, font: "inherit", color: "inherit", cursor: "pointer", textAlign: "left" }}
+                        >
+                          {s.name}
+                        </button>{" "}
+                        <span className="port">:{s.port}</span>
                       </div>
                       <div className={`svc-route${s.enabled && s.health === "down" ? " svc-down" : ""}`}>
                         → {s.domain}
@@ -452,7 +518,8 @@ export function Topology({
                       );
                     })()}
                     <span className="svc-stat">
-                      <span className={`dot ${s.enabled ? healthClass[s.health] : "n"}`} title={s.enabled ? undefined : "Paused"} />
+                      <span className={`dot ${s.enabled ? healthClass[s.health] : "n"}`} aria-hidden="true" title={s.enabled ? undefined : "Paused"} />
+                      <span className="sr-only">{healthLabel(s.enabled, s.health)}</span>
                     </span>
                   </div>
                 );

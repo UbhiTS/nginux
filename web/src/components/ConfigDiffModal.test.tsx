@@ -115,6 +115,16 @@ describe("ConfigDiffModal", () => {
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("labels the dialog with a .modal-title heading and moves focus inside", async () => {
+    render(<ConfigDiffModal mode="update" onClose={() => {}} onConfirm={() => {}} />);
+    const dialog = screen.getByRole("dialog");
+    const heading = screen.getByText("Configuration changes");
+    expect(heading).toHaveClass("modal-title");
+    expect(dialog).toHaveAttribute("aria-labelledby", heading.id);
+    // Focus trap pulls focus into the dialog on open (was left on the page behind).
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -206,5 +216,22 @@ describe("CertDetailModal", () => {
     render(<CertDetailModal cert={cert} onClose={onClose} />);
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels the dialog with the domain as a .modal-title heading and moves focus inside", async () => {
+    render(<CertDetailModal cert={cert} onClose={() => {}} />);
+    const dialog = screen.getByRole("dialog");
+    const heading = screen.getByText("app.example.com");
+    expect(heading).toHaveClass("modal-title");
+    expect(dialog).toHaveAttribute("aria-labelledby", heading.id);
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+  });
+
+  it("closes on Escape via the focus trap", async () => {
+    const onClose = vi.fn();
+    render(<CertDetailModal cert={cert} onClose={onClose} />);
+    await screen.findByText("CN=app.example.com");
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalled();
   });
 });

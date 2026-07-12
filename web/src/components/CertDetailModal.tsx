@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { api, type CertDetails, type Certificate } from "../api.ts";
 import { Icon } from "../icons.tsx";
+import { useFocusTrap } from "../hooks.ts";
 
 const statusPill: Record<Certificate["status"], string> = {
   valid: "g", expiring: "y", expired: "r", pending: "n", error: "r", none: "n",
@@ -22,17 +23,15 @@ export function CertDetailModal({ cert, onClose, onChanged }: {
   const [loading, setLoading] = useState(true);
   const [autoRenew, setAutoRenew] = useState(cert.autoRenew);
   const [busy, setBusy] = useState(false);
+  const titleId = useId();
+  // Focus moved in, trapped, restored on close; Escape closes (replaces the old
+  // window keydown listener that left Tab walking the page behind the backdrop).
+  const ref = useFocusTrap<HTMLDivElement>(true, onClose);
 
   useEffect(() => {
     setLoading(true);
     api.certDetails(cert.domain).then(setInfo).catch(() => setInfo(null)).finally(() => setLoading(false));
   }, [cert.domain]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   const toggleAuto = async () => {
     const next = !autoRenew;
@@ -46,10 +45,10 @@ export function CertDetailModal({ cert, onClose, onChanged }: {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="card card-pad modal-card" role="dialog" aria-modal="true" aria-label={`Certificate for ${cert.domain}`} style={{ width: 540, maxWidth: "100%" }} onClick={(e) => e.stopPropagation()}>
+      <div ref={ref} className="card card-pad modal-card" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} style={{ width: 540, maxWidth: "100%" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 2 }}>
           <Icon.cert className="acct-ic" />
-          <div style={{ fontWeight: 650, fontSize: 15, wordBreak: "break-all" }}>{cert.domain}</div>
+          <div id={titleId} className="modal-title" style={{ wordBreak: "break-all" }}>{cert.domain}</div>
           <span className={`pill ${statusPill[cert.status]}`} style={{ marginLeft: "auto" }}>{cert.status}</span>
         </div>
         <p className="muted" style={{ fontSize: 12.5, marginBottom: 14 }}>

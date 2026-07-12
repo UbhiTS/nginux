@@ -167,4 +167,86 @@ describe("Certificates page", () => {
     const expLabel = screen.getByText("Expiring / expired");
     expect(within(expLabel.closest(".stat") as HTMLElement).getByText("1")).toBeInTheDocument();
   });
+
+  it("shows the page title once (no duplicated in-content title block)", async () => {
+    vi.mocked(api.certificates).mockResolvedValue([trusted]);
+    render(<Certificates />);
+    await screen.findByText("app.example.com");
+
+    // Only the topbar <h1> carries the page name now; the old page-title block is gone.
+    const titles = screen.getAllByText("Certificates");
+    expect(titles).toHaveLength(1);
+    expect(titles[0].tagName).toBe("H1");
+    // Subtitle is preserved.
+    expect(screen.getByText(/renewed automatically before they expire/i)).toBeInTheDocument();
+  });
+
+  it("exposes each cert row as a keyboard-operable button and opens details on Enter", async () => {
+    vi.mocked(api.certificates).mockResolvedValue([trusted]);
+    render(<Certificates />);
+    await screen.findByText("app.example.com");
+
+    const row = screen.getByRole("button", { name: /View certificate for app\.example\.com/i });
+    expect(row).toHaveAttribute("tabindex", "0");
+    row.focus();
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => expect(api.certDetails).toHaveBeenCalledWith("app.example.com"));
+    expect(await screen.findByText("CN=app.example.com")).toBeInTheDocument();
+  });
+
+  it("opens details on Space as well", async () => {
+    vi.mocked(api.certificates).mockResolvedValue([trusted]);
+    render(<Certificates />);
+    await screen.findByText("app.example.com");
+
+    const row = screen.getByRole("button", { name: /View certificate for app\.example\.com/i });
+    row.focus();
+    await userEvent.keyboard(" ");
+
+    await waitFor(() => expect(api.certDetails).toHaveBeenCalledWith("app.example.com"));
+  });
+
+  it("shows an error state (not an empty list) when the certificate fetch fails", async () => {
+    vi.mocked(api.certificates).mockRejectedValue(new Error("network down"));
+    render(<Certificates />);
+
+    expect(await screen.findByText(/Couldn't load certificates/i)).toBeInTheDocument();
+    // Must NOT masquerade as the genuine zero-state.
+    expect(screen.queryByText(/No certificates yet/i)).not.toBeInTheDocument();
+  });
+
+  it("recovers from a load error when Retry is clicked", async () => {
+    vi.mocked(api.certificates)
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValue([trusted]);
+    render(<Certificates />);
+
+    await screen.findByText(/Couldn't load certificates/i);
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("app.example.com")).toBeInTheDocument();
+  });
+
+  it("pluralises the days-left label correctly (1 day, not 1 days)", async () => {
+    const oneDay = makeCert({ domain: "one.example.com", daysRemaining: 1 });
+    vi.mocked(api.certificates).mockResolvedValue([oneDay]);
+    render(<Certificates />);
+    await screen.findByText("one.example.com");
+
+    expect(screen.getByText("1 day left")).toBeInTheDocument();
+    expect(screen.queryByText("1 days left")).not.toBeInTheDocument();
+  });
+
+  it("surfaces a failed renewal in a role=alert banner", async () => {
+    vi.mocked(api.certificates).mockResolvedValue([trusted]);
+    vi.mocked(api.renewCert).mockRejectedValue(new Error("ACME unreachable"));
+    render(<Certificates />);
+    await screen.findByText("app.example.com");
+
+    await userEvent.click(screen.getByRole("button", { name: "Renew now" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/ACME unreachable/i);
+  });
 });

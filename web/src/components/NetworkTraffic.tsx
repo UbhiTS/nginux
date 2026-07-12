@@ -17,14 +17,47 @@ export function NetworkTraffic({
 }) {
   const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
   const [range, setRange] = useState("live");
-  // When a service is hovered, both views scope to it (graph filters, map shows
-  // only that service's dots).
-  const [hovered, setHovered] = useState<string | null>(null);
+  // Click-to-pin scoping: clicking a service tile pins BOTH views to it (graph
+  // filters, map shows only that service's dots). Clicking it again (or the chip)
+  // clears. Pinning replaces the old hover-to-scope, which released the instant the
+  // pointer moved off the tile toward the graph.
+  const [scoped, setScoped] = useState<string | null>(null);
+  const toggleScope = (domain: string) => setScoped((cur) => (cur === domain ? null : domain));
+
+  const scopedName = scoped
+    ? data?.servers.flatMap((s) => s.services).find((x) => x.domain === scoped)?.name ?? scoped
+    : null;
 
   return (
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-head">
         Network &amp; traffic
+        {scoped && (
+          <button
+            type="button"
+            onClick={() => setScoped(null)}
+            aria-label={`Clear filter — currently showing ${scopedName}`}
+            title="Clear filter"
+            style={{
+              marginLeft: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "2px 8px 2px 10px",
+              fontSize: "var(--fs-xs)",
+              fontWeight: 600,
+              lineHeight: 1.6,
+              color: "var(--text)",
+              background: "var(--accent-soft, rgba(59,130,246,.15))",
+              border: "1px solid var(--accent)",
+              borderRadius: "var(--radius-pill, 999px)",
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ color: "var(--text-dim)" }}>Showing:</span> {scopedName}
+            <span aria-hidden="true" style={{ fontSize: "1.1em", lineHeight: 1 }}>✕</span>
+          </button>
+        )}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div className="range-tabs">
             {(["requests", "bandwidth"] as const).map((m) => (
@@ -44,13 +77,13 @@ export function NetworkTraffic({
       </div>
 
       {data ? (
-        <Topology data={data} navigate={navigate} range={range} metric={metric} hovered={hovered} onHover={setHovered} />
+        <Topology data={data} navigate={navigate} range={range} scoped={scoped} onScope={toggleScope} />
       ) : (
         <div className="placeholder"><span className="spinner" /> Loading network map…</div>
       )}
 
       <div style={{ borderTop: "1px solid var(--border)" }}>
-        <TrafficChart range={range} metric={metric} host={hovered} />
+        <TrafficChart range={range} metric={metric} host={scoped} />
       </div>
     </div>
   );

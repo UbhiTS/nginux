@@ -3,6 +3,7 @@ import type { MetricsSummary } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { WORLD_LAND } from "./worldland.ts";
 import { flag, countryName } from "../format.ts";
+import { usePrefersReducedMotion } from "../hooks.ts";
 
 // Rough country centroids [lat, lon] for the traffic bubble map.
 const CENTROIDS: Record<string, [number, number]> = {
@@ -45,6 +46,7 @@ export function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBloc
   onPickIp: (ip: string) => void;
   onBlockIp: (ip: string) => Promise<void>;
 }) {
+  const reducedMotion = usePrefersReducedMotion();
   const max = Math.max(1, ...countries.map((c) => c.count));
   // The popup stays open while the cursor is over a bubble OR the popup itself,
   // and auto-closes 3s after the cursor leaves both (or immediately via the X).
@@ -132,9 +134,15 @@ export function TrafficMap({ countries, emptyHint, homeCountry, onPickIp, onBloc
               return (
                 <g key={"arc-" + c.key}>
                   <path d={d} fill="none" stroke="var(--accent)" strokeWidth={0.6} strokeOpacity={0.2} strokeLinecap="round" />
-                  <circle r={2.0} fill="var(--accent)">
-                    <animateMotion path={d} dur={`${dur}s`} repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" />
-                  </circle>
+                  {/* Static dot at the source when reduced motion is preferred; a dot
+                      travelling source -> home -> source otherwise. */}
+                  {reducedMotion ? (
+                    <circle cx={x} cy={y} r={2.0} fill="var(--accent)" />
+                  ) : (
+                    <circle r={2.0} fill="var(--accent)">
+                      <animateMotion path={d} dur={`${dur}s`} repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" />
+                    </circle>
+                  )}
                 </g>
               );
             })}

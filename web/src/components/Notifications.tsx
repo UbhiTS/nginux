@@ -48,10 +48,14 @@ export function Notifications() {
   };
 
   const visible = items.filter((n) => !ignored.has(n.id) && !dismissed.has(n.id));
-  if (!visible.length) return null;
 
+  // The live region is mounted permanently (even when empty) so a toast that
+  // arrives from a later poll lands inside an already-observed region and is
+  // announced. Returning null while empty meant screen readers never saw the
+  // region get populated. aria-live="polite" for the container; critical toasts
+  // additionally carry role="alert" (assertive) so they interrupt.
   return (
-    <div className="toast-stack" role="region" aria-label="Notifications">
+    <div className="toast-stack" role="region" aria-live="polite" aria-label="Notifications">
       {visible.map((n) => (
         <div key={n.id} className={`toast ${n.severity}`} role={n.severity === "critical" ? "alert" : "status"}>
           <span className="toast-icon">{n.severity === "info" ? <Icon.info /> : <Icon.alert />}</span>
@@ -63,8 +67,8 @@ export function Notifications() {
                 Dismiss
               </button>
               {n.dismissible && (
-                <button className="toast-btn subtle" title="Don't show this again" onClick={() => ignore(n.id)}>
-                  Ignore
+                <button className="toast-btn subtle" title="Suppressed for good on this browser" onClick={() => ignore(n.id)}>
+                  Don't show again
                 </button>
               )}
             </div>

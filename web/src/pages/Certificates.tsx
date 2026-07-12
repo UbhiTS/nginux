@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, type AcmeLogEntry, type CertDetails, type Certificate, type CertImportResult } from "../api.ts";
 import { Icon } from "../icons.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
+import { useAsyncData } from "../hooks.ts";
+import { days } from "../format.ts";
 
 const levelColor: Record<AcmeLogEntry["level"], string> = {
   info: "var(--text)",
@@ -118,10 +120,13 @@ export function Certificates() {
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement | null>(null);
 
-  const load = () => {
-    api.certificates().then(setCerts).catch(() => {});
-  };
-  useEffect(load, []);
+  // loading→ready→error machine so a dropped fetch is distinguishable from a
+  // genuinely empty list (was: flash "No certificates" on every mount/refetch).
+  const certState = useAsyncData(() => api.certificates(), []);
+  useEffect(() => {
+    if (certState.data) setCerts(certState.data);
+  }, [certState.data]);
+  const load = certState.reload;
   // DNS-01 is only usable with a provider connected, so don't offer it otherwise.
   useEffect(() => {
     api.settings().then((s) => setHasDnsProvider(s.dnsProvider !== "none")).catch(() => {});
@@ -236,14 +241,13 @@ export function Certificates() {
       <div className="content">
         <div className="page-head">
           <div>
-            <div className="page-title" style={{ fontSize: 18 }}>Certificates</div>
             <div className="sub">HTTPS certificates, renewed automatically before they expire.</div>
           </div>
           <button className="btn" onClick={() => { setImportResult(null); setImportOpen(true); }}>Import…</button>
         </div>
 
         {error && (
-          <div className="test-result bad" style={{ marginTop: 0, marginBottom: 16 }}>
+          <div className="test-result bad" role="alert" style={{ marginTop: 0, marginBottom: 16 }}>
             <Icon.x />
             <div>{error}</div>
           </div>
@@ -256,61 +260,86 @@ export function Certificates() {
         </div>
 
         <div className="card">
-          <div className="ahead" style={{ gridTemplateColumns: GRID }}>
-            <div>Domain</div>
-            <div style={{ textAlign: "center" }}>Status</div>
-            <div>Type</div>
-            <div>Expires</div>
-            <div style={{ textAlign: "center" }}>Auto-renew</div>
-            <div />
-          </div>
-          {certs.map((c) => (
-            <div key={c.domain} className="arow arow-click" style={{ gridTemplateColumns: GRID }} onClick={() => openDetails(c)}>
-              <div className="cert-domain">
-                {c.domain}
-                {c.lastError && <div className="muted" style={{ fontSize: 11, color: "var(--red)" }}>{c.lastError}</div>}
+          {certState.status === "loading" && certs.length === 0 ? (
+            <div className="card-pad">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="skeleton skeleton-row" />
+              ))}
+            </div>
+          ) : certState.status === "error" && certs.length === 0 ? (
+            <div className="state-note error">
+              <Icon.alert />
+              <div>Couldn't load certificates.{certState.error ? ` ${certState.error}` : ""}</div>
+              <button className="btn btn-sm" onClick={load}>Retry</button>
+            </div>
+          ) : certs.length === 0 ? (
+            <div className="state-note">
+              <Icon.cert />
+              <div>No certificates yet. They're created automatically when you expose a service over HTTPS.</div>
+            </div>
+          ) : (
+            <>
+              <div className="ahead" style={{ gridTemplateColumns: GRID }}>
+                <div>Domain</div>
+                <div style={{ textAlign: "center" }}>Status</div>
+                <div>Type</div>
+                <div>Expires</div>
+                <div style={{ textAlign: "center" }}>Auto-renew</div>
+                <div />
               </div>
-              <div style={{ textAlign: "center" }}><span className={`pill ${statusPill[c.status]}`}>{c.status}</span></div>
-              <div className="muted">
-                {methodLabel[c.method]}
-                {c.method !== "selfsigned" && (/staging/i.test(c.issuer)
-                  ? <span className="pill y" style={{ marginLeft: 6 }}>staging</span>
-                  : /let'?s encrypt/i.test(c.issuer)
-                    ? <span className="pill g" style={{ marginLeft: 6 }}>production</span>
-                    : null)}
-                {c.wildcard && <span className="pill b" style={{ marginLeft: 6 }}>wildcard</span>}
-              </div>
-              <div>
-                <div>{fmtDate(c.notAfter)}</div>
-                {c.daysRemaining !== null && (
-                  <div className="muted" style={{ fontSize: 11, color: c.daysRemaining < 30 ? "var(--yellow)" : undefined }}>
-                    {c.daysRemaining < 0 ? "expired" : `${c.daysRemaining} days left`}
+              {certs.map((c) => (
+                <div
+                  key={c.domain}
+                  className="arow arow-click"
+                  style={{ gridTemplateColumns: GRID }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`View certificate for ${c.domain}`}
+                  onClick={() => openDetails(c)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetails(c); } }}
+                >
+                  <div className="cert-domain">
+                    {c.domain}
+                    {c.lastError && <div className="muted" style={{ fontSize: 11, color: "var(--red)" }}>{c.lastError}</div>}
                   </div>
-                )}
-              </div>
-              <div style={{ textAlign: "center", color: c.autoRenew ? "var(--green)" : "var(--text-faint)" }}>
-                {c.autoRenew ? "✓" : "-"}
-              </div>
-              <div className="cert-actions" onClick={(e) => e.stopPropagation()}>
-                {c.method === "selfsigned" ? (
-                  <button className="btn btn-primary btn-sm" onClick={() => { setMethod("http-01"); setIssueFor(c.domain); }}>
-                    Get trusted cert
-                  </button>
-                ) : (
-                  <button className="btn btn-ghost btn-sm" disabled={busy === c.domain} onClick={() => renew(c.domain)}>
-                    {busy === c.domain ? <span className="spinner" /> : "Renew now"}
-                  </button>
-                )}
-                <button className="icon-btn danger" title="Delete certificate" onClick={() => setDelFor(c)}>
-                  <Icon.trash />
-                </button>
-              </div>
-            </div>
-          ))}
-          {certs.length === 0 && (
-            <div className="placeholder">
-              <p>No certificates yet. They're created automatically when you expose a service over HTTPS.</p>
-            </div>
+                  <div style={{ textAlign: "center" }}><span className={`pill ${statusPill[c.status]}`}>{c.status}</span></div>
+                  <div className="muted">
+                    {methodLabel[c.method]}
+                    {c.method !== "selfsigned" && (/staging/i.test(c.issuer)
+                      ? <span className="pill y" style={{ marginLeft: 6 }}>staging</span>
+                      : /let'?s encrypt/i.test(c.issuer)
+                        ? <span className="pill g" style={{ marginLeft: 6 }}>production</span>
+                        : null)}
+                    {c.wildcard && <span className="pill b" style={{ marginLeft: 6 }}>wildcard</span>}
+                  </div>
+                  <div>
+                    <div>{fmtDate(c.notAfter)}</div>
+                    {c.daysRemaining !== null && (
+                      <div className="muted" style={{ fontSize: 11, color: c.daysRemaining < 30 ? "var(--yellow)" : undefined }}>
+                        {c.daysRemaining < 0 ? "expired" : `${days(c.daysRemaining)} left`}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: "center", color: c.autoRenew ? "var(--green)" : "var(--text-faint)" }}>
+                    {c.autoRenew ? "✓" : "-"}
+                  </div>
+                  <div className="cert-actions" onClick={(e) => e.stopPropagation()}>
+                    {c.method === "selfsigned" ? (
+                      <button className="btn btn-primary btn-sm" onClick={() => { setMethod("http-01"); setIssueFor(c.domain); }}>
+                        Get trusted cert
+                      </button>
+                    ) : (
+                      <button className="btn btn-ghost btn-sm" disabled={busy === c.domain} onClick={() => renew(c.domain)}>
+                        {busy === c.domain ? <span className="spinner" /> : "Renew now"}
+                      </button>
+                    )}
+                    <button className="icon-btn danger" title="Delete certificate" onClick={() => setDelFor(c)}>
+                      <Icon.trash />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </>
           )}
         </div>
 
@@ -342,7 +371,7 @@ export function Certificates() {
                 <div className="kv"><span className="k">Issued to</span><span className="v">{info.subject}</span></div>
                 <div className="kv"><span className="k">Issued by</span><span className="v">{info.issuer}{info.selfSigned ? " (self-signed)" : ""}</span></div>
                 <div className="kv"><span className="k">Valid from</span><span className="v">{fmtDate(info.notBefore)}</span></div>
-                <div className="kv"><span className="k">Valid until</span><span className="v">{fmtDate(info.notAfter)}{detail.daysRemaining !== null ? ` · ${detail.daysRemaining < 0 ? "expired" : `${detail.daysRemaining} days left`}` : ""}</span></div>
+                <div className="kv"><span className="k">Valid until</span><span className="v">{fmtDate(info.notAfter)}{detail.daysRemaining !== null ? ` · ${detail.daysRemaining < 0 ? "expired" : `${days(detail.daysRemaining)} left`}` : ""}</span></div>
                 <div className="kv"><span className="k">Covers</span><span className="v" style={{ wordBreak: "break-all" }}>{info.sans.length ? info.sans.join(", ") : detail.domain}</span></div>
                 <div className="kv"><span className="k">Public key</span><span className="v">{info.publicKey}</span></div>
                 {info.signatureAlgorithm && <div className="kv"><span className="k">Signature</span><span className="v">{info.signatureAlgorithm}</span></div>}

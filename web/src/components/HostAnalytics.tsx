@@ -60,6 +60,17 @@ export function HostAnalytics({ domain }: { domain: string }) {
   const [logOpen, setLogOpen] = useState(false);
   const [logFilter, setLogFilter] = useState("");
   const [blockedTop, setBlockedTop] = useState<Record<string, "busy" | "done">>({});
+  // The traffic section is controlled so we can gate the polling TrafficChart on
+  // it: a collapsed (or background-tab) chart is unmounted, tearing down its
+  // interval, instead of kept alive behind display:none and polling forever.
+  const [trafficOpen, setTrafficOpen] = useState(false);
+  const [docVisible, setDocVisible] = useState(!document.hidden);
+  useEffect(() => {
+    const onVis = () => setDocVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+  const chartActive = trafficOpen && docVisible;
 
   // Fetch the host summary once a summary-backed section opens; refetch on range.
   useEffect(() => {
@@ -93,16 +104,16 @@ export function HostAnalytics({ domain }: { domain: string }) {
     <div className="host-analytics" style={{ marginTop: 18 }}>
       <div className="section-title" style={{ display: "flex", alignItems: "center", gap: 12 }}>
         Traffic &amp; logs
-        <div className="range-tabs" style={{ marginLeft: "auto" }}>
+        <div className="range-tabs" role="tablist" aria-label="Time range" style={{ marginLeft: "auto" }}>
           {RANGES.map((r) => (
-            <button key={r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
+            <button key={r} role="tab" aria-selected={range === r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
               {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
             </button>
           ))}
         </div>
       </div>
 
-      <Collapsible title="Traffic & errors" badge={<span className="pill n">{range}</span>} onFirstOpen={() => setNeedSummary(true)}>
+      <Collapsible title="Traffic & errors" badge={<span className="pill n">{range}</span>} open={trafficOpen} onToggle={setTrafficOpen} onFirstOpen={() => setNeedSummary(true)}>
         <div className="card-pad">
           <div className="stats" style={{ marginBottom: 14 }}>
             <Kpi label="Requests" value={summary ? summary.totalRequests.toLocaleString() : (loadingNote ?? "—")} />
@@ -110,12 +121,12 @@ export function HostAnalytics({ domain }: { domain: string }) {
             <Kpi label="Response p95" value={summary ? summary.p95 : "—"} suffix={summary ? "ms" : undefined} />
             <Kpi label="Error rate" value={summary ? `${summary.errorRate}%` : "—"} color={summary && summary.errorRate > 5 ? "var(--yellow)" : "var(--green)"} />
           </div>
-          <div className="range-tabs" style={{ marginBottom: 6 }}>
+          <div className="range-tabs" role="tablist" aria-label="Chart metric" style={{ marginBottom: 6 }}>
             {(["requests", "bandwidth"] as const).map((m) => (
-              <button key={m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>{m === "requests" ? "Requests" : "Bandwidth"}</button>
+              <button key={m} role="tab" aria-selected={metric === m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>{m === "requests" ? "Requests" : "Bandwidth"}</button>
             ))}
           </div>
-          <TrafficChart range={range} metric={metric} host={domain} />
+          {chartActive && <TrafficChart range={range} metric={metric} host={domain} />}
           {summary && (
             <div style={{ marginTop: 14 }}>
               <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Status codes</div>
@@ -170,29 +181,38 @@ export function HostAnalytics({ domain }: { domain: string }) {
 
 /** Live, host-scoped access log. Holds the SSE only while mounted (i.e. while the
  *  section is expanded), so collapsing it closes the stream. */
+/** A log line tagged with a stable, monotonic id assigned on arrival, so React
+ *  keys rows by identity rather than array index. Keying by index made every
+ *  prepend rewrite all ~200 rows (defeating the DOM diff and clearing any
+ *  in-progress text selection); with a stable id it inserts just the new row. */
+type KeyedLine = { id: number; entry: LogEntry };
+
 function HostLiveLog({ domain, filter, onClearFilter }: { domain: string; filter: string; onClearFilter: () => void }) {
-  const [lines, setLines] = useState<LogEntry[]>([]);
+  const [lines, setLines] = useState<KeyedLine[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false); pausedRef.current = paused;
+  const seqRef = useRef(0);
   const dom = domain.toLowerCase();
 
   useEffect(() => {
     let alive = true;
-    api.recentLogs(domain, 150).then((ls) => { if (alive) setLines(ls.filter((e) => e.host.toLowerCase() === dom)); }).catch(() => {});
+    api.recentLogs(domain, 150)
+      .then((ls) => { if (alive) setLines(ls.filter((e) => e.host.toLowerCase() === dom).map((entry) => ({ id: seqRef.current++, entry }))); })
+      .catch(() => {});
     const es = new EventSource("/api/logs/stream", { withCredentials: true });
     es.addEventListener("log", (e) => {
       if (pausedRef.current) return;
       try {
         const entry: LogEntry = JSON.parse((e as MessageEvent).data);
         if (entry.host.toLowerCase() !== dom) return; // this service only
-        setLines((p) => [entry, ...p].slice(0, 200));
+        setLines((p) => [{ id: seqRef.current++, entry }, ...p].slice(0, 200));
       } catch { /* ignore */ }
     });
     return () => es.close();
   }, [domain]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const f = filter.trim().toLowerCase();
-  const shown = f ? lines.filter((e) => e.ip.includes(f) || e.path.toLowerCase().includes(f) || String(e.status) === f) : lines;
+  const shown = f ? lines.filter(({ entry: e }) => e.ip.includes(f) || e.path.toLowerCase().includes(f) || String(e.status) === f) : lines;
 
   return (
     <div className="card-pad">
@@ -204,8 +224,8 @@ function HostLiveLog({ domain, filter, onClearFilter }: { domain: string; filter
       </div>
       <div className="code" style={{ border: "none", padding: 0, background: "none", lineHeight: 1.9, maxHeight: 420, overflow: "auto" }}>
         {shown.length === 0 && <div className="muted"><span className="spinner" /> {filter ? `No lines match "${filter}" yet…` : "Waiting for requests to this service…"}</div>}
-        {shown.map((e, i) => (
-          <div key={i}>
+        {shown.map(({ id, entry: e }) => (
+          <div key={id}>
             <span style={{ color: statusColor(e.status), fontWeight: 700 }}>{e.status}</span>{" "}
             {e.method.padEnd(4)} <span className="muted">{e.path}</span>{"  "}
             <span style={{ color: "var(--text-faint)" }}>{e.ip} · {e.ms}ms</span>

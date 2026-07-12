@@ -19,6 +19,7 @@ import { Logs } from "./pages/Logs.tsx";
 import { Login } from "./pages/Login.tsx";
 import { ChangePassword } from "./pages/ChangePassword.tsx";
 import { Enable2fa } from "./pages/Enable2fa.tsx";
+import { CommandPalette } from "./components/CommandPalette.tsx";
 
 export type RouteName =
   | "dashboard" | "services" | "host" | "wizard" | "certs"
@@ -48,9 +49,29 @@ function parseHash(): Route {
   }
   return { name: "dashboard" };
 }
-function routeHash(r: Route): string {
+export function routeHash(r: Route): string {
   if (r.name === "host") return r.hostId ? `#/host/${r.hostId}${r.tab ? `/${r.tab}` : ""}` : "#/host";
   return `#/${r.name}${r.tab ? `/${r.tab}` : ""}`;
+}
+
+// Per-route <title> so browser tabs / history / bookmarks are meaningful instead of a
+// single static "NginUX" everywhere. Host routes resolve to the service's name.
+function titleFor(r: Route, hosts: ProxyHost[]): string {
+  switch (r.name) {
+    case "services": return "Services · NginUX";
+    case "wizard": return "New service · NginUX";
+    case "certs": return "Certificates · NginUX";
+    case "logs": return "Logs · NginUX";
+    case "security": return "Security Center · NginUX";
+    case "useraccess": return "Users & Access · NginUX";
+    case "agents": return "Agents & API · NginUX";
+    case "settings": return "Settings · NginUX";
+    case "host": {
+      const h = hosts.find((x) => x.id === r.hostId);
+      return `${h?.name ?? "Service"} · NginUX`;
+    }
+    default: return "NginUX — reverse proxy";
+  }
 }
 
 export function App() {
@@ -65,6 +86,11 @@ export function App() {
   const [loadError, setLoadError] = useState(false);
   // Mobile drawer (no effect above the CSS breakpoint, where the sidebar is always shown).
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // ⌘K / Ctrl-K command palette.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // False until the first data load settles, so the Dashboard can show a skeleton
+  // instead of flashing the "expose your first service" hero over the seed hosts=[].
+  const [hostsLoaded, setHostsLoaded] = useState(false);
 
   // Check session on load.
   useEffect(() => {
@@ -78,6 +104,24 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  // Per-route document.title. Driven off `route` (not just navigate) so back/forward
+  // and deep links update the tab too; re-runs when a host's name arrives.
+  useEffect(() => {
+    document.title = titleFor(route, hosts);
+  }, [route, hosts]);
+
+  // ⌘K / Ctrl-K toggles the command palette from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const reload = useCallback(async () => {
     // Don't let a transient backend hiccup throw an unhandled rejection that
     // leaves the UI on a stale/empty shell - fail soft and keep what we have.
@@ -87,6 +131,7 @@ export function App() {
       setSettings(s);
       setLoadError(false);
     } catch { setLoadError(true); /* keep previous state; the Dashboard surfaces a retry, not a false empty state */ }
+    finally { setHostsLoaded(true); }
   }, []);
 
   // Load app data once signed in.
@@ -145,10 +190,11 @@ export function App() {
         tabIndex={drawerOpen ? 0 : -1}
         onClick={() => setDrawerOpen(false)}
       />
-      <Sidebar open={drawerOpen} hosts={hosts} route={route} navigate={navigate} theme={theme} user={user} onLogout={logout} />
+      <Sidebar open={drawerOpen} hosts={hosts} route={route} navigate={navigate} theme={theme} user={user} onLogout={logout} onClose={() => setDrawerOpen(false)} onOpenPalette={() => setPaletteOpen(true)} />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} hosts={hosts} navigate={navigate} />
       <div className="main">
         <Notifications />
-        {route.name === "dashboard" && <Dashboard hosts={hosts} navigate={navigate} loadError={loadError} onRetry={reload} />}
+        {route.name === "dashboard" && <Dashboard hosts={hosts} navigate={navigate} loadError={loadError} onRetry={reload} hostsLoaded={hostsLoaded} />}
         {route.name === "services" && <Services hosts={hosts} navigate={navigate} reload={reload} />}
         {route.name === "host" && route.hostId && <HostDetail hostId={route.hostId} navigate={navigate} reload={reload} tab={route.tab} />}
         {route.name === "wizard" && <Wizard settings={settings} navigate={navigate} reload={reload} />}

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { Route } from "../App.tsx";
 import { api, type Certificate } from "../api.ts";
-import type { ApplyResult, Preset, Settings } from "../types.ts";
+import type { ApplyResult, Preset, ProxyHost, Settings } from "../types.ts";
 import { Icon } from "../icons.tsx";
 import { ServiceIcon, iconUrlForSlug } from "../components/ServiceIcon.tsx";
+import { Field } from "../components/Field.tsx";
+import { Switch } from "../components/Switch.tsx";
 
 type CertChoice = "existing" | "dns-01" | "http-01" | "selfsigned";
 const MAX_CERT_ATTEMPTS = 3;
@@ -43,6 +45,11 @@ export function Wizard({
   const [testing, setTesting] = useState(false);
   const [sub, setSub] = useState("");
   const [subTouched, setSubTouched] = useState(false); // stop auto-suggesting once the user types
+  const [subError, setSubError] = useState<string | null>(null); // subdomain-in-use validation
+  const [hosts, setHosts] = useState<ProxyHost[]>([]); // existing services, to catch a duplicate address
+  const [createdHost, setCreatedHost] = useState<ProxyHost | null>(null); // the host just created (for the success actions)
+  const subRef = useRef<HTMLInputElement | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null); // the app-catalog radiogroup (for roving focus)
   const [ssl, setSsl] = useState(true);
   const [advCert, setAdvCert] = useState(false);
   const [certMethod, setCertMethod] = useState<CertChoice>("dns-01");
@@ -69,7 +76,16 @@ export function Wizard({
       setPreset(p.find((x) => x.id === "plex") ?? p[0]);
     });
     api.certificates().then(setCerts).catch(() => {});
+    // Existing services - so we can reject a duplicate address on step 3 before
+    // the server has to (and recover gracefully if it still 409s at create time).
+    api.listHosts().then(setHosts).catch(() => {});
   }, []);
+
+  // When a subdomain conflict bounces us back to step 3 (client- or server-side),
+  // move focus to the field the user has to fix. Runs after the step-3 inputs mount.
+  useEffect(() => {
+    if (step === 3 && subError) subRef.current?.focus();
+  }, [step, subError]);
 
   // Prefill the internal address with the selected app's usual scheme + port,
   // keeping whatever host the user has already typed (so picking Home Assistant
@@ -86,6 +102,17 @@ export function Wizard({
   const parsed = parseForward(forward);
   const domain = `${sub}.${base}`;
   const existingCert = sub ? certs.find((c) => c.domain === domain) ?? null : null;
+
+  // Step 3 -> 4: block a subdomain that's already taken by another service and keep
+  // the user on the address step (instead of erroring later on a step with no field).
+  const goToSecure = () => {
+    if (hosts.some((h) => h.domain === domain)) {
+      setSubError(`${domain} is already in use - pick another subdomain.`);
+      return;
+    }
+    setSubError(null);
+    setStep(4);
+  };
 
   // Smart default so the wizard always succeeds without scary failures:
   //  - reuse a cert that already exists for this exact domain, else
@@ -155,6 +182,7 @@ export function Wizard({
     setCertResult(null);
     setCertAttempt(0);
     setCertPhase("setup");
+    setCreatedHost(null);
     setStep(5);
     setCreating(true);
     const ctrl = new AbortController();
@@ -182,6 +210,8 @@ export function Wizard({
         enabled: true,
       });
       setApply(res.apply);
+      setCreatedHost(res.host);
+      setHosts((prev) => [...prev, res.host]); // keep the in-use list current for "Expose another"
       // Issue a trusted cert only when a Let's Encrypt method is chosen. "existing"
       // reuses the cert already on disk; "selfsigned" uses the bootstrap cert - both
       // need no issuance. A Let's Encrypt failure doesn't undo the service (it's live
@@ -191,15 +221,48 @@ export function Wizard({
       }
       await reload();
     } catch (e) {
-      // The create failed (e.g. nginx rejected the config and the host was rolled
-      // back). Drop back to the form so we don't show a green "Done", and surface
-      // the reason there so they can adjust and retry.
-      setApply({ ok: false, nginxAvailable: true, message: e instanceof Error ? e.message : "Failed to create service." });
-      setStep(4);
+      const message = e instanceof Error ? e.message : "Failed to create service.";
+      // A subdomain collision (server 409 "already in use") is a step-3 problem, not a
+      // step-4 one - bounce back to the address field (an effect focuses it) so the
+      // error lands where the fix is, instead of showing a domain error on a step with
+      // no domain field.
+      if (/in use|already exist|conflict|409|duplicate|taken/i.test(message)) {
+        setApply(null);
+        setSubError(`${domain} is already in use - pick another subdomain.`);
+        setStep(3);
+      } else {
+        // The create failed for another reason (e.g. nginx rejected the config and the
+        // host was rolled back). Drop back to the form so we don't show a green "Done",
+        // and surface the reason there so they can adjust and retry.
+        setApply({ ok: false, nginxAvailable: true, message });
+        setStep(4);
+      }
     } finally {
       setCreating(false);
       abortRef.current = null;
     }
+  };
+
+  // Reset back to a fresh run for "Expose another" on the success screen.
+  const resetWizard = () => {
+    setApply(null);
+    setCertResult(null);
+    setCertAttempt(0);
+    setCertPhase("setup");
+    setCreatedHost(null);
+    setTest(null);
+    setSubError(null);
+    setSub("");
+    setSubTouched(false);
+    setPreset(presets.find((p) => p.id === "plex") ?? presets[0] ?? null);
+    setStep(1);
+  };
+
+  // Stepper navigation: let the user click back to a completed step, but never skip
+  // ahead past unfilled steps, and freeze it while creating / on the done screen.
+  const goToStep = (n: number) => {
+    if (creating || step === 5) return;
+    if (n < step) { setSubError(null); setStep(n); }
   };
 
   return (
@@ -214,15 +277,9 @@ export function Wizard({
       </div>
       <div className="content">
         <div className="wizard-wrap">
-          <Stepper step={step} />
+          <Stepper step={step} goTo={goToStep} />
 
           {step === 1 && (() => {
-            const card = (p: Preset) => (
-              <div key={p.id} className={`preset${preset?.id === p.id ? " selected" : ""}`} onClick={() => setPreset(p)}>
-                <div className="emoji"><ServiceIcon iconUrl={iconUrlForSlug(p.icon)} size={28} /></div>
-                <div className="pname">{p.label}</div>
-              </div>
-            );
             const term = q.trim().toLowerCase();
             // Custom is pinned at the top as a distinct "start blank" row, so keep it
             // out of the app grid/search to avoid showing it twice.
@@ -230,6 +287,50 @@ export function Wizard({
             const apps = presets.filter((p) => p.id !== "custom");
             const matches = apps.filter((p) => `${p.label} ${p.id} ${p.category} ${p.notes}`.toLowerCase().includes(term));
             const cats = [...new Set(apps.map((p) => p.category))]; // preset order is already category-grouped
+            // Roving tabindex: exactly one tile in the radiogroup is Tab-reachable - the
+            // selected app if it's visible, else the first tile - and arrow keys move
+            // between them, so users don't Tab through ~90 items.
+            const visible = term ? matches : apps;
+            const activeId = preset && visible.some((p) => p.id === preset.id) ? preset.id : visible[0]?.id;
+            const onTileKey = (e: React.KeyboardEvent<HTMLButtonElement>, p: Preset) => {
+              if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPreset(p); return; }
+              const nav = ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Home", "End"];
+              if (!nav.includes(e.key)) return;
+              e.preventDefault();
+              const radios = Array.from(gridRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []);
+              if (!radios.length) return;
+              const cur = radios.indexOf(e.currentTarget);
+              let next = cur < 0 ? 0 : cur;
+              if (e.key === "ArrowRight" || e.key === "ArrowDown") next = Math.min(radios.length - 1, cur + 1);
+              else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = Math.max(0, cur - 1);
+              else if (e.key === "Home") next = 0;
+              else if (e.key === "End") next = radios.length - 1;
+              const el = radios[next];
+              if (!el) return;
+              el.focus();
+              const np = presets.find((x) => x.id === el.getAttribute("data-preset-id"));
+              if (np) setPreset(np);
+            };
+            const card = (p: Preset) => {
+              const selected = preset?.id === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  data-preset-id={p.id}
+                  tabIndex={p.id === activeId ? 0 : -1}
+                  className={`preset${selected ? " selected" : ""}`}
+                  style={{ font: "inherit", color: "inherit", width: "100%" }}
+                  onClick={() => setPreset(p)}
+                  onKeyDown={(e) => onTileKey(e, p)}
+                >
+                  <div className="emoji"><ServiceIcon iconUrl={iconUrlForSlug(p.icon)} size={28} /></div>
+                  <div className="pname">{p.label}</div>
+                </button>
+              );
+            };
             return (
               <div className="card wcard">
                 <h2>What do you want to expose?</h2>
@@ -254,7 +355,7 @@ export function Wizard({
                     <Icon.arrowRight className="pp-arrow" />
                   </div>
                 )}
-                <div className="preset-scroll">
+                <div className="preset-scroll" ref={gridRef} role="radiogroup" aria-label="Choose an app to expose">
                   {term
                     ? matches.length
                       ? <div className="preset-grid">{matches.map(card)}</div>
@@ -290,16 +391,19 @@ export function Wizard({
             <div className="card wcard">
               <h2>Where does it live?</h2>
               <p className="wsub">Tell us the internal address of your {preset?.label} on your network.</p>
-              <div className="field">
-                <label>Your internal service</label>
+              <Field label="Your internal service" hint="This stays on your network - only NginUX talks to it directly.">
                 <input
                   className="input"
                   value={forward}
-                  onChange={(e) => setForward(e.target.value)}
+                  onChange={(e) => {
+                    setForward(e.target.value);
+                    // The previous result vouched for the OLD address - drop it so a stale
+                    // green "reachable" banner can't keep endorsing an untested address.
+                    setTest(null);
+                  }}
                   placeholder="e.g. http://192.168.1.50:32400"
                 />
-                <div className="hint">This stays on your network - only NginUX talks to it directly.</div>
-              </div>
+              </Field>
               <button className="btn" onClick={runTest} disabled={!parsed || testing}>
                 {testing ? <span className="spinner" /> : <Icon.bolt />}
                 {testing ? "Testing…" : "Test connection"}
@@ -326,19 +430,29 @@ export function Wizard({
               <h2>What address should it have?</h2>
               <p className="wsub">Choose the web address people will use to reach it.</p>
               <div className="field">
-                <label>Subdomain</label>
+                <label htmlFor="wizard-subdomain">Subdomain</label>
                 <div className="input-group">
                   <input
+                    id="wizard-subdomain"
+                    ref={subRef}
                     className="input"
                     style={{ maxWidth: 200 }}
                     value={sub}
-                    onChange={(e) => { setSub(e.target.value.replace(/[^a-z0-9-]/gi, "").toLowerCase()); setSubTouched(true); }}
+                    onChange={(e) => { setSub(e.target.value.replace(/[^a-z0-9-]/gi, "").toLowerCase()); setSubTouched(true); setSubError(null); }}
                     placeholder={suggestSub(preset) || "subdomain"}
+                    aria-describedby="wizard-subdomain-hint"
+                    aria-invalid={subError ? true : undefined}
                     autoFocus
                   />
-                  <input className="input" style={{ maxWidth: 200, color: "var(--text-dim)" }} value={`.${base}`} disabled />
+                  <input className="input" style={{ maxWidth: 200, color: "var(--text-dim)" }} value={`.${base}`} disabled aria-hidden="true" tabIndex={-1} />
                 </div>
-                <div className="hint">
+                {subError && (
+                  <div className="test-result bad" style={{ marginTop: 10 }}>
+                    <Icon.x />
+                    <div>{subError}</div>
+                  </div>
+                )}
+                <div className="hint" id="wizard-subdomain-hint">
                   Full address: <b style={{ color: "var(--text)" }}>https://{sub || "…"}.{base}</b>
                 </div>
               </div>
@@ -346,7 +460,7 @@ export function Wizard({
                 <button className="btn btn-ghost" onClick={() => setStep(2)}>
                   <Icon.arrowLeft /> Back
                 </button>
-                <button className="btn btn-primary" disabled={!sub} onClick={() => setStep(4)}>
+                <button className="btn btn-primary" disabled={!sub} onClick={goToSecure}>
                   Continue <Icon.arrowRight />
                 </button>
               </div>
@@ -375,15 +489,17 @@ export function Wizard({
                     Advanced - choose certificate method
                   </div>
                   {advCert && (
-                    <div className="field" style={{ marginTop: 10, marginBottom: 0 }}>
-                      <select className="input" value={certMethod} onChange={(e) => setCertMethod(e.target.value as CertChoice)}>
-                        {existingCert && (
-                          <option value="existing">Use existing - {existingCert.domain} ({existingCert.method === "selfsigned" ? "self-signed" : existingCert.issuer || "Let's Encrypt"})</option>
-                        )}
-                        {hasDnsProvider && <option value="dns-01">Let's Encrypt (DNS) - trusted, no open ports needed</option>}
-                        <option value="http-01">Let's Encrypt (HTTP) - trusted, needs port 80 + public DNS</option>
-                        <option value="selfsigned">Self-signed - instant, not trusted</option>
-                      </select>
+                    <div style={{ marginTop: 10 }}>
+                      <Field label="Certificate method">
+                        <select className="input" value={certMethod} onChange={(e) => setCertMethod(e.target.value as CertChoice)}>
+                          {existingCert && (
+                            <option value="existing">Use existing - {existingCert.domain} ({existingCert.method === "selfsigned" ? "self-signed" : existingCert.issuer || "Let's Encrypt"})</option>
+                          )}
+                          {hasDnsProvider && <option value="dns-01">Let's Encrypt (DNS) - trusted, no open ports needed</option>}
+                          <option value="http-01">Let's Encrypt (HTTP) - trusted, needs port 80 + public DNS</option>
+                          <option value="selfsigned">Self-signed - instant, not trusted</option>
+                        </select>
+                      </Field>
                     </div>
                   )}
                 </>
@@ -445,13 +561,31 @@ export function Wizard({
                       </div>
                     </div>
                   )}
-                  <div className="url-box">
-                    🔒 https://{sub}.{base}
-                  </div>
-                  <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 8 }}>
-                    <button className="btn btn-primary" onClick={() => navigate({ name: "dashboard" })}>
+                  {apply?.ok && (
+                    <a
+                      className="url-box"
+                      href={`https://${domain}`}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      style={{ color: "var(--text)", textDecoration: "none" }}
+                    >
+                      🔒 https://{sub}.{base}
+                    </a>
+                  )}
+                  <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
+                    {apply?.ok && createdHost && (
+                      <button className="btn btn-primary" onClick={() => navigate({ name: "host", hostId: createdHost.id })}>
+                        <Icon.lock /> Set up protection
+                      </button>
+                    )}
+                    <button className={apply?.ok ? "btn" : "btn btn-primary"} onClick={() => navigate({ name: "dashboard" })}>
                       Go to dashboard
                     </button>
+                    {apply?.ok && (
+                      <button className="btn btn-ghost" onClick={resetWizard}>
+                        Expose another
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -463,17 +597,42 @@ export function Wizard({
   );
 }
 
-function Stepper({ step }: { step: number }) {
+function Stepper({ step, goTo }: { step: number; goTo: (n: number) => void }) {
+  const inlineFlex = { display: "flex", alignItems: "center", gap: 9 } as const;
   return (
     <div className="stepper">
       {STEPS.map((label, i) => {
         const n = i + 1;
         const cls = n < step ? "done" : n === step ? "active" : "";
-        return (
-          <div key={label} className={`step ${cls}`} style={{ flex: i < STEPS.length - 1 ? 1 : 0 }}>
-            <div className="step-num">{n < step ? "✓" : n}</div>
+        const done = n < step;
+        const body = (
+          <>
+            <div className="step-num">{done ? "✓" : n}</div>
             <div className="step-label">{label}</div>
-            {i < STEPS.length - 1 && <div className={`step-line ${n < step ? "done" : ""}`} />}
+          </>
+        );
+        return (
+          <div
+            key={label}
+            className={`step ${cls}`}
+            style={{ flex: i < STEPS.length - 1 ? 1 : 0 }}
+            aria-current={n === step ? "step" : undefined}
+          >
+            {done ? (
+              // Completed steps are clickable to jump back; future steps are not, so
+              // the user can't skip ahead past a step they haven't filled in.
+              <button
+                type="button"
+                onClick={() => goTo(n)}
+                aria-label={`Back to step ${n}: ${label}`}
+                style={{ ...inlineFlex, background: "none", border: "none", padding: 0, margin: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
+              >
+                {body}
+              </button>
+            ) : (
+              <div style={inlineFlex}>{body}</div>
+            )}
+            {i < STEPS.length - 1 && <div className={`step-line ${done ? "done" : ""}`} />}
           </div>
         );
       })}
@@ -501,7 +660,7 @@ function Toggle({
         <div className="t">{title}</div>
         <div className="d">{desc}</div>
       </div>
-      <button className={`switch${on ? " on" : ""}`} onClick={() => set(!on)} />
+      <Switch checked={on} onChange={set} label={title} />
     </div>
   );
 }

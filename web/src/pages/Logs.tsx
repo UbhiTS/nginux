@@ -7,29 +7,94 @@ import { StatusCodeBars, TopSourceIps, CountryBars } from "../components/Analyti
 import { statusColor, fmtBytes } from "../format.ts";
 
 const RANGES = ["1h", "4h", "1d", "7d", "30d", "live"];
+const METRICS = ["requests", "bandwidth"] as const;
+type Metric = (typeof METRICS)[number];
+
+// View state (range / metric / filter) lives in the URL hash so a refresh, a
+// shared link, or a map-picked IP filter is bookmarkable — mirroring how App
+// persists a page's sub-tab. We keep it inside a single hash path segment
+// (#/logs/<params>) so App's own `#/<name>[/<tab>]` router still recognises the
+// page (parts[0] === "logs") and never navigates away.
+interface LogsView { range: string; metric: Metric; filter: string; }
+const DEFAULT_VIEW: LogsView = { range: "1h", metric: "requests", filter: "" };
+
+function readView(): LogsView {
+  // Everything after "#/logs/" is our encoded params; tolerate a bare "#/logs".
+  const seg = window.location.hash.replace(/^#\/?logs\/?/, "");
+  if (!seg) return { ...DEFAULT_VIEW };
+  const p = new URLSearchParams(seg);
+  const range = p.get("range");
+  const metric = p.get("metric");
+  return {
+    range: range && RANGES.includes(range) ? range : DEFAULT_VIEW.range,
+    metric: metric === "bandwidth" ? "bandwidth" : "requests",
+    filter: p.get("filter") ?? "",
+  };
+}
+
+function writeView(v: LogsView) {
+  const p = new URLSearchParams();
+  if (v.range !== DEFAULT_VIEW.range) p.set("range", v.range);
+  if (v.metric !== DEFAULT_VIEW.metric) p.set("metric", v.metric);
+  if (v.filter) p.set("filter", v.filter);
+  const qs = p.toString();
+  // Only touch the hash while we're actually on the logs route, and use
+  // replaceState so param tweaks don't spam the history stack (App does the same
+  // for sub-tab switches). replaceState doesn't fire hashchange -> no feedback loop.
+  if (!/^#\/?logs(\/|$)/.test(window.location.hash)) return;
+  const next = `#/logs${qs ? `/${qs}` : ""}`;
+  if (next !== window.location.hash) history.replaceState(null, "", next);
+}
 
 export function Logs() {
+  const initial = readView();
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
+  // Track the metrics load explicitly: a fetch error (or a role without metrics
+  // permission) must surface an inline note + Retry, not silently erase the
+  // whole analytics half.
+  const [metricsError, setMetricsError] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [geoip, setGeoip] = useState<GeoipStatus | null>(null);
   const [lines, setLines] = useState<LogEntry[]>([]);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(initial.filter);
   const [paused, setPaused] = useState(false);
-  const [range, setRange] = useState("1h");
-  const [metric, setMetric] = useState<"requests" | "bandwidth">("requests");
+  const [range, setRange] = useState(initial.range);
+  const [metric, setMetric] = useState<Metric>(initial.metric);
   const [homeCountry, setHomeCountry] = useState("");
   const [blockedTop, setBlockedTop] = useState<Record<string, "busy" | "done">>({});
   const pausedRef = useRef(false);
   const logCardRef = useRef<HTMLDivElement>(null);
   pausedRef.current = paused;
 
+  // Mirror range/metric/filter into the URL hash whenever they change.
+  useEffect(() => { writeView({ range, metric, filter }); }, [range, metric, filter]);
+
+  // Sync back from the hash on external changes (back/forward, a fresh nav to
+  // #/logs from the sidebar, or a shared deep link opened in place).
+  useEffect(() => {
+    const onHash = () => {
+      if (!/^#\/?logs(\/|$)/.test(window.location.hash)) return;
+      const v = readView();
+      setRange(v.range);
+      setMetric(v.metric);
+      setFilter(v.filter);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   // Range-scoped summary: every analytics panel reflects the selected window.
   useEffect(() => {
     let alive = true;
-    const pull = () => api.metricsSummary(range).then((s) => { if (alive) setSummary(s); }).catch(() => {});
+    const pull = () => api.metricsSummary(range)
+      .then((s) => { if (alive) { setSummary(s); setMetricsError(false); } })
+      .catch(() => { if (alive) setMetricsError(true); });
     pull();
     const poll = setInterval(pull, range === "live" ? 3000 : 6000);
     return () => { alive = false; clearInterval(poll); };
-  }, [range]);
+  }, [range, reloadNonce]);
+
+  const retryMetrics = () => { setMetricsError(false); setReloadNonce((n) => n + 1); };
 
   // Live tail + GeoIP status + home country (independent of the analytics range).
   useEffect(() => {
@@ -83,14 +148,14 @@ export function Logs() {
       <div className="topbar">
         <h1>Logs</h1>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div className="range-tabs">
-            {(["requests", "bandwidth"] as const).map((m) => (
-              <button key={m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>{m === "requests" ? "Requests" : "Bandwidth"}</button>
+          <div className="range-tabs" role="tablist" aria-label="Metric">
+            {METRICS.map((m) => (
+              <button key={m} role="tab" aria-selected={metric === m} className={`range${metric === m ? " active" : ""}`} onClick={() => setMetric(m)}>{m === "requests" ? "Requests" : "Bandwidth"}</button>
             ))}
           </div>
-          <div className="range-tabs">
+          <div className="range-tabs" role="tablist" aria-label="Time range">
             {RANGES.map((r) => (
-              <button key={r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
+              <button key={r} role="tab" aria-selected={range === r} className={`range${range === r ? " active" : ""}`} onClick={() => setRange(r)}>
                 {r === "live" ? <><span className="dot g" style={{ marginRight: 5 }} />live</> : r}
               </button>
             ))}
@@ -98,6 +163,13 @@ export function Logs() {
         </div>
       </div>
       <div className="content">
+        {metricsError && !summary && (
+          <div className="card state-note error" role="alert" style={{ marginBottom: 18 }}>
+            <Icon.info />
+            <div>Metrics aren't available.</div>
+            <button className="btn btn-sm" onClick={retryMetrics}>Retry</button>
+          </div>
+        )}
         {summary && (
           <div className="stats">
             <div className="card stat"><div className="label">Requests</div><div className="value">{summary.totalRequests.toLocaleString()}</div></div>

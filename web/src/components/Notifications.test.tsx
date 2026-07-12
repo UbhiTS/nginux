@@ -101,12 +101,14 @@ describe("Notifications", () => {
     expect(localStorage.getItem("nginux_ignored_notifications")).toBeNull();
   });
 
-  it("hides a toast and persists the id when Ignore is clicked", async () => {
+  it("hides a toast and persists the id when Don't show again is clicked", async () => {
     mockNotifications([info]);
     render(<Notifications />);
 
-    const ignore = await screen.findByRole("button", { name: "Ignore" });
-    expect(ignore).toHaveAttribute("title", "Don't show this again");
+    // The permanent-suppress meaning now lives in the button label (was "Ignore",
+    // with the meaning hidden in a tooltip).
+    const ignore = await screen.findByRole("button", { name: "Don't show again" });
+    expect(ignore).toHaveAttribute("title", "Suppressed for good on this browser");
 
     await userEvent.click(ignore);
 
@@ -119,13 +121,13 @@ describe("Notifications", () => {
     ).toContain("n-info");
   });
 
-  it("hides the Ignore action for a non-dismissible notification but keeps Dismiss", async () => {
+  it("hides the suppress action for a non-dismissible notification but keeps Dismiss", async () => {
     mockNotifications([critical]);
     render(<Notifications />);
 
     await screen.findByText("Proxy is down");
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Ignore" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Don't show again" })).not.toBeInTheDocument();
   });
 
   it("filters out notifications whose id was previously ignored", async () => {
@@ -138,11 +140,26 @@ describe("Notifications", () => {
     expect(screen.queryByText("New version available")).not.toBeInTheDocument();
   });
 
-  it("renders nothing when there are no notifications", async () => {
+  it("keeps a persistent, empty polite live region mounted when there are no notifications", async () => {
     mockNotifications([]);
     render(<Notifications />);
 
     await waitFor(() => expect(api.notifications).toHaveBeenCalled());
-    expect(screen.queryByRole("region", { name: "Notifications" })).not.toBeInTheDocument();
+    // The region stays mounted (so a later poll's toast lands in an already-observed
+    // live region and gets announced) - it's just empty.
+    const region = screen.getByRole("region", { name: "Notifications" });
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(within(region).queryByText("Dismiss")).not.toBeInTheDocument();
+  });
+
+  it("marks the live region polite so poll-driven toasts are announced", async () => {
+    mockNotifications([warning]);
+    render(<Notifications />);
+
+    await screen.findByText("Certificate expiring soon");
+    const region = screen.getByRole("region", { name: "Notifications" });
+    expect(region).toHaveAttribute("aria-live", "polite");
+    // Critical toasts still carry their own assertive alert role.
+    expect(within(region).queryByRole("alert")).not.toBeInTheDocument();
   });
 });

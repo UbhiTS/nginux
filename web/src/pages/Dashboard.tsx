@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Route } from "../App.tsx";
+import { routeHash, type Route } from "../App.tsx";
 import { api, certForHost, type MetricsSummary, type Certificate } from "../api.ts";
 import type { ProxyHost, Topology as TopologyData } from "../types.ts";
 import { Icon } from "../icons.tsx";
@@ -7,16 +7,46 @@ import { NetworkTraffic } from "../components/NetworkTraffic.tsx";
 
 const fmtCount = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
 
+// A drill-down count rendered as a real link (href + keyboard-operable) instead of the
+// old bare <a onClick> that had no href/role and couldn't be reached by keyboard.
+function DrillLink({
+  route,
+  navigate,
+  children,
+  style,
+}: {
+  route: Route;
+  navigate: (r: Route) => void;
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <a
+      href={routeHash(route)}
+      style={{ textDecoration: "underline", cursor: "pointer", color: "inherit", ...style }}
+      onClick={(e) => {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        navigate(route);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
 export function Dashboard({
   hosts,
   navigate,
   loadError = false,
   onRetry,
+  hostsLoaded = true,
 }: {
   hosts: ProxyHost[];
   navigate: (r: Route) => void;
   loadError?: boolean;
   onRetry?: () => void;
+  hostsLoaded?: boolean;
 }) {
   const [topology, setTopology] = useState<TopologyData | null>(null);
   const [summary, setSummary] = useState<MetricsSummary | null>(null);
@@ -56,6 +86,32 @@ export function Dashboard({
     ? Math.min(...trustedValid.map((h) => certForHost(h, certs)!.daysRemaining ?? 99999))
     : null;
   const unprotected = hosts.filter((h) => h.ssl && !h.requireLogin).length;
+
+  // Still waiting on the first host load: show a skeleton, not the "expose your first
+  // service" hero. App seeds hosts=[] before the fetch settles, so gating on hostsLoaded
+  // stops the hero from flashing for users who actually have services.
+  if (!hostsLoaded && hosts.length === 0) {
+    return (
+      <>
+        <div className="topbar">
+          <h1>Dashboard</h1>
+        </div>
+        <div className="content">
+          <div className="stats">
+            {[0, 1, 2, 3].map((i) => (
+              <div className="card stat skeleton-row" key={i} aria-hidden="true">
+                <div className="skeleton skeleton-text" style={{ width: "55%" }} />
+                <div className="skeleton skeleton-text" style={{ width: "35%", height: 28, marginTop: 10 }} />
+                <div className="skeleton skeleton-text" style={{ width: "70%", marginTop: 10 }} />
+              </div>
+            ))}
+          </div>
+          <div className="card skeleton" style={{ height: 260, marginTop: 16 }} aria-hidden="true" />
+          <span className="sr-only" role="status">Loading dashboard…</span>
+        </div>
+      </>
+    );
+  }
 
   // Fresh install: a welcoming hero beats a grid of zeros + an empty map.
   if (hosts.length === 0) {
@@ -122,7 +178,9 @@ export function Dashboard({
               {needsAttention > 0 ? (
                 <>
                   <span className="dot y" />
-                  <span style={{ color: "var(--yellow)" }}>{needsAttention} need attention</span>
+                  <DrillLink route={{ name: "services" }} navigate={navigate} style={{ color: "var(--yellow)" }}>
+                    {needsAttention} need attention
+                  </DrillLink>
                 </>
               ) : paused > 0 ? (
                 <>
@@ -144,9 +202,15 @@ export function Dashboard({
               {trustedValid.length} <small>/ {sslHosts.length}</small>
             </div>
             <div className="trend" style={{ color: needCert > 0 ? "var(--yellow)" : "var(--text-dim)" }}>
-              {needCert > 0
-                ? `${needCert} need a trusted cert`
-                : nextRenewal !== null ? `Next renewal in ${nextRenewal} days` : "-"}
+              {needCert > 0 ? (
+                <DrillLink route={{ name: "certs" }} navigate={navigate} style={{ color: "var(--yellow)" }}>
+                  {needCert} need a trusted cert
+                </DrillLink>
+              ) : nextRenewal !== null ? (
+                `Next renewal in ${nextRenewal} days`
+              ) : (
+                "-"
+              )}
             </div>
           </div>
 
@@ -173,9 +237,9 @@ export function Dashboard({
             </div>
             <div className="trend" style={{ color: unprotected ? "var(--yellow)" : "var(--text-dim)" }}>
               {unprotected ? (
-                <a style={{ cursor: "pointer", textDecoration: "underline" }} onClick={() => navigate({ name: "security", tab: "exposure" })}>
+                <DrillLink route={{ name: "security", tab: "exposure" }} navigate={navigate}>
                   {unprotected} service{unprotected > 1 ? "s" : ""} unprotected
-                </a>
+                </DrillLink>
               ) : (
                 "Nothing exposed without a login"
               )}

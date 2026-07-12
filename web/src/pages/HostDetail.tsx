@@ -8,6 +8,8 @@ import { CertDetailModal } from "../components/CertDetailModal.tsx";
 import { ConfigDiffModal } from "../components/ConfigDiffModal.tsx";
 import { ServiceIcon } from "../components/ServiceIcon.tsx";
 import { HostAnalytics } from "../components/HostAnalytics.tsx";
+import { Switch } from "../components/Switch.tsx";
+import { days } from "../format.ts";
 
 const banner = {
   online: { cls: "", icon: <Icon.check />, title: "Working. Everything looks healthy." },
@@ -44,6 +46,12 @@ export function HostDetail({
   const [presetOpen, setPresetOpen] = useState(false);
   const [certDetail, setCertDetail] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
+  // A failed Pause/Resume or Delete surfaces here (both are fire-and-forget from
+  // a click, so without a catch a rejection would be swallowed silently).
+  const [actionErr, setActionErr] = useState("");
+  // When leaving a dirty edit form we hold the pending navigation until the
+  // "Discard unsaved changes?" dialog is answered.
+  const [pendingLeave, setPendingLeave] = useState<null | (() => void)>(null);
 
   // Each refetch bumps a generation id; a response only applies if it's still the
   // latest. Otherwise switching services while a fetch is in flight could render
@@ -74,7 +82,23 @@ export function HostDetail({
   useEffect(() => { if (editing && host) setDraft((d) => d ?? host); }, [editing, host]);
 
   const startEdit = () => { setDraft(host); setSaveErr(""); navigate({ name: "host", hostId, tab: "edit" }, true); };
-  const cancelEdit = () => { setDraft(null); setSaveErr(""); navigate({ name: "host", hostId }, true); };
+  const doCancel = () => { setDraft(null); setSaveErr(""); navigate({ name: "host", hostId }, true); };
+  // Has the ~30-field edit form been touched? Compared against the loaded host so
+  // an untouched form leaves instantly and a dirty one prompts before discarding.
+  const dirty = editing && !!draft && !!host && JSON.stringify(draft) !== JSON.stringify(host);
+  // Guard any action that would abandon the edit form. Clean form (or not
+  // editing) → run now; dirty → hold the action behind the discard dialog.
+  const attemptLeave = (proceed: () => void) => {
+    if (dirty) setPendingLeave(() => proceed);
+    else proceed();
+  };
+  const cancelEdit = () => attemptLeave(doCancel);
+  // "Back": step through history when we arrived from another in-app view,
+  // otherwise fall back to this service's logical parent (the Services list).
+  const goBack = () => {
+    if (window.history.length > 1) window.history.back();
+    else navigate({ name: "services" });
+  };
   const saveEdit = async () => {
     if (!draft) return;
     setSaving(true);
@@ -118,23 +142,30 @@ export function HostDetail({
 
   const remove = async () => {
     setDeleting(true);
+    setActionErr("");
     try {
       await api.deleteHost(host.id);
       await reload();
       navigate({ name: "services" });
+    } catch (e) {
+      setConfirmDel(false);
+      setActionErr(e instanceof Error ? e.message : "Couldn't remove this service.");
     } finally {
       setDeleting(false);
     }
   };
 
-  // Pause/serve this service. Disabling drops its nginx server block so the
+  // Pause/serve this service. Pausing drops its nginx server block so the
   // public site stops responding; the config (and this page) stays intact.
   const toggleEnabled = async () => {
     setToggling(true);
+    setActionErr("");
     try {
       await api.updateHost(host.id, { enabled: !host.enabled });
       await reload();
       refetch();
+    } catch (e) {
+      setActionErr(e instanceof Error ? e.message : (host.enabled ? "Couldn't pause this service." : "Couldn't resume this service."));
     } finally {
       setToggling(false);
     }
@@ -143,7 +174,7 @@ export function HostDetail({
   return (
     <>
       <div className="topbar">
-        <button className="btn btn-ghost btn-sm" aria-label="Back to dashboard" onClick={() => navigate({ name: "dashboard" })}>
+        <button className="btn btn-ghost btn-sm" aria-label="Back" onClick={() => attemptLeave(goBack)}>
           <Icon.arrowLeft />
         </button>
         <h1>
@@ -169,7 +200,7 @@ export function HostDetail({
         )}
         <button className="btn" onClick={toggleEnabled} disabled={toggling}>
           {toggling ? <span className="spinner" /> : null}
-          {host.enabled ? "Disable" : "Enable"}
+          {host.enabled ? "Pause" : "Resume"}
         </button>
         <button className="btn" onClick={editing ? cancelEdit : startEdit}>
           {editing ? "Cancel" : "Edit"}
@@ -191,11 +222,29 @@ export function HostDetail({
         />
       )}
 
+      {pendingLeave && (
+        <ConfirmDialog
+          danger
+          title="Discard unsaved changes?"
+          message={<>You have unsaved edits to <b>{host.name}</b>. Leaving now discards them.</>}
+          confirmLabel="Discard changes"
+          cancelLabel="Keep editing"
+          onConfirm={() => { const go = pendingLeave; setPendingLeave(null); go(); }}
+          onCancel={() => setPendingLeave(null)}
+        />
+      )}
+
       {certDetail && cert && (
         <CertDetailModal cert={cert} onClose={() => setCertDetail(false)} onChanged={refetch} />
       )}
 
       <div className="content">
+        {actionErr && (
+          <div className="state-note error" role="alert" style={{ marginBottom: 18 }}>
+            <Icon.alert />
+            <div>{actionErr}</div>
+          </div>
+        )}
         <div className={`summary-banner ${host.enabled ? b.cls : "warn"}`}>
           <div className="big-check">{host.enabled ? b.icon : <Icon.alert />}</div>
           <div>
@@ -203,7 +252,7 @@ export function HostDetail({
             <div className="sd">
               {host.enabled ? (
                 <>
-                  {!host.ssl ? "Served over HTTP - not encrypted" : certDays !== null ? `Certificate valid for ${certDays} days` : "No certificate yet"} ·{" "}
+                  {!host.ssl ? "Served over HTTP - not encrypted" : certDays !== null ? `Certificate valid for ${days(certDays)}` : "No certificate yet"} ·{" "}
                   {host.require2fa
                     ? "Protected by login + 2FA"
                     : host.requireLogin
@@ -211,7 +260,7 @@ export function HostDetail({
                       : "No NginUX login required"}
                 </>
               ) : (
-                <>Its nginx config is removed while paused. Click <b>Enable</b> to serve it again.</>
+                <>Its nginx config is removed while paused. Click <b>Resume</b> to serve it again.</>
               )}
             </div>
           </div>
@@ -279,12 +328,19 @@ export function HostDetail({
                   </span>
                 </div>
               </div>
-              <div className={`adv-toggle${advOpen ? " open" : ""}`} onClick={() => setAdvOpen((o) => !o)}>
+              <button
+                type="button"
+                className={`adv-toggle${advOpen ? " open" : ""}`}
+                aria-expanded={advOpen}
+                aria-controls="generated-nginx-config"
+                onClick={() => setAdvOpen((o) => !o)}
+                style={{ width: "100%", background: "none", border: "none", font: "inherit", textAlign: "left" }}
+              >
                 <Icon.chevron className="chev" />
                 Advanced - view generated Nginx config
-              </div>
+              </button>
               {advOpen && (
-                <div className="adv-body">
+                <div className="adv-body" id="generated-nginx-config">
                   <div className="code">{config}</div>
                   <div className="info-line" style={{ marginTop: 12 }}>
                     <Icon.info />
@@ -344,7 +400,7 @@ export function HostDetail({
                     </div>
                     <div className="kv">
                       <span className="k">Expires in</span>
-                      <span className="v">{certDays !== null ? `${certDays} days` : "-"}</span>
+                      <span className="v">{certDays !== null ? days(certDays) : "-"}</span>
                     </div>
                     <div className="kv">
                       <span className="k">Issuer</span>
@@ -363,12 +419,12 @@ export function HostDetail({
             <div className="card">
               <div className="card-head">Protection</div>
               <div className="card-pad">
-                <Check ok={host.ssl} label="HTTPS encryption" />
+                <Check ok={host.ssl} label="HTTPS encryption" wrong={host.ssl && cert?.status === "expired"} />
                 <Check ok={host.requireLogin} label="Login required" />
                 <Check ok={host.require2fa} label="2FA enforced" />
                 <Check ok={host.countryLock} label="Country lock (GeoIP)" />
                 <Check ok={host.securityHeaders} label="Security headers" />
-                <Check ok={host.hsts} label="HSTS" />
+                <Check ok={host.hsts} label="HSTS" wrong={host.hsts && !host.ssl} />
                 <Check ok={host.rateLimit} label="Rate limiting" />
                 <Check ok={host.blockExploits} label="Exploit/bot blocking" />
                 {host.maintenanceMode && <div className="check-line warn"><Icon.alert />Maintenance mode ON</div>}
@@ -585,11 +641,15 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
   }) => (
     <div className={`switch-row${nested ? " switch-nested" : ""}`}>
       <div className="sw-text">
-        <div className="t">{label}</div>
+        <div className="t" id={`sw-${String(k)}`}>{label}</div>
         <div className="d">{desc}</div>
         {req && !met && <div className="sw-req"><Icon.alert />{req}</div>}
       </div>
-      <button className={`switch${draft[k] ? " on" : ""}`} onClick={onClick ?? (() => set({ [k]: !draft[k] } as Partial<ProxyHost>))} />
+      <Switch
+        checked={!!draft[k]}
+        labelledBy={`sw-${String(k)}`}
+        onChange={(next) => (onClick ? onClick() : set({ [k]: next } as Partial<ProxyHost>))}
+      />
     </div>
   );
   return (
@@ -794,7 +854,18 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
           <div>{error}</div>
         </div>
       )}
-      <div className="wnav">
+      <div
+        className="wnav"
+        style={{
+          position: "sticky",
+          bottom: 0,
+          background: "var(--bg-elev)",
+          borderTop: "1px solid var(--border)",
+          borderRadius: "0 0 var(--radius) var(--radius)",
+          margin: "24px -32px 0",
+          padding: "16px 32px",
+        }}
+      >
         <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
         <button className="btn" onClick={() => setShowDiff(true)} disabled={saving}>Preview changes</button>
         <button className="btn btn-primary" onClick={onSave} disabled={saving}>{saving ? <span className="spinner" /> : null}Save changes</button>
@@ -813,10 +884,25 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
   );
 }
 
-function Check({ ok, label }: { ok: boolean; label: string }) {
+// Three tones for a protection row:
+//  - on        → green check
+//  - off       → dim neutral dash (an *unset* optional hardening is not broken,
+//                so it must not read as a red error)
+//  - wrong     → red ✗, reserved for genuine misconfigurations (e.g. an expired
+//                certificate, or HSTS enabled without HTTPS)
+function Check({ ok, label, wrong = false }: { ok: boolean; label: string; wrong?: boolean }) {
+  const tone = wrong ? "bad" : ok ? "ok" : "off";
   return (
-    <div className={`check-line ${ok ? "ok" : "bad"}`}>
-      {ok ? <Icon.check /> : <Icon.x />}
+    <div className={`check-line ${tone}`} style={tone === "off" ? { color: "var(--text-faint)" } : undefined}>
+      {wrong ? (
+        <Icon.x />
+      ) : ok ? (
+        <Icon.check />
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ color: "var(--text-faint)" }} aria-hidden="true">
+          <path d="M6 12h12" strokeLinecap="round" />
+        </svg>
+      )}
       {label}
     </div>
   );

@@ -79,9 +79,18 @@ export function Avatar({ userId, name, editable = false, onChanged }: Props) {
       tabIndex={editable ? 0 : undefined}
       onKeyDown={editable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } } : undefined}
     >
-      {showImg
-        ? <img src={api.avatarUrl(userId, version)} alt="" onError={() => setShowImg(false)} />
-        : <span>{initial}</span>}
+      {/* Initials underlay always renders, so there's never a blank avatar while the
+          image is still loading (or if it never resolves). The <img> paints over it. */}
+      <span aria-hidden="true">{initial}</span>
+      {showImg && (
+        <img
+          src={api.avatarUrl(userId, version)}
+          alt=""
+          loading="lazy"
+          onError={() => setShowImg(false)}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      )}
       {editable && <span className="avatar-cam">{busy ? <span className="spinner" /> : <Icon.camera />}</span>}
       {editable && <input ref={fileRef} type="file" hidden accept="image/*" onChange={onPick} />}
     </div>

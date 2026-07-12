@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { api } from "../api.ts";
 import type { ConfigPreview, ProxyHost } from "../types.ts";
 import { Icon } from "../icons.tsx";
+import { useFocusTrap } from "../hooks.ts";
 
 const statusPill: Record<string, string> = { added: "g", modified: "y", removed: "r" };
 
@@ -19,6 +20,10 @@ export function ConfigDiffModal({ mode, id, host, onClose, onConfirm, confirmLab
   const [preview, setPreview] = useState<ConfigPreview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const titleId = useId();
+  // Focus moved in, trapped, restored on close; Escape closes (replaces the old
+  // window keydown listener that left Tab walking the page behind the backdrop).
+  const ref = useFocusTrap<HTMLDivElement>(true, onClose);
 
   useEffect(() => {
     let alive = true;
@@ -30,18 +35,12 @@ export function ConfigDiffModal({ mode, id, host, onClose, onConfirm, confirmLab
     return () => { alive = false; };
   }, [mode, id, host]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="card card-pad modal-card" role="dialog" aria-modal="true" aria-label="Configuration changes preview" style={{ width: 720, maxWidth: "100%" }} onClick={(e) => e.stopPropagation()}>
+      <div ref={ref} className="card card-pad modal-card" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} style={{ width: 720, maxWidth: "100%" }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
           <Icon.logs className="acct-ic" />
-          <div style={{ fontWeight: 650, fontSize: 15 }}>Configuration changes</div>
+          <div id={titleId} className="modal-title">Configuration changes</div>
         </div>
         <p className="muted" style={{ fontSize: 12.5, marginBottom: 14 }}>
           Exactly what will be written to nginx. Nothing is applied yet - nginx validates and reloads only when you confirm, and an invalid config is rejected and rolled back automatically.
