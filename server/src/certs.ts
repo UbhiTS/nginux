@@ -6,6 +6,7 @@ import forge from "node-forge";
 import acme from "acme-client";
 import { db, getSettings } from "./db.ts";
 import { getDnsProvider, recordName } from "./dns.ts";
+import { registrableDomain } from "./registrable.ts";
 import { logEvent } from "./auth.ts";
 import { applyConfig } from "./nginx.ts";
 import { assertWithin } from "./validate.ts";
@@ -405,15 +406,22 @@ export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-
           writeFileSync(join(ACME_WEBROOT, challenge.token), keyAuthorization);
           acmeLog(domain, `Challenge token staged - Let's Encrypt will fetch http://${domain.replace(/^\*\./, "")}/.well-known/acme-challenge/${challenge.token.slice(0, 12)}… (port 80 must reach this server).`);
         } else {
-          const rec = recordName(`_acme-challenge.${domain.replace(/^\*\./, "")}`, s.baseDomain);
-          acmeLog(domain, `Creating DNS TXT record "${rec}" in zone ${s.baseDomain} via ${s.dnsProvider} - waiting for it to propagate.`);
-          await dns.upsertTxt(s.baseDomain, rec, keyAuthorization);
+          // Derive the zone from the FQDN being issued (public-suffix aware) so
+          // DNS-01 + wildcards work for ANY domain on this instance, not only the
+          // one globally-configured baseDomain.
+          const fqdn = domain.replace(/^\*\./, "");
+          const zone = registrableDomain(fqdn);
+          const rec = recordName(`_acme-challenge.${fqdn}`, zone);
+          acmeLog(domain, `Creating DNS TXT record "${rec}" in zone ${zone} via ${s.dnsProvider} - waiting for it to propagate.`);
+          await dns.upsertTxt(zone, rec, keyAuthorization);
         }
       },
       challengeRemoveFn: async (_authz, challenge) => {
         if (challenge.type === "dns-01") {
           acmeLog(domain, "Validation done - removing the DNS TXT record.", "debug");
-          await dns.removeTxt(s.baseDomain, recordName(`_acme-challenge.${domain.replace(/^\*\./, "")}`, s.baseDomain));
+          const fqdn = domain.replace(/^\*\./, "");
+          const zone = registrableDomain(fqdn);
+          await dns.removeTxt(zone, recordName(`_acme-challenge.${fqdn}`, zone));
         }
       },
     }), ACME_TIMEOUT_MS, "Let's Encrypt issuance");
