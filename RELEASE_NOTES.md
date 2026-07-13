@@ -1,9 +1,24 @@
-# NginUX v0.1.6
+# NginUX v0.1.7
 
 NginUX is a self-hosted reverse-proxy manager for your homelab — expose internal
 services over HTTPS, gate them behind a login, and watch your traffic, all from one
 clean dashboard. Think Nginx Proxy Manager, rebuilt around a live network-topology
 view, real metrics, and an agent-ready API.
+
+## New in v0.1.7
+
+**Hotfix for v0.1.5/v0.1.6.** The v0.1.5 cookie-strip feature (which stops your session
+cookie leaking to proxied backends) was also stripping it from the one backend that must
+keep it — **NginUX's own control plane**, when you expose NginUX as one of its own hosts.
+The result on v0.1.6: you could sign in, but the dashboard showed "couldn't reach the
+server" because every authenticated call arrived without its session. Fixed:
+
+- The cookie strip is now **suppressed for the host that fronts NginUX itself** (detected
+  by its forward target being the control plane, or its domain matching your NginUX public
+  URL). Third-party backends are still protected. **Upgrade to v0.1.7 if you're on v0.1.6.**
+- A new integration test reproduces the exact break (an authenticated call through the
+  self-host must reach the control plane with its session) and was verified to fail without
+  the fix — so it can't regress.
 
 ## New in v0.1.6
 

@@ -314,6 +314,11 @@ before(async () => {
      pathRules: `/grafana 127.0.0.1:${ECHO2}` }); // "/path host:port" per line (not JSON)
   // A3: securityHeaders on + a customNginx add_header — the managed headers must survive.
   H({ id: "hdr", name: "Hdr", domain: "hdr.example.com", requireLogin: true, securityHeaders: true, customNginx: "add_header X-Custom foo;" });
+  // The control-plane self-host: NginUX exposed as its OWN managed host (like nginux.<base>
+  // -> the control plane). Domain == ssoLoginUrl host AND forward target == the control
+  // plane, so it's detected by BOTH signals; its session cookie must NOT be stripped or the
+  // admin is logged out of their own dashboard. (v0.1.7 regression, mirrors the real setup.)
+  H({ id: "self", name: "Self", domain: "nginux.example.com", forwardHost: "127.0.0.1", forwardPort: CP_PORT });
   // ssl:true fixture — exercises the gate inside a real `listen 443 ssl` block AND proves
   // the paired `listen 80` redirect server 301s without proxying to the backend.
   try {
@@ -614,6 +619,15 @@ test("A1  the NginUX session cookie is stripped before proxy_pass; other cookies
   const mid = await via("plex.example.com", { cookie: `a=1; ${cookies.admin}; b=2` });
   assert.ok(!/nginux_session=/.test(mid.body), "middle nginux_session stripped");
   assert.match(mid.body, /cookie=\[a=1; b=2\]/, "neighbours of a middle cookie are preserved, not merged");
+});
+
+test("A1b the control-plane self-host KEEPS the session cookie — admin stays logged in", { skip: SKIP }, async () => {
+  // NginUX is exposed as one of its own managed hosts (forward target = the control plane).
+  // A1 must NOT strip nginux_session there, or every authenticated dashboard call arrives
+  // cookie-less and 401s ("couldn't reach the server"). This is the v0.1.6 production break.
+  assert.equal((await via("nginux.example.com", { path: "/api/health" })).status, 200, "self-host proxies to the control plane");
+  const authed = await via("nginux.example.com", { path: "/api/hosts", cookie: cookies.admin });
+  assert.equal(authed.status, 200, "an authenticated call through the self-host must reach the control plane WITH its session (cookie not stripped)");
 });
 
 test("A2  L4/TCP stream proxies enforce IP bans (ngx_stream_access, inherited)", { skip: SKIP }, async (t) => {

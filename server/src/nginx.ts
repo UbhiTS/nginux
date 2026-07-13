@@ -295,20 +295,38 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   // HTML-escaped (entities also neutralise the single-quote that would otherwise
   // close this nginx string), so it can't inject HTML or break out of the directive.
   const safeName = htmlEscape(h.name);
+
+  // A1 cookie strip is SUPPRESSED for the host that fronts NginUX's OWN control plane.
+  // That "backend" IS the session authority, so stripping nginux_session there logs the
+  // admin out of their own dashboard - every authenticated /api call arrives cookie-less
+  // and 401s ("couldn't reach the server"). Detect it two ways so the fix can't miss it:
+  // the forward target equals where nginx reaches the control plane, OR the host's domain
+  // is the configured NginUX public URL (ssoLoginUrl). Third-party backends still get the
+  // strip. (v0.1.7 hotfix for the v0.1.6 self-host regression.)
+  const controlTarget = CONTROL_URL.replace(/^https?:\/\//, "").split("/")[0];
+  const ssoHost = (() => {
+    const raw = getSettings().ssoLoginUrl?.trim();
+    if (!raw) return "";
+    try { return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase(); } catch { return ""; }
+  })();
+  const proxiesControlPlane =
+    `${h.forwardHost}:${h.forwardPort}` === controlTarget ||
+    (ssoHost !== "" && h.domain.toLowerCase() === ssoHost);
+  const cookieStrip = proxiesControlPlane ? "" : `\n        proxy_set_header Cookie $backend_cookie;`;
+  const grpcCookieStrip = proxiesControlPlane ? "" : `\n        grpc_set_header Cookie $backend_cookie;`;
+
   const locationBody = h.maintenanceMode
     ? `        default_type text/html;${headerBlock}
         return 503 '<!doctype html><html><head><meta charset="utf-8"><title>Be right back</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}h1{font-size:22px}</style></head><body><div><h1>🔧 Be right back</h1><p>${safeName} is down for maintenance.</p></div></body></html>';`
     : h.protocol === "grpc"
     ? `        grpc_pass grpc://${extraTargets.length ? proxyPass.replace(/^https?:\/\//, "") : `${h.forwardHost}:${h.forwardPort}`};
-        grpc_set_header Host $host;
-        grpc_set_header Cookie $backend_cookie;${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
+        grpc_set_header Host $host;${grpcCookieStrip}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 `
     : `        proxy_pass ${proxyPass};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Cookie $backend_cookie;${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
+        proxy_set_header X-Forwarded-Proto $scheme;${cookieStrip}${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 ${extra ? extra + "\n" : ""}`;
 
   // Per-path routing: send specific paths to different backends. These are
@@ -334,8 +352,7 @@ ${extra ? extra + "\n" : ""}`;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Cookie $backend_cookie;${pathProtections}
+        proxy_set_header X-Forwarded-Proto $scheme;${cookieStrip}${pathProtections}
     }
 `;
   }).join("");
