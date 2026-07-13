@@ -1,9 +1,32 @@
-# NginUX v0.1.4
+# NginUX v0.1.5
 
 NginUX is a self-hosted reverse-proxy manager for your homelab — expose internal
 services over HTTPS, gate them behind a login, and watch your traffic, all from one
 clean dashboard. Think Nginx Proxy Manager, rebuilt around a live network-topology
 view, real metrics, and an agent-ready API.
+
+## New in v0.1.5
+
+Data-plane hardening: three defence-in-depth gaps at the nginx layer — deferred in
+v0.1.4 because they couldn't be validated without real nginx — are now closed and
+**proven end-to-end** by the integration suite that shipped last release.
+
+- **The session cookie no longer leaks to your backends.** NginUX's SSO cookie is issued
+  for the whole base domain, so it used to ride along to every proxied app (which could
+  log or replay it). It's now stripped from the request before it reaches the backend —
+  all your other cookies pass through untouched, and the login check itself is unaffected.
+- **IP bans now cover TCP/UDP/SNI services too.** Bans previously applied only to HTTP
+  hosts; a banned address could still reach a raw TCP or SNI-passthrough stream. Bans are
+  now enforced at the stream layer as well. (Per-country blocking for streams remains a
+  known gap — it needs an nginx module that isn't bundled yet.)
+- **Custom nginx snippets can't silently drop your security headers.** Because of how
+  nginx inherits `add_header`, a single `add_header` in a service's custom config used to
+  wipe out the managed security headers (X-Frame-Options, etc.) for that service. Managed
+  headers are now emitted so they always coexist with your custom ones.
+
+Each fix is verified through real nginx (14 → **19 core + 3 hardening invariants**), and
+each new test was confirmed to fail if its fix is reverted — so these can't silently
+regress. server 269 tests, web 325, plus the real-nginx integration gate on every release.
 
 ## New in v0.1.4
 
