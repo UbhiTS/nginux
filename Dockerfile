@@ -58,6 +58,7 @@ ENV NODE_ENV=production \
     NGINX_CONF_DIR=/data/nginx/conf.d \
     NGINX_STREAM_DIR=/data/nginx/stream.d \
     NGINX_BANNED_FILE=/data/nginx/banned.conf \
+    NGINX_STREAM_BANNED_FILE=/data/nginx/stream_banned.conf \
     NGINX_ACCESS_LOG=/data/logs/access.log \
     CERT_DIR=/data/certs \
     ACME_WEBROOT=/data/acme-webroot \

@@ -96,7 +96,13 @@ export function replaceAllBans(bans: Ban[]): number {
 
 /** Write the deny-list snippet included by the base nginx http block. */
 export function writeBannedConf(): void {
-  if (!existsSync(dirname(BANNED_FILE))) mkdirSync(dirname(BANNED_FILE), { recursive: true });
+  // Ensure the parent dir of BOTH ban files exists before writing. A missing dir here
+  // (e.g. STREAM_BANNED_FILE defaulting under /app when its env var isn't set) makes
+  // writeFileSync throw at BOOT and, because the entrypoint supervises it, crash-loops
+  // the whole container - so this must never be able to fail on a fresh install. (v0.1.6)
+  for (const dir of new Set([dirname(BANNED_FILE), dirname(STREAM_BANNED_FILE)])) {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  }
   // A `geo` map (http scope), NOT `deny` lines. Each generated server block enforces it
   // with `if ($nginux_banned) return 403;`. Unlike http-level `deny` — which nginx's
   // access module STOPS inheriting the moment a server defines its own allow/deny (per

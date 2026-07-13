@@ -53,8 +53,36 @@ jobs:
       - run: npm run test --workspace web
       - run: npm run build --workspace web
 
+  # Build the ACTUAL runtime image and boot it. `verify` exercises code + real nginx but
+  # never boots the container, so a startup crash (e.g. a write to a path missing from the
+  # image) shipped undetected in v0.1.5. This gate boots the image on a throwaway volume
+  # and fails the release unless the control plane answers /api/health.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build runtime image (single-arch, fast)
+        run: docker build -t nginux:smoke --build-arg GIT_SHA="$GITHUB_SHA" .
+      - name: Boot the container on a throwaway volume
+        run: docker run -d --name smoke -e PUID=0 -e PGID=0 -v "$RUNNER_TEMP/smoke:/data" nginux:smoke
+      - name: Control plane must answer /api/health (catches a boot crash-loop)
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec smoke wget -qO- http://127.0.0.1:6767/api/health >/dev/null 2>&1; then
+              echo "healthy after ~$((i*3))s"; exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' smoke 2>/dev/null)" != "true" ]; then
+              echo "::error::container exited early (startup crash)"; docker logs smoke; exit 1
+            fi
+            sleep 3
+          done
+          echo "::error::control plane never became healthy"; docker logs smoke; exit 1
+      - name: Teardown
+        if: always()
+        run: docker rm -f smoke 2>/dev/null || true
+
   release:
-    needs: verify
+    needs: [verify, smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history for tags)

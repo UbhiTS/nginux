@@ -19,7 +19,7 @@ import { setupTestEnv } from "./helpers.ts";
 import { makeHost } from "./helpers.ts";
 
 setupTestEnv();
-const { addBan, removeBan, listBans, writeBannedConf, BANNED_FILE } = await import("../src/bans.ts");
+const { addBan, removeBan, listBans, writeBannedConf, BANNED_FILE, STREAM_BANNED_FILE } = await import("../src/bans.ts");
 const { snapshot, listVersions, diffVersion, restoreVersion } = await import("../src/versioning.ts");
 const { createHost, updateHost, deleteHost, listHosts } = await import("../src/repo.ts");
 const { generateSecret, totp, verifyTotp, verifyTotpCounter, otpauthURL } = await import("../src/totp.ts");
@@ -80,6 +80,20 @@ test("a CIDR ban round-trips into listBans and the nginx deny-list", () => {
 
   const after = readFileSync(BANNED_FILE, "utf8");
   assert.ok(!after.includes(`${cidr} 1;`), "removing a ban must drop it from the geo map");
+});
+
+test("writeBannedConf emits BOTH the http geo-map and the stream deny-list (v0.1.6 A2)", () => {
+  // The stream file (ngx_stream_access deny lines) is a SEPARATE write from banned.conf.
+  // In the container it defaults under /app when its env isn't set - which crash-looped
+  // v0.1.5 boot - so the Dockerfile now sets NGINX_STREAM_BANNED_FILE and writeBannedConf
+  // ensures BOTH parent dirs exist. Here we lock the two-file content + removal.
+  const ip = "203.0.113.77";
+  addBan(ip, "x", "manual");
+  writeBannedConf();
+  assert.match(readFileSync(BANNED_FILE, "utf8"), /geo \$nginux_banned/, "http banned.conf stays a geo map");
+  assert.ok(readFileSync(STREAM_BANNED_FILE, "utf8").includes(`deny ${ip};`), "stream_banned.conf carries an ngx_stream_access deny line");
+  removeBan(ip);
+  assert.ok(!readFileSync(STREAM_BANNED_FILE, "utf8").includes(`deny ${ip};`), "removing a ban drops the stream deny too");
 });
 
 test("an EXPIRED ban is never served by listBans (pinned: read path filters expiry)", () => {

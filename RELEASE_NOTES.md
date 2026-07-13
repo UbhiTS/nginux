@@ -1,9 +1,23 @@
-# NginUX v0.1.5
+# NginUX v0.1.6
 
 NginUX is a self-hosted reverse-proxy manager for your homelab — expose internal
 services over HTTPS, gate them behind a login, and watch your traffic, all from one
 clean dashboard. Think Nginx Proxy Manager, rebuilt around a live network-topology
 view, real metrics, and an agent-ready API.
+
+## New in v0.1.6
+
+**Hotfix for v0.1.5.** The new stream-ban file (v0.1.5) was written to a path that
+doesn't exist inside the container image, so a fresh v0.1.5 container crash-looped on
+startup and the dashboard couldn't reach its backend. Fixed:
+
+- The stream ban list is now written under `/data` (where it belongs and where the
+  include expects it), and the control plane creates the directory if it's missing, so a
+  startup write can never crash-loop the container again. **Upgrade straight to v0.1.6 if
+  you pulled v0.1.5.**
+- CI now **builds and boots the real image** on every release and fails if the container
+  doesn't come up — the gap that let v0.1.5 ship. (The container's own health check was
+  always correct; the "unhealthy" status was just a symptom of the crash.)
 
 ## New in v0.1.5
 
