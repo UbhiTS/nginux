@@ -1,41 +1,24 @@
-# NginUX v0.1.12
+# NginUX v0.1.13
 
-NginUX v0.1.12 fixes authenticated dashboard requests through a public NginUX
-hostname on NAS and other Docker hosts.
+NginUX v0.1.13 corrects the installable app icon on iPhone and other platforms
+that apply their own rounded icon mask.
 
 ## Fixed
 
-### Public dashboard no longer returns `Authentication required`
+### Complete neon outline on the iPhone Home Screen
 
-v0.1.11 tightened session-cookie forwarding so only the literal configured
-control-plane target could receive the NginUX session. A common NAS setup stores
-the NAS hostname or LAN address as the managed NginUX service's upstream—even
-though nginx and the control plane are in the same container. The alias still
-reached the control plane, but v0.1.11 did not recognize it and stripped
-`nginux_session`; the UI loaded while every authenticated `/api/*` request
-returned 401.
+The previous Apple touch icon placed the neon frame directly on the image
+boundary. iOS applies an additional rounded-square mask when a website is added
+to the Home Screen, which clipped the top, sides, and lower-right portion of the
+frame.
 
-The public portal is now identified by the configured **NginUX public URL**
-(including multi-domain login realms) and pinned directly to
-`NGINUX_CONTROL_URL` inside the container. This:
+The installable icon artwork now sits inside a 12% safe area on a matching dark
+canvas. The full pink, purple, and cyan outline remains visible after iOS applies
+its mask, while the dashboard and sidebar branding remain unchanged.
 
-- works whether the stored service target is loopback, a Docker/NAS hostname, or
-  a LAN address;
-- keeps the session cookie only on the internal control-plane hop;
-- never sends the session to the user-entered alias;
-- ignores legacy load-balancer and path-route targets on the portal host so they
-  cannot shadow or collect dashboard API requests.
-
-Ordinary services and their path routes continue to have the NginUX session
-cookie stripped before proxying.
-
-### Expired sessions return to sign-in
-
-If an authenticated API call genuinely returns 401—for example after replacing
-a container with a fresh data volume—the UI now returns to the sign-in screen
-instead of leaving every page mounted with an `Authentication required` error.
-Rejected login credentials remain an inline login error and do not trigger this
-session-expired path.
+The 180, 192, 512, and 1024 pixel app assets are generated reproducibly from the
+canonical NginUX artwork. Their URLs are versioned so a newly added Home Screen
+shortcut cannot reuse the cropped icon from Safari's cache.
 
 ## Upgrade
 
@@ -49,11 +32,12 @@ docker compose up -d
 Or pull the immutable version directly:
 
 ```bash
-docker pull ghcr.io/ubhits/nginux:v0.1.12
+docker pull ghcr.io/ubhits/nginux:v0.1.13
 ```
 
 The image is multi-architecture (`linux/amd64` and `linux/arm64`). Existing data
 in `/data` is preserved.
 
-> **Keep the `:6767` control plane off the public internet.** Forward only
-> `80`/`443` to proxied services; reach the admin plane over your LAN or VPN.
+> To refresh an icon that is already installed, remove the existing NginUX Home
+> Screen shortcut and use Safari's **Share → Add to Home Screen** again after
+> upgrading.
