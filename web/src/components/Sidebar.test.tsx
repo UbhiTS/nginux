@@ -248,7 +248,9 @@ describe("Sidebar", () => {
   it("opens the command palette from the sidebar search trigger", async () => {
     const onOpenPalette = vi.fn();
     renderSidebar({ onOpenPalette });
-    await userEvent.click(screen.getByRole("button", { name: /search/i }));
+    const search = screen.getByRole("button", { name: /search/i });
+    expect(search).toHaveClass("sidebar-search");
+    await userEvent.click(search);
     expect(onOpenPalette).toHaveBeenCalledTimes(1);
   });
 
