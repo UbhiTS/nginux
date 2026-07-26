@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import forge from "node-forge";
@@ -94,7 +94,7 @@ export function writeClientCrl(domain: string): void {
   const revoked = (db
     .prepare("SELECT serial, revokedAt FROM client_certs WHERE domain = ? AND revokedAt IS NOT NULL")
     .all(domain) as Row[]).map((r) => ({ serial: String(r.serial), date: new Date(String(r.revokedAt)) }));
-  writeFileSync(join(dir, "client-ca.crl"), buildCrlPem(readFileSync(caCrt, "utf8"), readFileSync(caKey, "utf8"), revoked));
+  writeFileSync(join(dir, "client-ca.crl"), buildCrlPem(readFileSync(caCrt, "utf8"), readFileSync(caKey, "utf8"), revoked), { mode: 0o644 });
 }
 
 /** Create the per-host client CA if it doesn't exist yet. */
@@ -118,11 +118,12 @@ export async function ensureClientCA(domain: string): Promise<void> {
     { name: "keyUsage", keyCertSign: true, cRLSign: true },
   ]);
   ca.sign(keys.privateKey, forge.md.sha256.create());
-  writeFileSync(caCrt, forge.pki.certificateToPem(ca));
-  // Default perms (like the other key files) so the data volume stays host-manageable
-  // over SMB - 0600 was tried and reverted (commit 01f8ffa). Protect the keys at the
-  // filesystem/host level if your deployment shares the host with untrusted users.
-  writeFileSync(join(dir, "client-ca.key"), forge.pki.privateKeyToPem(keys.privateKey));
+  writeFileSync(caCrt, forge.pki.certificateToPem(ca), { mode: 0o644 });
+  writeFileSync(join(dir, "client-ca.key"), forge.pki.privateKeyToPem(keys.privateKey), { mode: 0o600 });
+  try {
+    chmodSync(caCrt, 0o644);
+    chmodSync(join(dir, "client-ca.key"), 0o600);
+  } catch { /* Windows */ }
   // Seed an (empty) CRL so nginx's ssl_crl always has a file to load.
   writeClientCrl(domain);
 }

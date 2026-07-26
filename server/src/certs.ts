@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { X509Certificate, createPrivateKey, randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -207,8 +207,12 @@ export function reconcileImportedCerts(): void {
 function writeFiles(domain: string, keyPem: string, certPem: string) {
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "privkey.pem"), keyPem); // default perms so the data volume stays host-manageable (see commit 01f8ffa)
-  writeFileSync(join(dir, "fullchain.pem"), certPem);
+  writeFileSync(join(dir, "privkey.pem"), keyPem, { mode: 0o600 });
+  writeFileSync(join(dir, "fullchain.pem"), certPem, { mode: 0o644 });
+  try {
+    chmodSync(join(dir, "privkey.pem"), 0o600);
+    chmodSync(join(dir, "fullchain.pem"), 0o644);
+  } catch { /* Windows */ }
 }
 
 export interface ImportResult {
@@ -362,7 +366,8 @@ async function acmeAccountKey(domain: string): Promise<Buffer> {
   acmeLog(domain, "First issuance on this install - creating an ACME account key.");
   const key = await acme.crypto.createPrivateKey();
   mkdirSync(CERT_DIR, { recursive: true });
-  writeFileSync(ACCOUNT_KEY_PATH, key); // default perms so the data volume stays host-manageable (see commit 01f8ffa)
+  writeFileSync(ACCOUNT_KEY_PATH, key, { mode: 0o600 });
+  try { chmodSync(ACCOUNT_KEY_PATH, 0o600); } catch { /* Windows */ }
   return key;
 }
 

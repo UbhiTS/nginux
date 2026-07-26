@@ -34,6 +34,7 @@ import {
   destroySession,
   enableTwofa,
   getLastTotpCounter,
+  getPendingTwofaSecret,
   getTwofaSecret,
   getUserById,
   listSessions,
@@ -237,7 +238,10 @@ function crossOriginBlocked(req: FastifyRequest): boolean {
   if (!MUTATING.has(req.method)) return false;
   const origin = (req.headers.origin as string) || (req.headers.referer as string);
   if (!origin) return false; // non-browser client
-  const host = (req.headers["x-forwarded-host"] as string) || req.headers.host;
+  // Fastify only derives req.host from X-Forwarded-Host when the immediate peer
+  // is trusted. Reading the raw header here would let a direct client choose the
+  // comparison host and neutralize this origin check.
+  const host = req.host;
   try { return new URL(origin).host !== host; } catch { return true; }
 }
 
@@ -282,10 +286,12 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
 // Security headers on every control-plane response (the admin UI + API on :6767).
 // frame-ancestors/X-Frame-Options stop the UI being framed (clickjacking); nosniff
 // stops MIME sniffing; the CSP locks script/style/connect to same-origin.
-app.addHook("onSend", async (_req, reply, payload) => {
+app.addHook("onSend", async (req, reply, payload) => {
   reply.header("X-Frame-Options", "DENY");
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+  reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  if (req.url.startsWith("/api")) reply.header("Cache-Control", "no-store");
   reply.header(
     "Content-Security-Policy",
     // jsdelivr serves the dashboard-icons logo set used for service icons (images only).
@@ -520,7 +526,7 @@ app.post("/api/hosts", async (req, reply) => {
   if (getHostByDomain(parsed.data.domain)) {
     return reply.code(409).send({ error: `${parsed.data.domain} is already in use.` });
   }
-  if (isControlPlaneDomain(parsed.data.domain, parsed.data.forwardPort)) {
+  if (isControlPlaneDomain(parsed.data.domain, parsed.data.forwardHost, parsed.data.forwardPort, parsed.data.forwardScheme)) {
     return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 6767; otherwise pick another domain so you don't lose access to NginUX." });
   }
   const spErr = streamPortError(parsed.data);
@@ -563,8 +569,11 @@ app.put("/api/hosts/:id", async (req, reply) => {
   // port-only edit (6767 -> 8080), repointing the sign-in server block and locking
   // everyone out. Fire whenever the result is a hijack AND domain or port actually
   // moved (a no-op re-PUT of an unrelated field must not be punished).
-  const domainOrPortChanged = merged.domain !== existing.domain || merged.forwardPort !== existing.forwardPort;
-  if (domainOrPortChanged && isControlPlaneDomain(merged.domain, merged.forwardPort)) {
+  const routingChanged = merged.domain !== existing.domain
+    || merged.forwardScheme !== existing.forwardScheme
+    || merged.forwardHost !== existing.forwardHost
+    || merged.forwardPort !== existing.forwardPort;
+  if (routingChanged && isControlPlaneDomain(merged.domain, merged.forwardHost, merged.forwardPort, merged.forwardScheme)) {
     return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 6767; otherwise pick another domain so you don't lose access to NginUX." });
   }
   const spErr = streamPortError(merged, id);
@@ -668,10 +677,16 @@ app.post("/api/config/preview", async (req, reply) => {
     const parsed = hostInput.partial().safeParse(host ?? {});
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     const merged = { ...existing, ...parsed.data } as ProxyHost;
+    if (isControlPlaneDomain(merged.domain, merged.forwardHost, merged.forwardPort, merged.forwardScheme)) {
+      return reply.code(409).send({ error: "The public NginUX portal must forward to the exact configured control plane." });
+    }
     candidateHosts = hosts.map((h) => (h.id === id ? merged : h));
   } else { // create
     const parsed = hostInput.safeParse(host ?? {});
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+    if (isControlPlaneDomain(parsed.data.domain, parsed.data.forwardHost, parsed.data.forwardPort, parsed.data.forwardScheme)) {
+      return reply.code(409).send({ error: "The public NginUX portal must forward to the exact configured control plane." });
+    }
     const candidate = { ...parsed.data, id: "__preview__", health: "unknown", certExpiresAt: null, createdAt: "", updatedAt: "" } as ProxyHost;
     candidateHosts = [...hosts, candidate];
   }
@@ -1078,7 +1093,8 @@ function authCookieDomain(req?: FastifyRequest): string {
   // Multi-realm: if the request's host belongs to a configured realm, scope the
   // cookie to THAT base domain, so a sign-in on a second base domain works.
   if (req) {
-    const host = ((req.headers["x-forwarded-host"] as string) || req.hostname || "").split(":")[0];
+    // req.hostname only honors forwarded host data from a trusted proxy.
+    const host = req.hostname;
     const realm = host ? realmForHost(host) : null;
     if (realm) return realm.cookieDomain;
   }
@@ -1094,11 +1110,33 @@ function authCookieDomain(req?: FastifyRequest): string {
 // Bound the inputs: username/password are attacker-controlled and each login
 // attempt runs a deliberately-expensive scrypt, so an unbounded password also
 // amplifies CPU. (Length caps are generous; real creds fit easily.)
-const loginInput = z.object({ username: z.string().min(1).max(64), password: z.string().min(1).max(200), token: z.string().max(64).optional() });
+const loginInput = z.object({
+  username: z.string().min(1).max(64),
+  password: z.string().min(1).max(200),
+  token: z.string().max(64).optional(),
+  returnUrl: z.string().max(2048).optional(),
+});
+
+/** Login redirects are authorized against the server's configured host table.
+ * Client-side "same domain family" heuristics are unsafe on multi-tenant public
+ * suffixes such as github.io and pages.dev. */
+function safeLoginRedirect(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const u = new URL(raw);
+    if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username || u.password) return undefined;
+    if ((u.protocol === "http:" && u.port && u.port !== "80")
+      || (u.protocol === "https:" && u.port && u.port !== "443")) return undefined;
+    const host = getHostByDomainCached(u.hostname);
+    return host?.enabled ? u.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
 app.post("/api/auth/login", async (req, reply) => {
   const parsed = loginInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: "Invalid input" });
-  const { username, password, token } = parsed.data;
+  const { username, password, token, returnUrl } = parsed.data;
   const ip = clientIp(req);
 
   // Per-IP budget, independent of username: the username is attacker-controlled, so
@@ -1152,7 +1190,7 @@ app.post("/api/auth/login", async (req, reply) => {
   logEvent({ type: "login.success", severity: "info", actor: username, summary: "Signed in", ip, meta: {} });
   reply.header("set-cookie", sessionCookie(sessionToken, cookieSecure(req.protocol === "https"), authCookieDomain(req)));
   const created = getUserById(String(row.id));
-  return { user: created ? withPolicyFlags(created) : created };
+  return { user: created ? withPolicyFlags(created) : created, redirectTo: safeLoginRedirect(returnUrl) };
 });
 
 app.post("/api/auth/logout", async (req, reply) => {
@@ -1177,7 +1215,7 @@ app.get("/api/auth/me", async (req, reply) => {
 const forwardSecret = (): string => getSettings().ssoForwardSecret;
 /** Constant-time header-secret check (avoids a byte-by-byte timing oracle). */
 function forwardSecretOk(hdr: unknown, secret: string): boolean {
-  if (!secret) return true; // no secret configured → header not required
+  if (!secret) return false; // fail closed if settings are damaged or cleared
   if (typeof hdr !== "string" || hdr.length !== secret.length) return false;
   return timingSafeEqual(Buffer.from(hdr), Buffer.from(secret));
 }
@@ -1256,7 +1294,7 @@ app.post("/api/auth/2fa/setup", async (req, reply) => {
 app.post("/api/auth/2fa/verify", async (req, reply) => {
   const u = currentUser(req)!;
   const { token } = z.object({ token: z.string() }).parse(req.body);
-  const secret = getTwofaSecret(u.id);
+  const secret = getPendingTwofaSecret(u.id);
   if (!secret || !verifyTotp(token, secret)) {
     return reply.code(400).send({ error: "That code didn't match - try the current one." });
   }
@@ -1356,6 +1394,7 @@ app.post("/api/users/me/avatar", async (req, reply) => {
 app.get("/api/users/:id/avatar", async (req, reply) => {
   if (!currentUser(req)) return reply.code(401).send({ error: "Not signed in" });
   const { id } = req.params as { id: string };
+  if (!z.string().uuid().safeParse(id).success) return reply.code(404).send({ error: "No avatar." });
   const p = avatarPath(id);
   if (!existsSync(p)) return reply.code(404).send({ error: "No avatar." });
   const buf = readFileSync(p);
@@ -1410,9 +1449,12 @@ registerCertRoutes(app, routeCtx);
 // ---------- MCP server (JSON-RPC over HTTP; session or Bearer token) ----------
 app.post("/api/mcp", async (req, reply) => {
   const me = principal(req)!;
-  const body = req.body as Record<string, unknown> | Record<string, unknown>[];
-  const handle = (m: Record<string, unknown>) => handleMcp(me, m as never);
+  const body = req.body as unknown;
+  const handle = (m: unknown) => handleMcp(me, m as never);
   if (Array.isArray(body)) {
+    if (body.length === 0) {
+      return reply.send({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid JSON-RPC request." } });
+    }
     if (body.length > 50) return reply.code(413).send({ error: "Batch too large (max 50)." });
     const out = (await Promise.all(body.map(handle))).filter(Boolean);
     return reply.send(out);
@@ -1469,6 +1511,10 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   app.log.info(`NginUX control plane on http://${HOST}:${PORT}`);
   if (seeded.usingDefault) {
     app.log.warn(`First run - default login is "admin" / "admin". You'll be required to set a new password on first sign-in.`);
+  }
+  if (seeded.bootstrapPassword) {
+    app.log.warn(`First run - generated admin password: ${seeded.bootstrapPassword}`);
+    app.log.warn("Sign in as admin and replace this bootstrap password immediately.");
   }
   if (process.env.NODE_ENV === "production" && !forwardSecret()) {
     app.log.warn("No forward-auth secret set - generate one in Settings → Login gate so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
@@ -1546,4 +1592,3 @@ function tcpProbe(host: string, port: number, timeoutMs: number): Promise<boolea
     socket.once("error", () => done(false));
   });
 }
-

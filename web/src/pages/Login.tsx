@@ -4,36 +4,13 @@ import { Icon } from "../icons.tsx";
 import { BrandLogo } from "../components/BrandLogo.tsx";
 import { Field } from "../components/Field.tsx";
 
-// A login-gated service redirects unauthenticated visitors here with the original
-// URL as ?rd=. After sign-in we bounce back to it - but only if it's on this same
-// domain family (this host or a sibling subdomain), to avoid an open redirect.
-// Common multi-part public suffixes. If stripping the leftmost label of the
-// current host lands on one of these (e.g. nginux.co.uk -> co.uk), we must NOT
-// treat it as a registrable base, or `rd=https://evil.co.uk` would be accepted.
-const PUBLIC_SUFFIX_2LD = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "or", "ne", "go", "gob", "gouv"]);
-
-function safeReturnUrl(): string | null {
-  const m = window.location.search.match(/[?&]rd=(.*)$/);
-  if (!m) return null;
-  let target: URL;
-  try { target = new URL(decodeURIComponent(m[1])); } catch { try { target = new URL(m[1]); } catch { return null; } }
-  if (target.protocol !== "https:" && target.protocol !== "http:") return null;
-  const here = window.location.hostname.toLowerCase();
-  const h = target.hostname.toLowerCase();
-  if (h === here) return target.href; // same host is always safe
-  // Sibling-subdomain bounce (login at nginux.example.com -> back to plex.example.com):
-  // strip the leftmost label to get the registrable base, but refuse if that base is
-  // itself a public suffix (co.uk, com.au) - which would otherwise allow *any* sibling.
-  const parts = here.split(".");
-  if (parts.length < 3) return null; // not on a subdomain -> only exact same-host
-  const base = parts.slice(1).join(".");
-  const baseParts = base.split(".");
-  if (baseParts.length === 2 && PUBLIC_SUFFIX_2LD.has(baseParts[0])) return null; // base collapsed to a public suffix
-  return h === base || h.endsWith("." + base) ? target.href : null;
+function requestedReturnUrl(): string | undefined {
+  const value = new URLSearchParams(window.location.search).get("rd");
+  return value && value.length <= 2048 ? value : undefined;
 }
 
 export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
-  const returnUrl = safeReturnUrl();
+  const returnUrl = requestedReturnUrl();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
@@ -46,13 +23,14 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
     setBusy(true);
     setError("");
     try {
-      const res = await api.login(username, password, needs2fa ? token : undefined);
+      const res = await api.login(username, password, needs2fa ? token : undefined, returnUrl);
       if (res.twofaRequired) {
         setNeeds2fa(true);
         setError(needs2fa ? "That 2FA code didn't match - try the current one." : "");
       } else if (res.user) {
-        // Bounce back to the gated service that sent us here, else into the app.
-        if (returnUrl) { window.location.href = returnUrl; return; }
+        // Only follow a destination that the server matched to an enabled,
+        // configured NginUX service.
+        if (res.redirectTo) { window.location.href = res.redirectTo; return; }
         onSignedIn(res.user);
       }
     } catch (err) {
@@ -79,7 +57,7 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
           {needs2fa
             ? "Open your authenticator app for the 6-digit code."
             : returnUrl
-              ? `Sign in to continue to ${new URL(returnUrl).host}.`
+              ? "Sign in to continue to the requested service."
               : "Use your NginUX account."}
         </p>
 

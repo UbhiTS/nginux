@@ -11,10 +11,10 @@ import { getUptime } from "./uptime.ts";
 import { hostStats, recentLogs, rangeSummary as metricsRangeSummary, summary as metricsSummary, trafficSeries } from "./metrics.ts";
 import { PRESETS } from "./presets.ts";
 import type { AgentPrincipal, Scope } from "./tokens.ts";
-import { isHost, isHostname, isIpOrCidr } from "./validate.ts";
-import { hostInput, isControlPlaneDomain, validName } from "./hostschema.ts";
+import { isHostname, isIpOrCidr } from "./validate.ts";
+import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
-import type { NewProxyHost, ProxyHost } from "./types.ts";
+import type { ProxyHost } from "./types.ts";
 
 // Agents reach updateHost/createHost WITHOUT the REST zod schema, so validate
 // here too. Fields an agent may never set via the generic update_service tool:
@@ -263,23 +263,23 @@ export const TOOLS: Record<string, Tool> = {
     }, ["name", "domain", "forwardHost", "forwardPort"]),
     summarize: (a) => `expose ${a.name} at ${a.domain}`,
     handler: async (a) => {
-      const domain = String(a.domain), forwardHost = String(a.forwardHost);
-      if (!validName(String(a.name))) throw new Error("Invalid name.");
-      if (!isHostname(domain)) throw new Error("Invalid domain.");
-      if (!isHost(forwardHost)) throw new Error("Invalid forwardHost.");
-      const port = Number(a.forwardPort);
-      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid forwardPort.");
+      const candidate = {
+        ...a,
+        requireLogin: a.requireLogin !== false,
+        serverGroup: String(a.forwardHost ?? ""),
+        serverIp: String(a.forwardHost ?? ""),
+        enabled: true,
+      };
+      const parsed = hostInput.safeParse(candidate);
+      if (!parsed.success) throw new Error(parsed.error.issues.map((i) => i.message).join("; "));
+      const { domain, forwardHost, forwardPort: port, forwardScheme } = parsed.data;
       // Mirror the REST guards: clear duplicate-domain error, and don't let an
       // agent repoint NginUX's own portal domain away from the control plane.
       if (getHostByDomain(domain)) throw new Error(`${domain} is already in use.`);
-      if (isControlPlaneDomain(domain, port)) throw new Error("That domain is where NginUX itself runs; forward it to the control plane on port 6767 or pick another.");
-      const host = createHost({
-        name: String(a.name), domain,
-        forwardScheme: a.forwardScheme === "https" ? "https" : "http", forwardHost, forwardPort: port,
-        preset: String(a.preset ?? "custom"), websockets: a.websockets === true, http2: a.http2 !== false,
-        ssl: a.ssl !== false, requireLogin: a.requireLogin !== false, require2fa: a.require2fa === true,
-        countryLock: false, serverGroup: forwardHost, serverIp: forwardHost, enabled: true,
-      } as NewProxyHost);
+      if (isControlPlaneDomain(domain, forwardHost, port, forwardScheme)) {
+        throw new Error("That domain is where NginUX itself runs; forward it to the exact control plane target or pick another.");
+      }
+      const host = createHost(parsed.data);
       if (host.ssl) { try { await ensureCert(host.domain); } catch { /* non-fatal */ } }
       await applyOrRevert(() => deleteHost(host.id));
       return host;
@@ -290,7 +290,19 @@ export const TOOLS: Record<string, Tool> = {
     description: "Edit a host's routing or options (cannot set raw nginx directives).",
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `update service ${a.id}`,
-    handler: async (a) => { const { id, ...patch } = a; const prev = getHost(String(id)); const h = updateHost(String(id), sanitizeHostPatch(patch)); await applyOrRevert(() => { if (prev) updateHost(String(id), prev); }); return h; },
+    handler: async (a) => {
+      const { id, ...patch } = a;
+      const prev = getHost(String(id));
+      if (!prev) throw new Error("Service not found.");
+      const safePatch = sanitizeHostPatch(patch);
+      const merged = { ...prev, ...safePatch };
+      if (isControlPlaneDomain(merged.domain, merged.forwardHost, merged.forwardPort, merged.forwardScheme)) {
+        throw new Error("The public NginUX portal must forward to the exact configured control plane.");
+      }
+      const h = updateHost(String(id), safePatch);
+      await applyOrRevert(() => updateHost(String(id), prev));
+      return h;
+    },
   },
   set_service_enabled: {
     name: "set_service_enabled", title: "Enable/pause a service", scope: "control", tier: "low",
@@ -317,7 +329,14 @@ export const TOOLS: Record<string, Tool> = {
     description: "Issue or renew a certificate (selfsigned | http-01 | dns-01).",
     inputSchema: obj({ domain: { type: "string" }, method: { type: "string", enum: ["selfsigned", "http-01", "dns-01"] } }, ["domain"]),
     summarize: (a) => `issue ${a.method ?? "selfsigned"} cert for ${a.domain}`,
-    handler: async (a) => { if (!isHostname(String(a.domain))) throw new Error("Invalid domain."); const c = await issue(String(a.domain), (a.method as "selfsigned") ?? "selfsigned"); await applyConfig(); return c; },
+    handler: async (a) => {
+      if (!isHostname(String(a.domain))) throw new Error("Invalid domain.");
+      const method = a.method ?? "selfsigned";
+      if (method !== "selfsigned" && method !== "http-01" && method !== "dns-01") throw new Error("Invalid certificate method.");
+      const c = await issue(String(a.domain), method);
+      await applyConfig();
+      return c;
+    },
   },
   renew_cert: {
     name: "renew_cert", title: "Renew certificate", scope: "control", tier: "low",
@@ -345,7 +364,13 @@ export const TOOLS: Record<string, Tool> = {
     description: "Issue a client certificate for a host's mTLS CA (returns the key once).",
     inputSchema: obj({ id: { type: "string" }, name: { type: "string" } }, ["id", "name"]),
     summarize: (a) => `issue client cert "${a.name}" for ${a.id}`,
-    handler: async (a) => { const h = getHost(String(a.id)); if (!h) throw new Error("Service not found."); return issueClientCert(h.id, h.domain, String(a.name)); },
+    handler: async (a) => {
+      const name = String(a.name);
+      if (name.length < 1 || name.length > 64 || /[\r\n]/.test(name)) throw new Error("Client certificate name must be 1-64 characters.");
+      const h = getHost(String(a.id));
+      if (!h) throw new Error("Service not found.");
+      return issueClientCert(h.id, h.domain, name);
+    },
   },
 
   // ---------------- control: GeoIP ----------------
@@ -508,6 +533,28 @@ export function needsApproval(tier: Tier, principal: Principal): boolean {
   return false; // low/medium for a trusted agent auto-runs
 }
 
+/** Enforce the common JSON-Schema subset used by every tool before an invalid
+ * request can be queued for approval or reach a handler. Handlers retain their
+ * domain-specific validation. */
+function validateToolArgs(tool: Tool, args: Record<string, unknown>): string | null {
+  const schema = tool.inputSchema as {
+    required?: string[];
+    properties?: Record<string, { type?: string; enum?: unknown[] }>;
+  };
+  for (const key of schema.required ?? []) {
+    if (!Object.prototype.hasOwnProperty.call(args, key)) return `Missing required argument: ${key}.`;
+  }
+  for (const [key, rule] of Object.entries(schema.properties ?? {})) {
+    const value = args[key];
+    if (value === undefined) continue;
+    if (rule.type === "number" && (typeof value !== "number" || !Number.isFinite(value))) return `${key} must be a finite number.`;
+    if (rule.type === "string" && typeof value !== "string") return `${key} must be a string.`;
+    if (rule.type === "boolean" && typeof value !== "boolean") return `${key} must be a boolean.`;
+    if (rule.enum && !rule.enum.includes(value)) return `${key} has an unsupported value.`;
+  }
+  return null;
+}
+
 export async function callTool(principal: Principal, name: string, rawArgs: Record<string, unknown>): Promise<ToolResult> {
   const tool = TOOLS[name];
   if (!tool) return { status: "error", tool: name, message: `Unknown tool: ${name}` };
@@ -522,6 +569,8 @@ export async function callTool(principal: Principal, name: string, rawArgs: Reco
     return { status: "error", tool: name, message: `${name} requires admin-level access.` };
   }
   const args = rawArgs ?? {};
+  const invalid = validateToolArgs(tool, args);
+  if (invalid) return { status: "error", tool: name, message: invalid };
 
   if (needsApproval(tool.tier, principal)) {
     const id = randomUUID();
@@ -549,10 +598,20 @@ export async function decideApproval(id: string, approve: boolean, decidedBy: st
   if (ap.status !== "pending") return ap;
 
   if (!approve) {
-    db.prepare("UPDATE approvals SET status='denied', decidedBy=?, decidedAt=? WHERE id=?").run(decidedBy, new Date().toISOString(), id);
+    const claimed = db.prepare(
+      "UPDATE approvals SET status='denied', decidedBy=?, decidedAt=? WHERE id=? AND status='pending'",
+    ).run(decidedBy, new Date().toISOString(), id);
+    if (!claimed.changes) return toApproval(db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as Row);
     logEvent({ type: "agent.approval_denied", severity: "notice", actor: decidedBy, summary: `Denied: ${ap.summary}`, ip: "", meta: { tool: ap.tool } });
     return toApproval(db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as Row);
   }
+
+  // Atomically claim execution before awaiting the handler. Two administrators
+  // approving the same request can no longer execute a destructive tool twice.
+  const claimed = db.prepare(
+    "UPDATE approvals SET status='executed', decidedBy=?, decidedAt=? WHERE id=? AND status='pending'",
+  ).run(decidedBy, new Date().toISOString(), id);
+  if (!claimed.changes) return toApproval(db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as Row);
 
   const tool = TOOLS[ap.tool];
   let result: unknown = null;
@@ -561,9 +620,7 @@ export async function decideApproval(id: string, approve: boolean, decidedBy: st
   } catch (err) {
     result = { error: err instanceof Error ? err.message : "execution failed" };
   }
-  db.prepare("UPDATE approvals SET status='executed', result=?, decidedBy=?, decidedAt=? WHERE id=?").run(
-    JSON.stringify(result), decidedBy, new Date().toISOString(), id,
-  );
+  db.prepare("UPDATE approvals SET result=? WHERE id=?").run(JSON.stringify(result), id);
   logEvent({ type: "agent.approved", severity: "notice", actor: decidedBy, summary: `Approved: ${ap.summary}`, ip: "", meta: { tool: ap.tool } });
   return toApproval(db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as Row);
 }

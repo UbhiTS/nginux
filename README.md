@@ -78,6 +78,7 @@ IPs; click one to filter the log to it or block it across every service.
 ```bash
 docker compose up -d          # pulls ghcr.io/ubhits/nginux:latest
 # UI: http://localhost:6767
+docker compose logs nginux    # first run: copy the generated admin password
 ```
 
 The image is published publicly to GitHub Container Registry, so no login is
@@ -93,6 +94,13 @@ docker pull ghcr.io/ubhits/nginux:latest
 Ports: `6767` = control-plane UI/API · `80`/`443` = proxied traffic (data plane).
 State (SQLite DB, generated Nginx config, certs, logs) lives on the `nginux-data`
 volume mounted at `/data`.
+
+The supplied Compose file binds the control plane to `127.0.0.1` by default.
+For access from another trusted LAN/VPN machine, set `NGINUX_CONTROL_BIND` to a
+specific interface address. Avoid binding it to every interface on a public host.
+On a production first run, NginUX generates a random bootstrap password unless
+`NGINUX_ADMIN_PASSWORD` is set; retrieve it from the container log and replace it
+after signing in.
 
 ### Local development
 

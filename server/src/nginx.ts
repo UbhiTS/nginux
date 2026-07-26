@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -8,6 +8,7 @@ import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
 import { realmForHost } from "./realms.ts";
 import { writeGeoipConf } from "./geoip.ts";
+import { isControlPlaneTarget } from "./hostschema.ts";
 // Canonical tokenisers (shared with the validators in hostschema.ts, so a value
 // is generated exactly the way it was validated). splitEntries == the old splitList.
 import { splitEntries as splitList, splitLines } from "./validate.ts";
@@ -296,22 +297,10 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   // close this nginx string), so it can't inject HTML or break out of the directive.
   const safeName = htmlEscape(h.name);
 
-  // A1 cookie strip is SUPPRESSED for the host that fronts NginUX's OWN control plane.
-  // That "backend" IS the session authority, so stripping nginux_session there logs the
-  // admin out of their own dashboard - every authenticated /api call arrives cookie-less
-  // and 401s ("couldn't reach the server"). Detect it two ways so the fix can't miss it:
-  // the forward target equals where nginx reaches the control plane, OR the host's domain
-  // is the configured NginUX public URL (ssoLoginUrl). Third-party backends still get the
-  // strip. (v0.1.7 hotfix for the v0.1.6 self-host regression.)
-  const controlTarget = CONTROL_URL.replace(/^https?:\/\//, "").split("/")[0];
-  const ssoHost = (() => {
-    const raw = getSettings().ssoLoginUrl?.trim();
-    if (!raw) return "";
-    try { return new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase(); } catch { return ""; }
-  })();
-  const proxiesControlPlane =
-    `${h.forwardHost}:${h.forwardPort}` === controlTarget ||
-    (ssoHost !== "" && h.domain.toLowerCase() === ssoHost);
+  // Only the exact configured control-plane target may receive the session
+  // cookie. A domain/port heuristic would let an editor repoint the public
+  // portal at attacker.example:6767 and collect an administrator's cookie.
+  const proxiesControlPlane = isControlPlaneTarget(h.forwardHost, h.forwardPort, h.forwardScheme);
   const cookieStrip = proxiesControlPlane ? "" : `\n        proxy_set_header Cookie $backend_cookie;`;
   const grpcCookieStrip = proxiesControlPlane ? "" : `\n        grpc_set_header Cookie $backend_cookie;`;
 
@@ -325,7 +314,7 @@ ${ACME_CHALLENGE_LOCATION}    location / {
     : `        proxy_pass ${proxyPass};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;${cookieStrip}${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 ${extra ? extra + "\n" : ""}`;
 
@@ -351,7 +340,7 @@ ${extra ? extra + "\n" : ""}`;
         proxy_pass ${target};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;${cookieStrip}${pathProtections}
     }
 `;
@@ -382,22 +371,24 @@ export interface WriteResult {
   rollback: () => void;
 }
 
-/** http-scope map that strips the NginUX SSO session cookie (nginux_session) out of the
- *  Cookie header before it is proxied upstream, so a compromised/logging backend can never
- *  see or replay the shared session; ALL other cookies pass through. Defined ONCE (single
- *  generated file, single $backend_cookie variable) and pulled into http{} by the conf.d
- *  glob include. Two first-match regexes: the first handles nginux_session appearing first
- *  or alone; the second handles it preceded by other cookies, removing exactly one leading
- *  separator so a middle cookie's neighbours are never merged. A name that merely ends in
- *  `nginux_session` (e.g. `foo_nginux_session`) is not matched (the ^ / `; ` boundary).
- *  (Security audit follow-up 2026-07-12.) */
-const COOKIE_STRIP_MAP = `# Managed by NginUX - strip nginux_session from the upstream Cookie header (see nginx.ts).
-map $http_cookie $backend_cookie {
-    default $http_cookie;
-    "~^nginux_session=[^;]*(?:;[ \\t]*)?(?<rest>.*)$"          $rest;
-    "~^(?<head>.*?);[ \\t]*nginux_session=[^;]*(?<tail>.*)$"   "\${head}\${tail}";
+/** Browsers may send repeated same-name cookies with different Domain/Path
+ * attributes. A one-pass map can therefore leave a second session token for an
+ * upstream. Nginx map has no global replacement, so chain bounded passes while
+ * preserving every unrelated application cookie. */
+const COOKIE_STRIP_PASSES = 8;
+const cookieStripMaps: string[] = [
+  "# Managed by NginUX - strip nginux_session before proxying upstream (see nginx.ts).",
+];
+for (let i = 1; i <= COOKIE_STRIP_PASSES; i++) {
+  const source = i === 1 ? "$http_cookie" : `$backend_cookie_${i - 1}`;
+  const target = i === COOKIE_STRIP_PASSES ? "$backend_cookie" : `$backend_cookie_${i}`;
+  cookieStripMaps.push(`map ${source} ${target} {
+    default ${source};
+    "~^nginux_session=[^;]*(?:;[ \\t]*)?(?<rest${i}>.*)$" $rest${i};
+    "~^(?<head${i}>.*?);[ \\t]*nginux_session=[^;]*(?<tail${i}>.*)$" "\${head${i}}\${tail${i}}";
+}`);
 }
-`;
+const COOKIE_STRIP_MAP = cookieStripMaps.join("\n") + "\n";
 
 /** Build the full desired config set (absolute path -> content) for a given host
  *  list WITHOUT touching disk. Pure - the single generator shared by writeAllConfigs
@@ -453,12 +444,22 @@ export function writeAllConfigs(): WriteResult {
   // Write only files whose content actually changed.
   for (const [file, content] of desired) {
     const current = safeRead(file);
-    if (current !== content) { undo.push({ file, prev: current }); writeFileSync(file, content); }
+    if (current !== content) {
+      undo.push({ file, prev: current });
+      writeFileSync(file, content, { mode: 0o600 });
+      try { chmodSync(file, 0o600); } catch { /* Windows */ }
+    }
   }
 
   const rollback = () => {
     for (const u of undo) {
-      try { u.prev === null ? rmSync(u.file, { force: true }) : writeFileSync(u.file, u.prev); }
+      try {
+        if (u.prev === null) rmSync(u.file, { force: true });
+        else {
+          writeFileSync(u.file, u.prev, { mode: 0o600 });
+          try { chmodSync(u.file, 0o600); } catch { /* Windows */ }
+        }
+      }
       catch { /* best-effort restore */ }
     }
   };

@@ -85,10 +85,13 @@ export function splitEntries(s: string): string[] {
 // use is the cloud-metadata / link-local range and the unspecified address.
 const LINK_LOCAL_V4 = /^169\.254\./;          // includes 169.254.169.254 (cloud metadata)
 const UNSPEC_V4 = /^0\./;
+const CLOUD_METADATA_V4 = new Set([
+  "100.100.100.200", // Alibaba Cloud
+]);
 
 export function isDangerousHost(host: string): boolean {
   let h = host.replace(/^\[|\]$/g, "").toLowerCase();
-  if (h === "metadata.google.internal") return true;
+  if (h === "metadata.google.internal" || h === "metadata.goog") return true;
   // Normalise IPv4-mapped/-compatible IPv6 to the embedded IPv4 so the v4 rules
   // below still catch it - otherwise `::ffff:169.254.169.254` (or the hex form
   // `::ffff:a9fe:a9fe`) reaches cloud metadata past the /^169\.254\./ check.
@@ -99,8 +102,9 @@ export function isDangerousHost(host: string): boolean {
     const a = parseInt(hex[1], 16), b = parseInt(hex[2], 16);
     h = `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`;
   }
-  if (LINK_LOCAL_V4.test(h) || UNSPEC_V4.test(h)) return true;
+  if (LINK_LOCAL_V4.test(h) || UNSPEC_V4.test(h) || CLOUD_METADATA_V4.has(h)) return true;
   if (h === "fe80::" || h.startsWith("fe80:") || h === "::") return true; // IPv6 link-local / unspecified
+  if (h === "fd00:ec2::254") return true; // AWS IMDS IPv6 endpoint
   if (h === "[::]" || h === "0.0.0.0") return true;
   return false;
 }

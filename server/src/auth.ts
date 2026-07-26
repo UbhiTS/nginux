@@ -59,8 +59,20 @@ export async function verifyPassword(password: string, stored: string): Promise<
   const [tag, n, r, p, saltHex, hashHex] = stored.split("$");
   if (tag !== "scrypt" || !saltHex || !hashHex) return false;
   const params = { N: Number(n), r: Number(r), p: Number(p) };
-  if (!params.N || !params.r || !params.p) return false;
-  const hash = await scryptAsync(password, Buffer.from(saltHex, "hex"), 64, params);
+  // Stored parameters are data, not configuration. Bound them so a corrupt or
+  // attacker-supplied database cannot turn one login into an enormous allocation.
+  if (!Number.isInteger(params.N) || params.N < 1 << 14 || params.N > 1 << 16
+    || (params.N & (params.N - 1)) !== 0
+    || !Number.isInteger(params.r) || params.r < 1 || params.r > 16
+    || !Number.isInteger(params.p) || params.p < 1 || params.p > 4
+    || !/^[0-9a-f]{32}$/i.test(saltHex)
+    || !/^[0-9a-f]{128}$/i.test(hashHex)) return false;
+  let hash: Buffer;
+  try {
+    hash = await scryptAsync(password, Buffer.from(saltHex, "hex"), 64, params);
+  } catch {
+    return false;
+  }
   const expected = Buffer.from(hashHex, "hex");
   return hash.length === expected.length && timingSafeEqual(hash, expected);
 }
@@ -158,7 +170,9 @@ export function deleteUser(id: string): boolean {
 // ---------- 2FA ----------
 export function beginTwofaSetup(userId: string): { secret: string } {
   const secret = generateSecret();
-  db.prepare("UPDATE users SET twofaSecret = ? WHERE id = ?").run(secret, userId);
+  // Do not replace an active authenticator until the new secret has produced a
+  // valid code; abandoning setup must never lock the user out.
+  db.prepare("UPDATE users SET twofaPendingSecret = ? WHERE id = ?").run(secret, userId);
   return { secret };
 }
 
@@ -167,12 +181,22 @@ export function getTwofaSecret(userId: string): string | null {
   return r?.twofaSecret ? String(r.twofaSecret) : null;
 }
 
+export function getPendingTwofaSecret(userId: string): string | null {
+  const r = db.prepare("SELECT twofaPendingSecret FROM users WHERE id = ?").get(userId) as Row | undefined;
+  return r?.twofaPendingSecret ? String(r.twofaPendingSecret) : null;
+}
+
 const hashCode = (c: string) => createHash("sha256").update(c).digest("hex");
 
 export function enableTwofa(userId: string): string[] {
   // Show the user strong (80-bit) codes once; store only their hashes at rest.
   const codes = Array.from({ length: 8 }, () => randomBytes(10).toString("hex"));
-  db.prepare("UPDATE users SET twofaEnabled = 1, backupCodes = ? WHERE id = ?").run(
+  db.prepare(
+    `UPDATE users
+     SET twofaSecret = COALESCE(twofaPendingSecret, twofaSecret),
+         twofaPendingSecret = NULL, twofaEnabled = 1, backupCodes = ?
+     WHERE id = ?`,
+  ).run(
     JSON.stringify(codes.map(hashCode)),
     userId,
   );
@@ -231,13 +255,32 @@ export async function checkCredentials(username: string, password: string): Prom
 }
 
 // ---------- sessions ----------
+const sessionTokenHash = (token: string): string => createHash("sha256").update(token).digest("hex");
+
+// One-time in-place migration: older releases stored replayable session tokens
+// directly. Hash them just like API tokens so a read-only DB disclosure is not
+// immediately an authenticated-session disclosure.
+if (!db.prepare("SELECT 1 FROM settings WHERE key = 'sessionTokensHashed'").get()) {
+  const rows = db.prepare("SELECT token FROM sessions").all() as Row[];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const update = db.prepare("UPDATE sessions SET token = ? WHERE token = ?");
+    for (const row of rows) update.run(sessionTokenHash(String(row.token)), String(row.token));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('sessionTokensHashed', 'true')").run();
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
 export function createSession(userId: string, device: string, ip: string): string {
   const token = randomBytes(32).toString("hex");
   const now = Date.now();
   db.prepare(
     "INSERT INTO sessions (token, userId, device, ip, createdAt, expiresAt) VALUES (?,?,?,?,?,?)",
   ).run(
-    token,
+    sessionTokenHash(token),
     userId,
     device,
     ip,
@@ -250,7 +293,8 @@ export function createSession(userId: string, device: string, ip: string): strin
 
 export function userForSession(token: string | undefined): User | null {
   if (!token) return null;
-  const s = db.prepare("SELECT * FROM sessions WHERE token = ?").get(token) as Row | undefined;
+  const stored = sessionTokenHash(token);
+  const s = db.prepare("SELECT * FROM sessions WHERE token = ?").get(stored) as Row | undefined;
   if (!s) return null;
   if (Date.parse(String(s.expiresAt)) < Date.now()) {
     destroySession(token);
@@ -260,7 +304,7 @@ export function userForSession(token: string | undefined): User | null {
 }
 
 export function destroySession(token: string): void {
-  db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+  db.prepare("DELETE FROM sessions WHERE token = ?").run(sessionTokenHash(token));
 }
 
 export function destroyUserSessions(userId: string): void {
@@ -282,7 +326,7 @@ export function listSessions(): Array<{ token: string; sid: string; userId: stri
     .all() as Row[];
   return rows.map((r) => ({
     token: String(r.token),
-    sid: sessionSid(String(r.token)),
+    sid: String(r.token).slice(0, 16),
     userId: String(r.userId),
     username: String(r.username),
     device: String(r.device),
@@ -295,9 +339,9 @@ export function listSessions(): Array<{ token: string; sid: string; userId: stri
  *  matched. O(n) over live sessions, which is fine at homelab scale. */
 export function revokeSession(sid: string): boolean {
   const rows = db.prepare("SELECT token FROM sessions").all() as Row[];
-  const match = rows.find((r) => sessionSid(String(r.token)) === sid);
+  const match = rows.find((r) => String(r.token).slice(0, 16) === sid);
   if (!match) return false;
-  destroySession(String(match.token));
+  db.prepare("DELETE FROM sessions WHERE token = ?").run(String(match.token));
   return true;
 }
 
@@ -441,15 +485,17 @@ export function securityOverview() {
 }
 
 // ---------- seed ----------
-export async function seedAuthIfEmpty(): Promise<{ usingDefault: boolean }> {
+export async function seedAuthIfEmpty(): Promise<{ usingDefault: boolean; bootstrapPassword?: string }> {
   const count = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as Row).n as number;
   if (count > 0) return { usingDefault: false };
 
-  // Ships with a well-known default (admin/admin) and forces a change on first
-  // login. An operator can instead set NGINUX_ADMIN_PASSWORD to skip the default.
+  // Production must never expose a known first-run credential. If the operator
+  // did not provide one, generate a strong password and print it once at startup.
+  // Local development keeps admin/admin for convenience.
   const envPw = process.env.NGINUX_ADMIN_PASSWORD;
-  const adminPassword = envPw || "admin";
-  const usingDefault = !envPw;
+  const bootstrapPassword = !envPw && IS_PROD ? randomBytes(24).toString("base64url") : undefined;
+  const adminPassword = envPw || bootstrapPassword || "admin";
+  const usingDefault = !envPw && !bootstrapPassword;
   const settings = getSettings();
 
   const admin = await createUser({
@@ -458,7 +504,7 @@ export async function seedAuthIfEmpty(): Promise<{ usingDefault: boolean }> {
     password: adminPassword,
     role: "admin",
   });
-  if (usingDefault) {
+  if (!envPw) {
     db.prepare("UPDATE users SET mustChangePassword = 1 WHERE id = ?").run(admin.id);
   }
 
@@ -479,5 +525,5 @@ export async function seedAuthIfEmpty(): Promise<{ usingDefault: boolean }> {
     logEvent({ type: "host.updated", severity: "notice", actor: "admin", summary: "Disabled login on cloud.ubhi.io", ip: "203.0.113.10", meta: {}, ts: ago(12) });
   }
   logEvent({ type: "system.seed", severity: "info", actor: "system", summary: "Initial admin account created", ip: "", meta: {} });
-  return { usingDefault };
+  return { usingDefault, bootstrapPassword };
 }

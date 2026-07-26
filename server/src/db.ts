@@ -1,10 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProxyHost, Settings } from "./types.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Secrets, session hashes, TOTP seeds, and provider credentials all live under
+// the data directory. Make newly-created files owner-only by default.
+process.umask(0o077);
 
 // Data dir is overridable via env so the container can mount a volume.
 const DATA_DIR = process.env.NGINUX_DATA_DIR ?? join(__dirname, "..", "data");
@@ -92,6 +96,7 @@ db.exec(`
     role          TEXT NOT NULL DEFAULT 'admin',
     scope         TEXT NOT NULL DEFAULT '',
     twofaSecret   TEXT,
+    twofaPendingSecret TEXT,
     twofaEnabled  INTEGER NOT NULL DEFAULT 0,
     backupCodes   TEXT NOT NULL DEFAULT '[]',
     twofaLastCounter INTEGER NOT NULL DEFAULT -1,
@@ -265,8 +270,18 @@ function runMigrations(): void {
   addColumnIfMissing("hosts", "healthCheckType", "TEXT NOT NULL DEFAULT 'tcp'");     // 'tcp' | 'http'
   addColumnIfMissing("hosts", "healthCheckPath", "TEXT NOT NULL DEFAULT '/'");
   addColumnIfMissing("hosts", "healthCheckStatus", "INTEGER NOT NULL DEFAULT 0");    // 0 = any 2xx/3xx
+  // Keep an existing 2FA binding active until its replacement has been proved.
+  addColumnIfMissing("users", "twofaPendingSecret", "TEXT");
 }
 runMigrations();
+
+// Tighten permissions on databases created by older releases too. WAL/SHM may
+// already exist when we get here; future files inherit the restrictive umask.
+for (const path of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
+  if (existsSync(path)) {
+    try { chmodSync(path, 0o600); } catch { /* Windows or read-only mounts */ }
+  }
+}
 
 /** Trim the audit log so it can't grow without bound. Keeps recent rows by time
  *  and an absolute cap by count; returns how many rows were removed. */

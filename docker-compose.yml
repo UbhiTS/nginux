@@ -9,7 +9,9 @@ services:
     container_name: nginux
     restart: unless-stopped
     ports:
-      - "6767:6767" # control-plane UI + API
+      # Loopback-only by default. Set NGINUX_CONTROL_BIND to a specific LAN/VPN
+      # address if other machines need the UI; avoid 0.0.0.0 on public hosts.
+      - "${NGINUX_CONTROL_BIND:-127.0.0.1}:6767:6767" # control-plane UI + API
       - "80:80" # proxied HTTP traffic (data plane)
       - "443:443" # proxied HTTPS traffic (data plane)
     volumes:
@@ -34,7 +36,8 @@ services:
       # :6767 client spoof them. Keep :6767 on the LAN - never port-forward it to
       # the internet (only 80/443 should face the internet).
       - NGINUX_TRUST_PROXY=true
-      # Set a strong admin password on first run (else default is admin/admin):
+      # Optional: set the initial admin password. If omitted, production creates
+      # a random bootstrap password and prints it once in `docker compose logs`.
       # - NGINUX_ADMIN_PASSWORD=change-me-to-something-strong
     # Drop all Linux capabilities, then add back only what's needed to bind
     # :80/:443 and let nginx manage its workers - big blast-radius reduction.

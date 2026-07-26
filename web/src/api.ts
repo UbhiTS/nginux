@@ -90,10 +90,10 @@ export const api = {
 
   // ---- auth ----
   me: () => req<AuthUser>("/auth/me"),
-  login: (username: string, password: string, token?: string) =>
-    req<{ user?: AuthUser; twofaRequired?: boolean }>("/auth/login", {
+  login: (username: string, password: string, token?: string, returnUrl?: string) =>
+    req<{ user?: AuthUser; twofaRequired?: boolean; redirectTo?: string }>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password, token }),
+      body: JSON.stringify({ username, password, token, returnUrl }),
     }),
   logout: () => req<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>

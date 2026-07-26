@@ -137,18 +137,6 @@ button { font-family: inherit; cursor: pointer; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 18px 18px 16px; border-bottom: 1px solid var(--border-soft); }
 .brand-logo { width: 32px; height: 32px; border-radius: 9px; display: block; object-fit: contain; box-shadow: 0 2px 10px rgba(122, 43, 255, 0.35); }
 
-/* Animated brand mark: the orbit ring + nodes rotate slowly, the sparkle twinkles. */
-.logo-orbit { transform-box: view-box; transform-origin: 32px 32px; animation: logo-spin 16s linear infinite; }
-.logo-spark { transform-box: fill-box; transform-origin: center; animation: logo-twinkle 4.5s ease-in-out infinite; }
-@keyframes logo-spin { to { transform: rotate(360deg); } }
-@keyframes logo-twinkle {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  45% { opacity: 0.5; transform: scale(0.82); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .logo-orbit, .logo-spark { animation: none; }
-}
-
 /* ---------- macOS-style notification toasts (top-right) ---------- */
 .toast-stack { position: fixed; top: 16px; right: 16px; z-index: 50; display: flex; flex-direction: column; gap: 10px; width: 350px; max-width: calc(100vw - 32px); pointer-events: none; }
 .toast {

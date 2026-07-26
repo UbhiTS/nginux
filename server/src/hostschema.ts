@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getSettings } from "./db.ts";
 import {
-  hasNginxMetachars, isHeaderName, isHost, isHostname, isHostPort,
+  hasNginxMetachars, isDangerousHost, isHeaderName, isHost, isHostname, isHostPort,
   isIpOrCidr, isLocationPath, splitEntries, splitLines,
 } from "./validate.ts";
 
@@ -30,12 +30,17 @@ export const validCustomHeaders = (s: string): boolean => splitLines(s).every(is
 /** One "/path host:port" line - both parts strictly validated (config sink). */
 export function isPathRuleLine(line: string): boolean {
   const [p, t, ...rest] = line.split(/\s+/);
-  return rest.length === 0 && isLocationPath(p) && isHostPort(t);
+  return rest.length === 0 && isLocationPath(p) && safeHostPort(t);
 }
 export const validPathRules = (s: string): boolean => splitLines(s).every(isPathRuleLine);
 
 /** Extra upstream targets, "host:port" per line. */
-export const validUpstreams = (s: string): boolean => splitLines(s).every(isHostPort);
+function safeHostPort(value: string): boolean {
+  if (!isHostPort(value)) return false;
+  const colon = value.lastIndexOf(":");
+  return colon > 0 && !isDangerousHost(value.slice(0, colon));
+}
+export const validUpstreams = (s: string): boolean => splitLines(s).every(safeHostPort);
 
 /** Each IP allow/deny entry is a valid IP or CIDR. */
 export const validIpList = (s: string): boolean => splitEntries(s).every(isIpOrCidr);
@@ -71,7 +76,9 @@ export const hostInput = z.object({
   iconUrl: z.string().max(4096).refine(validIconUrl, "Icon must be a dashboard-icons URL or an uploaded image.").default(""),
   domain: z.string().min(1).max(253).refine(isHostname, "Invalid domain/hostname."),
   forwardScheme: z.enum(["http", "https"]).default("http"),
-  forwardHost: z.string().min(1).refine(isHost, "Invalid forward host (must be a hostname or IP)."),
+  forwardHost: z.string().min(1).max(253)
+    .refine(isHost, "Invalid forward host (must be a hostname or IP).")
+    .refine((s) => !isDangerousHost(s), "Cloud metadata, link-local, and unspecified proxy targets are not allowed."),
   forwardPort: z.number().int().min(1).max(65535),
   preset: z.string().max(64).default("custom"),
   websockets: z.boolean().default(false),
@@ -113,12 +120,35 @@ export const hostInput = z.object({
 
 export type HostInput = z.infer<typeof hostInput>;
 
-/** Would putting `domain` on the control plane away from :6767 lose access to
- *  NginUX? The NginUX public URL (Settings → Instance) doubles as the SSO
- *  sign-in URL; a host on that domain that does NOT forward to the control-plane
- *  port would break the sign-in portal. Forwarding TO :6767 is the allowed setup.
- *  ONE definition shared by the REST create/update guards and the agent path. */
-export function isControlPlaneDomain(domain: string, forwardPort?: number): boolean {
+function normalizedHost(host: string): string {
+  return host.replace(/^\[|\]$/g, "").toLowerCase();
+}
+
+/** The one exact upstream target that may receive the NginUX session cookie. */
+export function isControlPlaneTarget(
+  forwardHost: string,
+  forwardPort: number,
+  forwardScheme: "http" | "https" = "http",
+): boolean {
+  try {
+    const u = new URL(process.env.NGINUX_CONTROL_URL ?? "http://127.0.0.1:6767");
+    const port = Number(u.port || (u.protocol === "https:" ? 443 : 80));
+    return u.protocol === `${forwardScheme}:`
+      && normalizedHost(u.hostname) === normalizedHost(forwardHost)
+      && port === forwardPort;
+  } catch {
+    return false; // invalid deployment configuration fails closed
+  }
+}
+
+/** Would this service claim the public portal while forwarding somewhere other
+ * than the exact control-plane target? Shared by REST and agent write paths. */
+export function isControlPlaneDomain(
+  domain: string,
+  forwardHost: string,
+  forwardPort: number,
+  forwardScheme: "http" | "https" = "http",
+): boolean {
   const raw = getSettings().ssoLoginUrl?.trim();
   if (!raw) return false;
   let h: string;
@@ -126,6 +156,5 @@ export function isControlPlaneDomain(domain: string, forwardPort?: number): bool
     h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
   } catch { return false; }
   if (h !== domain.toLowerCase()) return false;
-  const controlPort = Number(process.env.PORT ?? 6767);
-  return forwardPort !== controlPort; // allowed when it points at the control plane
+  return !isControlPlaneTarget(forwardHost, forwardPort, forwardScheme);
 }

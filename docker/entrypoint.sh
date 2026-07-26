@@ -1,6 +1,7 @@
 #!/bin/sh
 # Runs under tini (PID 1), which reaps zombies and forwards signals to us.
 set -eu
+umask 077
 
 # --- runtime user (PUID / PGID) ----------------------------------------------
 # NginUX runs nginx + the control plane as an unprivileged user so everything it
@@ -17,9 +18,17 @@ set -eu
 mkdir -p /data/nginx/conf.d /data/nginx/stream.d /data/logs /data/certs /data/geoip /data/acme-webroot
 touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/nginx/banned.conf /data/nginx/stream_banned.conf
 
-# Adopt the data-dir owner unless PUID/PGID were set explicitly.
-PUID="${PUID:-$(stat -c %u /data 2>/dev/null || echo 0)}"
-PGID="${PGID:-$(stat -c %g /data 2>/dev/null || echo 0)}"
+# Adopt a non-root data-dir owner unless PUID/PGID were set explicitly. Fresh
+# named volumes are root-owned, so fall back to the bundled `node` user instead
+# of silently running the whole ingress stack as root.
+DATA_UID="$(stat -c %u /data 2>/dev/null || echo 0)"
+DATA_GID="$(stat -c %g /data 2>/dev/null || echo 0)"
+if [ "${PUID+x}" != "x" ]; then
+  if [ "$DATA_UID" = "0" ]; then PUID="$(id -u node)"; else PUID="$DATA_UID"; fi
+fi
+if [ "${PGID+x}" != "x" ]; then
+  if [ "$DATA_GID" = "0" ]; then PGID="$(id -g node)"; else PGID="$DATA_GID"; fi
+fi
 
 # nginx.conf includes geoip.conf and its log_format references
 # $geoip2_country_iso_code, so geoip.conf must define BOTH variables before nginx
@@ -45,7 +54,7 @@ fi
 ROOT_MODE=0
 if [ "$PUID" = "0" ]; then
   ROOT_MODE=1
-  echo "[nginux] running as root (data dir is root-owned, or PUID=0)"
+  echo "[nginux] running as root because PUID=0 was explicitly selected"
 else
   # Resolve or create a group at PGID.
   if getent group "$PGID" >/dev/null 2>&1; then

@@ -57,6 +57,12 @@ const err = (id: JsonRpcRequest["id"], code: number, message: string) => ({ json
 
 /** Handle one MCP JSON-RPC message. Returns null for notifications (no reply). */
 export async function handleMcp(principal: Principal, msg: JsonRpcRequest): Promise<object | null> {
+  if (!msg || typeof msg !== "object" || Array.isArray(msg)
+    || msg.jsonrpc !== "2.0" || typeof msg.method !== "string"
+    || (msg.params !== undefined && (!msg.params || typeof msg.params !== "object" || Array.isArray(msg.params)))) {
+    const badId = msg && typeof msg === "object" && !Array.isArray(msg) ? msg.id : null;
+    return err(badId, -32600, "Invalid JSON-RPC request.");
+  }
   const { id, method, params = {} } = msg;
 
   switch (method) {
@@ -85,8 +91,12 @@ export async function handleMcp(principal: Principal, msg: JsonRpcRequest): Prom
       });
 
     case "tools/call": {
-      const name = String(params.name);
-      const args = (params.arguments as Record<string, unknown>) ?? {};
+      if (typeof params.name !== "string"
+        || (params.arguments !== undefined && (!params.arguments || typeof params.arguments !== "object" || Array.isArray(params.arguments)))) {
+        return err(id, -32602, "tools/call requires a string name and object arguments.");
+      }
+      const name = params.name;
+      const args = (params.arguments as Record<string, unknown> | undefined) ?? {};
       const r = await callTool(principal, name, args);
       if (r.status === "error") {
         return ok(id, { content: [{ type: "text", text: r.message ?? "error" }], isError: true });
