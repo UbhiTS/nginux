@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type AuthUser } from "./api.ts";
+import { api, AUTH_REQUIRED_EVENT, type AuthUser } from "./api.ts";
 import type { ProxyHost, Settings } from "./types.ts";
 import { useTheme } from "./theme.ts";
 import { Icon } from "./icons.tsx";
@@ -95,6 +95,15 @@ export function App() {
   // Check session on load.
   useEffect(() => {
     api.me().then(setUser).catch(() => setUser(null)).finally(() => setAuthChecked(true));
+  }, []);
+
+  // Any authenticated API request can discover that the session expired. Move
+  // back to sign-in immediately instead of leaving every page mounted with an
+  // "Authentication required" error.
+  useEffect(() => {
+    const onAuthRequired = () => setUser(null);
+    window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
   }, []);
 
   // Keep the route in sync with the URL hash (browser back/forward, manual edits).

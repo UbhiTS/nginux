@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { setupTestEnv } from "./helpers.ts";
 
 setupTestEnv();
-const { hostInput, isControlPlaneDomain } = await import("../src/hostschema.ts");
+const { hostInput, isControlPlaneDomain, isControlPlanePortalDomain } = await import("../src/hostschema.ts");
 const { sanitizeHostPatch } = await import("../src/tools.ts");
 const { saveSettings } = await import("../src/db.ts");
 
@@ -120,4 +120,17 @@ test("isControlPlaneDomain flags a portal-domain host pointed off :6767, allows 
   assert.equal(isControlPlaneDomain("other.example.com", "attacker.example", 8080), false, "a different domain is unaffected");
   saveSettings({ ssoLoginUrl: "" });
   assert.equal(isControlPlaneDomain("portal.example.com", "attacker.example", 8080), false, "no SSO URL configured -> nothing to protect");
+});
+
+test("control-plane portal identity covers the global URL and every configured realm", () => {
+  saveSettings({
+    ssoLoginUrl: "https://NginUX.Primary.Example.com",
+    ssoRealms: JSON.stringify([
+      { baseDomain: "secondary.example", loginUrl: "https://portal.secondary.example/" },
+    ]),
+  });
+  assert.equal(isControlPlanePortalDomain("nginux.primary.example.com"), true);
+  assert.equal(isControlPlanePortalDomain("PORTAL.SECONDARY.EXAMPLE"), true);
+  assert.equal(isControlPlanePortalDomain("app.secondary.example"), false);
+  saveSettings({ ssoLoginUrl: "", ssoRealms: "" });
 });

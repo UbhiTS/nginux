@@ -8,7 +8,7 @@ import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
 import { realmForHost } from "./realms.ts";
 import { writeGeoipConf } from "./geoip.ts";
-import { isControlPlaneTarget } from "./hostschema.ts";
+import { isControlPlanePortalDomain, isControlPlaneTarget } from "./hostschema.ts";
 // Canonical tokenisers (shared with the validators in hostschema.ts, so a value
 // is generated exactly the way it was validated). splitEntries == the old splitList.
 import { splitEntries as splitList, splitLines } from "./validate.ts";
@@ -115,7 +115,15 @@ export function redactConfig(conf: string): string {
 /** Generate the nginx server block for one host. Human-readable on purpose. */
 export function generateHostConfig(h: ProxyHost): string {
   const preset = getPreset(h.preset);
-  const upstream = `${h.forwardScheme}://${h.forwardHost}:${h.forwardPort}`;
+  // A configured public NginUX portal is always routed to the control plane
+  // inside this container. NAS installs frequently saved the NAS/LAN address as
+  // the service upstream; trusting that address merely because the port is 6767
+  // could leak the session cookie, while stripping it logs the admin out. Pinning
+  // the effective upstream to CONTROL_URL is both safe and topology-independent.
+  const portalSelfHost = isControlPlanePortalDomain(h.domain);
+  const upstream = portalSelfHost
+    ? CONTROL_URL.replace(/\/+$/, "")
+    : `${h.forwardScheme}://${h.forwardHost}:${h.forwardPort}`;
   const lines: string[] = [];
 
   lines.push(`# Managed by NginUX - ${h.name} (${h.domain})`);
@@ -130,7 +138,9 @@ export function generateHostConfig(h: ProxyHost): string {
   }
 
   // Load balancing: emit an upstream block when extra targets are configured.
-  const extraTargets = splitLines(h.upstreams);
+  // A login portal must have one deterministic upstream: the control plane.
+  // Ignore legacy load-balancer targets that could otherwise receive its cookie.
+  const extraTargets = portalSelfHost ? [] : splitLines(h.upstreams);
   let proxyPass = upstream;
   if (extraTargets.length > 0) {
     const poolName = "ngx_" + h.domain.replace(/[^a-z0-9]/gi, "_");
@@ -298,16 +308,18 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   const safeName = htmlEscape(h.name);
 
   // Only the exact configured control-plane target may receive the session
-  // cookie. A domain/port heuristic would let an editor repoint the public
-  // portal at attacker.example:6767 and collect an administrator's cookie.
-  const proxiesControlPlane = isControlPlaneTarget(h.forwardHost, h.forwardPort, h.forwardScheme);
+  // cookie. For a public portal, `proxyPass` was pinned to CONTROL_URL above;
+  // the user-entered NAS/LAN target is never used and therefore cannot collect
+  // the bearer. A domain/port heuristic alone would not provide that guarantee.
+  const proxiesControlPlane = portalSelfHost
+    || isControlPlaneTarget(h.forwardHost, h.forwardPort, h.forwardScheme);
   const cookieStrip = proxiesControlPlane ? "" : `\n        proxy_set_header Cookie $backend_cookie;`;
   const grpcCookieStrip = proxiesControlPlane ? "" : `\n        grpc_set_header Cookie $backend_cookie;`;
 
   const locationBody = h.maintenanceMode
     ? `        default_type text/html;${headerBlock}
         return 503 '<!doctype html><html><head><meta charset="utf-8"><title>Be right back</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}h1{font-size:22px}</style></head><body><div><h1>🔧 Be right back</h1><p>${safeName} is down for maintenance.</p></div></body></html>';`
-    : h.protocol === "grpc"
+    : h.protocol === "grpc" && !portalSelfHost
     ? `        grpc_pass grpc://${extraTargets.length ? proxyPass.replace(/^https?:\/\//, "") : `${h.forwardHost}:${h.forwardPort}`};
         grpc_set_header Host $host;${grpcCookieStrip}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 `
@@ -332,7 +344,12 @@ ${extra ? extra + "\n" : ""}`;
   // WHOLE host, so skip path routes entirely then (else /grafana keeps serving
   // live traffic while `/` shows the "be right back" page).
   const pathProtections = `${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}`;
-  const pathBlocks = h.maintenanceMode ? "" : splitLines(h.pathRules).map((line) => {
+  // Portal path routes are suppressed: a legacy /api path could shadow the
+  // dashboard and route authenticated API calls away from the control plane.
+  // Every path route on an ordinary service strips the NginUX bearer regardless
+  // of the root upstream.
+  const pathCookieStrip = `\n        proxy_set_header Cookie $backend_cookie;`;
+  const pathBlocks = h.maintenanceMode || portalSelfHost ? "" : splitLines(h.pathRules).map((line) => {
     const [p, t] = line.split(/\s+/);
     if (!p || !t) return "";
     const target = /^https?:\/\//.test(t) ? t : `http://${t}`;
@@ -341,7 +358,7 @@ ${extra ? extra + "\n" : ""}`;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;${cookieStrip}${pathProtections}
+        proxy_set_header X-Forwarded-Proto $scheme;${pathCookieStrip}${pathProtections}
     }
 `;
   }).join("");

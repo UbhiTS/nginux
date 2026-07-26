@@ -17,6 +17,8 @@ export interface AppNotification {
   dismissible: boolean;
 }
 
+export const AUTH_REQUIRED_EVENT = "nginux:auth-required";
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   // Only declare a JSON body when we're actually sending one. Otherwise Fastify
@@ -27,10 +29,20 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const res = await fetch(`/api${path}`, { ...init, headers });
   if (!res.ok) {
+    // If a live session expires (or the container is replaced with a fresh data
+    // volume), leave the stale authenticated shell and return to sign-in. Login
+    // itself intentionally uses 401 for bad credentials, so don't rebroadcast it.
+    if (res.status === 401 && path !== "/auth/login" && typeof window !== "undefined") {
+      window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+    }
     let detail = res.statusText;
     try {
       const body = await res.json();
-      detail = body.error ? JSON.stringify(body.error) : detail;
+      detail = typeof body.error === "string"
+        ? body.error
+        : body.error
+          ? JSON.stringify(body.error)
+          : detail;
     } catch {
       /* ignore */
     }

@@ -1,61 +1,41 @@
-# NginUX v0.1.11
+# NginUX v0.1.12
 
-NginUX v0.1.11 is the clean follow-up to v0.1.7. It contains the application and
-security work completed since that release, with the source version, Docker image,
-Git tag, and release notes synchronized again.
+NginUX v0.1.12 fixes authenticated dashboard requests through a public NginUX
+hostname on NAS and other Docker hosts.
 
-The former v0.1.8-v0.1.10 tags were produced by release automation on ordinary
-`main` pushes while the application still identified itself as v0.1.7. They were
-not three distinct application releases. That automation has been corrected:
-releases now require an explicit source-version change and can no longer invent a
-tag that disagrees with the API/UI version.
+## Fixed
 
-## New in v0.1.11
+### Public dashboard no longer returns `Authentication required`
 
-### Safer production defaults
+v0.1.11 tightened session-cookie forwarding so only the literal configured
+control-plane target could receive the NginUX session. A common NAS setup stores
+the NAS hostname or LAN address as the managed NginUX service's upstream—even
+though nginx and the control plane are in the same container. The alias still
+reached the control plane, but v0.1.11 did not recognize it and stripped
+`nginux_session`; the UI loaded while every authenticated `/api/*` request
+returned 401.
 
-- Fresh production installs generate a strong, one-time admin password and print
-  it to the container log instead of exposing the known `admin` / `admin`
-  credential. The password must still be replaced on first sign-in.
-- The supplied Compose deployment binds the control plane to loopback by default.
-  Operators can opt into a specific LAN/VPN address with
-  `NGINUX_CONTROL_BIND`.
-- Fresh root-owned Docker volumes now fall back to the bundled unprivileged user,
-  and the entrypoint creates sensitive files with a restrictive umask.
+The public portal is now identified by the configured **NginUX public URL**
+(including multi-domain login realms) and pinned directly to
+`NGINUX_CONTROL_URL` inside the container. This:
 
-### Authentication and proxy hardening
+- works whether the stored service target is loopback, a Docker/NAS hostname, or
+  a LAN address;
+- keeps the session cookie only on the internal control-plane hop;
+- never sends the session to the user-entered alias;
+- ignores legacy load-balancer and path-route targets on the portal host so they
+  cannot shadow or collect dashboard API requests.
 
-- Session tokens are hashed at rest, including an in-place migration for sessions
-  created by older releases.
-- Stored scrypt parameters are bounded before use, preventing corrupt database
-  values from forcing excessive password-check allocations.
-- Re-enrolling 2FA no longer replaces the active authenticator secret until the
-  new code has been verified.
-- Cookie stripping now fails closed when an adversarial request contains more
-  duplicate NginUX session cookies than the normal stripping budget.
-- Control-plane proxy exceptions require the exact configured scheme, host, and
-  port. Login redirects require an exact enabled service instead of accepting a
-  wildcard match.
+Ordinary services and their path routes continue to have the NginUX session
+cookie stripped before proxying.
 
-### Input, agent, and download safety
+### Expired sessions return to sign-in
 
-- Proxy targets reject cloud-metadata, link-local, unspecified, legacy numeric
-  IPv4, and disguised IPv6 forms consistently across REST and agent paths.
-- Agent tool arguments receive common schema validation before approval or
-  execution, and concurrent approval attempts can no longer run the same
-  destructive tool twice.
-- GeoIP downloads now enforce response and decompression size limits and validate
-  the database before activation.
-
-### Installable app and release integrity
-
-- NginUX now includes a web app manifest and complete icon set for installation as
-  a PWA on desktop and mobile.
-- GitHub Actions are commit-pinned, dependency auditing is part of the release
-  gate, and releases continue to require the server/web suites, the real-Nginx
-  boundary test, and a booted-container health check.
-- Ordinary pushes to `main` run CI but no longer create releases. A release is
-  built only when the source version is explicitly advanced.
+If an authenticated API call genuinely returns 401—for example after replacing
+a container with a fresh data volume—the UI now returns to the sign-in screen
+instead of leaving every page mounted with an `Authentication required` error.
+Rejected login credentials remain an inline login error and do not trigger this
+session-expired path.
 
 ## Upgrade
 
@@ -69,11 +49,11 @@ docker compose up -d
 Or pull the immutable version directly:
 
 ```bash
-docker pull ghcr.io/ubhits/nginux:v0.1.11
+docker pull ghcr.io/ubhits/nginux:v0.1.12
 ```
 
 The image is multi-architecture (`linux/amd64` and `linux/arm64`). Existing data
-in `/data` is migrated in place.
+in `/data` is preserved.
 
 > **Keep the `:6767` control plane off the public internet.** Forward only
 > `80`/`443` to proxied services; reach the admin plane over your LAN or VPN.

@@ -314,11 +314,13 @@ before(async () => {
      pathRules: `/grafana 127.0.0.1:${ECHO2}` }); // "/path host:port" per line (not JSON)
   // A3: securityHeaders on + a customNginx add_header — the managed headers must survive.
   H({ id: "hdr", name: "Hdr", domain: "hdr.example.com", requireLogin: true, securityHeaders: true, customNginx: "add_header X-Custom foo;" });
-  // The control-plane self-host: NginUX exposed as its OWN managed host (like nginux.<base>
-  // -> the control plane). Domain == ssoLoginUrl host AND forward target == the control
-  // plane, so it's detected by BOTH signals; its session cookie must NOT be stripped or the
-  // admin is logged out of their own dashboard. (v0.1.7 regression, mirrors the real setup.)
-  H({ id: "self", name: "Self", domain: "nginux.example.com", forwardHost: "127.0.0.1", forwardPort: CP_PORT });
+  // The control-plane self-host: NginUX exposed as its OWN managed host (like
+  // nginux.<base> -> a NAS/LAN alias for the control plane). `localhost` reaches
+  // the same listener but is deliberately NOT the literal NGINUX_CONTROL_URL
+  // host (`127.0.0.1`), reproducing the v0.1.11 NAS regression: exact-target-only
+  // detection stripped the session and every authenticated dashboard API call
+  // returned 401. The portal domain must be pinned internally instead.
+  H({ id: "self", name: "Self", domain: "nginux.example.com", forwardHost: "localhost", forwardPort: CP_PORT });
   // ssl:true fixture — exercises the gate inside a real `listen 443 ssl` block AND proves
   // the paired `listen 80` redirect server 301s without proxying to the backend.
   try {
@@ -478,7 +480,9 @@ test("C3  require2fa host denies a session without 2FA", { skip: SKIP }, async (
 });
 
 test("C4  require2fa host allows a 2FA-enrolled session (positive control)", { skip: SKIP }, async () => {
-  assertAllowed(await via("vault.example.com", { cookie: cookies.manager2fa }), "2FA session on require2fa host");
+  const r = await via("vault.example.com", { cookie: cookies.manager2fa });
+  assertAllowed(r, "2FA session on require2fa host");
+  assert.ok(!/nginux_session=/.test(r.body), "2FA authorization must not expose the session bearer to the hosted service");
 });
 
 test("C5  scoped user is denied a host outside their scope (403, not a login redirect)", { skip: SKIP }, async () => {
@@ -643,11 +647,16 @@ test("A1c an inbound X-Forwarded-For value cannot spoof the upstream client IP",
   assert.ok(!r.body.includes("203.0.113.250"), "attacker-provided XFF must be discarded at the edge");
 });
 
-test("A1b the control-plane self-host KEEPS the session cookie — admin stays logged in", { skip: SKIP }, async () => {
-  // NginUX is exposed as one of its own managed hosts (forward target = the control plane).
-  // A1 must NOT strip nginux_session there, or every authenticated dashboard call arrives
-  // cookie-less and 401s ("couldn't reach the server"). This is the v0.1.6 production break.
+test("A1b a NAS-alias control-plane self-host KEEPS the session cookie — admin stays logged in", { skip: SKIP }, async () => {
+  // NginUX is exposed through an alias rather than the literal control URL.
+  // A1 must NOT strip nginux_session there, or every authenticated dashboard call
+  // arrives cookie-less and 401s ("Authentication required" on every page).
   assert.equal((await via("nginux.example.com", { path: "/api/health" })).status, 200, "self-host proxies to the control plane");
+  assert.equal(
+    (await via("nginux.example.com", { path: "/api/hosts" })).status,
+    401,
+    "pinning the public portal internally must not bypass control-plane authentication",
+  );
   const authed = await via("nginux.example.com", { path: "/api/hosts", cookie: cookies.admin });
   assert.equal(authed.status, 200, "an authenticated call through the self-host must reach the control plane WITH its session (cookie not stripped)");
 });

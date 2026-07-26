@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getSettings } from "./db.ts";
+import { parseRealms } from "./realms.ts";
 import {
   hasNginxMetachars, isDangerousHost, isHeaderName, isHost, isHostname, isHostPort,
   isIpOrCidr, isLocationPath, splitEntries, splitLines,
@@ -121,7 +122,32 @@ export const hostInput = z.object({
 export type HostInput = z.infer<typeof hostInput>;
 
 function normalizedHost(host: string): string {
-  return host.replace(/^\[|\]$/g, "").toLowerCase();
+  return host.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+}
+
+/** True when `domain` is one of the configured public NginUX login portals.
+ *
+ * A NAS deployment often stores its LAN address as the managed service's
+ * forward target even though nginx and the control plane live in this same
+ * container. The generator uses this public-domain identity to route that
+ * service directly to NGINUX_CONTROL_URL, so it can keep the session cookie
+ * without ever trusting or leaking it to the user-entered upstream. */
+export function isControlPlanePortalDomain(domain: string): boolean {
+  const settings = getSettings();
+  const urls = [
+    settings.ssoLoginUrl,
+    ...parseRealms(settings.ssoRealms).map((realm) => realm.loginUrl),
+  ];
+  const wanted = normalizedHost(domain);
+  return urls.some((raw) => {
+    if (!raw?.trim()) return false;
+    try {
+      const url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+      return normalizedHost(url.hostname) === wanted;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** The one exact upstream target that may receive the NginUX session cookie. */
@@ -149,12 +175,6 @@ export function isControlPlaneDomain(
   forwardPort: number,
   forwardScheme: "http" | "https" = "http",
 ): boolean {
-  const raw = getSettings().ssoLoginUrl?.trim();
-  if (!raw) return false;
-  let h: string;
-  try {
-    h = new URL(raw.includes("://") ? raw : `https://${raw}`).hostname.toLowerCase();
-  } catch { return false; }
-  if (h !== domain.toLowerCase()) return false;
+  if (!isControlPlanePortalDomain(domain)) return false;
   return !isControlPlaneTarget(forwardHost, forwardPort, forwardScheme);
 }

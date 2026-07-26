@@ -113,17 +113,37 @@ test("server_name is the host domain", () => {
   assert.ok(conf.includes("server_name app.example.com;"), "server_name must be the host domain");
 });
 
-test("only the exact control target receives the session cookie", () => {
+test("the public portal is pinned internally while ordinary backends never receive the session cookie", () => {
   saveSettings({ ssoLoginUrl: "https://portal.example.com" });
   const exact = generateHostConfig(makeHost({
     domain: "portal.example.com", forwardScheme: "http", forwardHost: "127.0.0.1", forwardPort: 6767,
   }));
   assert.ok(!exact.includes("proxy_set_header Cookie $backend_cookie;"));
 
-  const remoteSamePort = generateHostConfig(makeHost({
+  // NAS deployments commonly store a LAN hostname/IP here. The public portal
+  // identity must route to CONTROL_URL itself, never trust or leak the bearer to
+  // that user-entered target, and keep the cookie for authenticated API calls.
+  const nasAlias = generateHostConfig(makeHost({
     domain: "portal.example.com", forwardScheme: "http", forwardHost: "attacker.example", forwardPort: 6767,
   }));
-  assert.ok(remoteSamePort.includes("proxy_set_header Cookie $backend_cookie;"));
+  assert.ok(nasAlias.includes("proxy_pass http://127.0.0.1:6767;"));
+  assert.ok(!nasAlias.includes("attacker.example"));
+  assert.ok(!nasAlias.includes("proxy_set_header Cookie $backend_cookie;"));
+
+  const ordinary = generateHostConfig(makeHost({
+    domain: "ordinary.example.com", forwardScheme: "http", forwardHost: "attacker.example", forwardPort: 6767,
+  }));
+  assert.ok(ordinary.includes("proxy_pass http://attacker.example:6767;"));
+  assert.ok(ordinary.includes("proxy_set_header Cookie $backend_cookie;"));
+
+  const portalWithPath = generateHostConfig(makeHost({
+    domain: "portal.example.com",
+    forwardHost: "nas.internal",
+    forwardPort: 6767,
+    upstreams: "attacker.example:6767",
+    pathRules: "/api attacker.example:6767",
+  }));
+  assert.ok(!portalWithPath.includes("attacker.example"), "portal aliases, pools, and path routes must not shadow the control plane");
   saveSettings({ ssoLoginUrl: "" });
 });
 
