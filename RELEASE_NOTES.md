@@ -1,145 +1,79 @@
-# NginUX v0.1.7
+# NginUX v0.1.11
 
-NginUX is a self-hosted reverse-proxy manager for your homelab — expose internal
-services over HTTPS, gate them behind a login, and watch your traffic, all from one
-clean dashboard. Think Nginx Proxy Manager, rebuilt around a live network-topology
-view, real metrics, and an agent-ready API.
+NginUX v0.1.11 is the clean follow-up to v0.1.7. It contains the application and
+security work completed since that release, with the source version, Docker image,
+Git tag, and release notes synchronized again.
 
-## New in v0.1.7
+The former v0.1.8-v0.1.10 tags were produced by release automation on ordinary
+`main` pushes while the application still identified itself as v0.1.7. They were
+not three distinct application releases. That automation has been corrected:
+releases now require an explicit source-version change and can no longer invent a
+tag that disagrees with the API/UI version.
 
-**Hotfix for v0.1.5/v0.1.6.** The v0.1.5 cookie-strip feature (which stops your session
-cookie leaking to proxied backends) was also stripping it from the one backend that must
-keep it — **NginUX's own control plane**, when you expose NginUX as one of its own hosts.
-The result on v0.1.6: you could sign in, but the dashboard showed "couldn't reach the
-server" because every authenticated call arrived without its session. Fixed:
+## New in v0.1.11
 
-- The cookie strip is now **suppressed for the host that fronts NginUX itself** (detected
-  by its forward target being the control plane, or its domain matching your NginUX public
-  URL). Third-party backends are still protected. **Upgrade to v0.1.7 if you're on v0.1.6.**
-- A new integration test reproduces the exact break (an authenticated call through the
-  self-host must reach the control plane with its session) and was verified to fail without
-  the fix — so it can't regress.
+### Safer production defaults
 
-## New in v0.1.6
+- Fresh production installs generate a strong, one-time admin password and print
+  it to the container log instead of exposing the known `admin` / `admin`
+  credential. The password must still be replaced on first sign-in.
+- The supplied Compose deployment binds the control plane to loopback by default.
+  Operators can opt into a specific LAN/VPN address with
+  `NGINUX_CONTROL_BIND`.
+- Fresh root-owned Docker volumes now fall back to the bundled unprivileged user,
+  and the entrypoint creates sensitive files with a restrictive umask.
 
-**Hotfix for v0.1.5.** The new stream-ban file (v0.1.5) was written to a path that
-doesn't exist inside the container image, so a fresh v0.1.5 container crash-looped on
-startup and the dashboard couldn't reach its backend. Fixed:
+### Authentication and proxy hardening
 
-- The stream ban list is now written under `/data` (where it belongs and where the
-  include expects it), and the control plane creates the directory if it's missing, so a
-  startup write can never crash-loop the container again. **Upgrade straight to v0.1.6 if
-  you pulled v0.1.5.**
-- CI now **builds and boots the real image** on every release and fails if the container
-  doesn't come up — the gap that let v0.1.5 ship. (The container's own health check was
-  always correct; the "unhealthy" status was just a symptom of the crash.)
+- Session tokens are hashed at rest, including an in-place migration for sessions
+  created by older releases.
+- Stored scrypt parameters are bounded before use, preventing corrupt database
+  values from forcing excessive password-check allocations.
+- Re-enrolling 2FA no longer replaces the active authenticator secret until the
+  new code has been verified.
+- Cookie stripping now fails closed when an adversarial request contains more
+  duplicate NginUX session cookies than the normal stripping budget.
+- Control-plane proxy exceptions require the exact configured scheme, host, and
+  port. Login redirects require an exact enabled service instead of accepting a
+  wildcard match.
 
-## New in v0.1.5
+### Input, agent, and download safety
 
-Data-plane hardening: three defence-in-depth gaps at the nginx layer — deferred in
-v0.1.4 because they couldn't be validated without real nginx — are now closed and
-**proven end-to-end** by the integration suite that shipped last release.
+- Proxy targets reject cloud-metadata, link-local, unspecified, legacy numeric
+  IPv4, and disguised IPv6 forms consistently across REST and agent paths.
+- Agent tool arguments receive common schema validation before approval or
+  execution, and concurrent approval attempts can no longer run the same
+  destructive tool twice.
+- GeoIP downloads now enforce response and decompression size limits and validate
+  the database before activation.
 
-- **The session cookie no longer leaks to your backends.** NginUX's SSO cookie is issued
-  for the whole base domain, so it used to ride along to every proxied app (which could
-  log or replay it). It's now stripped from the request before it reaches the backend —
-  all your other cookies pass through untouched, and the login check itself is unaffected.
-- **IP bans now cover TCP/UDP/SNI services too.** Bans previously applied only to HTTP
-  hosts; a banned address could still reach a raw TCP or SNI-passthrough stream. Bans are
-  now enforced at the stream layer as well. (Per-country blocking for streams remains a
-  known gap — it needs an nginx module that isn't bundled yet.)
-- **Custom nginx snippets can't silently drop your security headers.** Because of how
-  nginx inherits `add_header`, a single `add_header` in a service's custom config used to
-  wipe out the managed security headers (X-Frame-Options, etc.) for that service. Managed
-  headers are now emitted so they always coexist with your custom ones.
+### Installable app and release integrity
 
-Each fix is verified through real nginx (14 → **19 core + 3 hardening invariants**), and
-each new test was confirmed to fail if its fix is reverted — so these can't silently
-regress. server 269 tests, web 325, plus the real-nginx integration gate on every release.
+- NginUX now includes a web app manifest and complete icon set for installation as
+  a PWA on desktop and mobile.
+- GitHub Actions are commit-pinned, dependency auditing is part of the release
+  gate, and releases continue to require the server/web suites, the real-Nginx
+  boundary test, and a booted-container health check.
+- Ordinary pushes to `main` run CI but no longer create releases. A release is
+  built only when the source version is explicitly advanced.
 
-## New in v0.1.4
+## Upgrade
 
-A security-and-polish release: the login gate is now hardened to stone and **proven**
-so by a real-nginx test, and the interface got a full accessibility and visual pass.
-
-**Security — the login gate, hardened and proven**
-- **Fail-closed forward-auth.** A full security audit found (and this release closes) a
-  recurrence of the "unauthenticated request reaches a service" class: a login-gated host
-  with a wildcard or mixed-case domain could fail *open*. The gate now resolves hosts
-  case-insensitively + wildcard-aware and **denies by default** for every role when a
-  gated request can't be tied to a known host — the safe direction to fail.
-- **Real-nginx boundary test.** A new integration suite stands up actual nginx in front of
-  the app's own generated config and proves, end-to-end, that no under-authenticated
-  request ever reaches a backend — 19 invariants incl. the wildcard/case recurrence,
-  ban-beats-allow-list ordering, 2FA and scoped-access gates, and TLS. It runs in CI and
-  **gates every release** — a push can't ship unless the boundary holds.
-- **Hardened surfaces.** The agent/MCP tool path now fully mirrors the REST validation (no
-  privilege-field bypass), backup/restore validates everything it imports, global IP bans
-  are enforced as a map that still applies on hosts with their own allow/deny lists, and
-  step-up re-auth is rate-limited.
-
-**Interface — accessibility, clarity, and character**
-- **Accessibility & UX overhaul** — real keyboard operation across nav/tabs/rows, focus
-  management, honest loading / empty / error states (a failed list no longer looks empty),
-  a mobile drawer, higher-contrast tokens, and clearer microcopy.
-- **Session & role controls** — revoke an active session, change a user's role in place.
-- **Iconography & motion** — concept icons across every header and stat tile, plus subtle,
-  reduced-motion-safe entrances and count-ups. Much less of a wall of text.
-
-**Quality** — a brand-new web test suite (Vitest + React Testing Library, **325 tests**),
-the server suite at **269**, and the real-nginx integration suite on top. The forward-auth
-fixes are pinned by regression tests that were verified to fail if the fix is reverted.
-
-## Highlights
-
-**Proxy & TLS**
-- Point a domain at any internal `host:port` in a few clicks — HTTP/HTTPS, WebSocket,
-  HTTP/2, gRPC, and TCP/UDP/SNI streams.
-- Automatic certificates via Let's Encrypt (HTTP-01 and DNS-01 for GoDaddy/Cloudflare)
-  or instant self-signed, with daily auto-renewal. ACME challenges are served on
-  every host - ahead of redirects, IP lists, the login gate, and maintenance mode -
-  so issuance and renewal just work.
-- A live Let's Encrypt activity log on the Certificates page: every ACME step
-  (staging/production directory, challenges, validation attempts, errors) streams
-  in as it happens, so a failed issuance is never a black box.
-- Load balancing, per-path routing, custom headers, and a raw-nginx escape hatch when
-  you need it.
-
-**Security**
-- A login gate (forward-auth) that puts any service behind NginUX sign-in, with TOTP
-  two-factor and one-time backup codes.
-- Role-based access — admin / editor / scoped / readonly — enforced server-side.
-- GeoIP country lock, IP allow/deny lists, and fail2ban-style auto-ban on brute force.
-- mTLS client certificates with real CRL-based revocation.
-- Per-host rate limiting, bandwidth caps, security headers, and common-exploit blocking.
-
-**Visibility**
-- A live network-topology map: Internet → gateway → servers → services, color-coded by
-  health, with pan and zoom.
-- Multi-range traffic graphs (requests + bandwidth), top IPs/paths/countries, and
-  searchable access logs.
-- Per-service analytics on each service's page: requests, bandwidth, p95 latency, error
-  rate, status codes, top clients, a source-country traffic map, and a live access log —
-  every panel loaded on demand when you expand it.
-- Uptime monitoring with incident history, plus notification channels (ntfy, Gotify,
-  Pushover, Discord, Slack, Telegram, email, and webhooks).
-
-**Automation**
-- An agent / MCP tool API so assistants can manage services under the same RBAC, with an
-  approval queue gating the sensitive actions.
-
-## Install
+With Compose:
 
 ```bash
-docker run -d \
-  -p 80:80 -p 443:443 -p 6767:6767 \
-  -v nginux-data:/data \
-  ghcr.io/ubhits/nginux:latest
+docker compose pull
+docker compose up -d
 ```
 
-Multi-arch (amd64 + arm64). The container runs non-root as the owner of your mounted
-`/data` volume (set `PUID`/`PGID` to override). First sign-in is `admin` / `admin` — you
-are required to set a new password immediately.
+Or pull the immutable version directly:
 
-> ⚠️ **Keep the `:6767` control plane off the public internet.** Forward only `80`/`443`
-> to your proxied services; reach the admin plane over your LAN or VPN.
+```bash
+docker pull ghcr.io/ubhits/nginux:v0.1.11
+```
+
+The image is multi-architecture (`linux/amd64` and `linux/arm64`). Existing data
+in `/data` is migrated in place.
+
+> **Keep the `:6767` control plane off the public internet.** Forward only
+> `80`/`443` to proxied services; reach the admin plane over your LAN or VPN.
