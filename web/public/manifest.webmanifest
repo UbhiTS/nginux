@@ -1,0 +1,25 @@
+{
+  "name": "NginUX - Reverse Proxy Control Plane",
+  "short_name": "NginUX",
+  "description": "A security-first control plane for your Nginx reverse proxy.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090b45",
+  "theme_color": "#090b45",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
