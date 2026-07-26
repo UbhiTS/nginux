@@ -632,6 +632,7 @@ button { font-family: inherit; cursor: pointer; }
    the secondary caption (was muted + an inline fontSize at ~63 sites). */
 .overline { font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); }
 .caption { font-size: var(--fs-sm); color: var(--text-dim); }
+.role-guide .overline svg { width: 14px; height: 14px; flex: 0 0 14px; }
 /* Unified modal header (was 8 inline fontWeight/fontSize, two drifting to 700). */
 .modal-title { font-size: var(--fs-lg); font-weight: 650; letter-spacing: -.2px; }
 

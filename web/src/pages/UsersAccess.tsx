@@ -371,7 +371,7 @@ export function UsersAccess({
               })}
             </div>
 
-            <div className="caption" style={{ marginTop: 12 }}>
+            <div className="caption role-guide" style={{ marginTop: 12 }}>
               <div className="overline" style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}><Icon.shield /> What each role can do</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px" }}>
                 <span><b>admin</b> - full control, incl. users</span>
