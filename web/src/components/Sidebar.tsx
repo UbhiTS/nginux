@@ -103,7 +103,7 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
       </div>
 
       {onOpenPalette && (
-        <button type="button" className="search" style={{ maxWidth: "none", cursor: "pointer" }} onClick={onOpenPalette}>
+        <button type="button" className="search sidebar-search" onClick={onOpenPalette}>
           <Icon.search />
           <span style={{ flex: 1, textAlign: "left" }}>Search…</span>
           <span className="kbd">⌘K</span>

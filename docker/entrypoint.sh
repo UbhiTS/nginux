@@ -23,10 +23,10 @@ touch /data/logs/access.log /data/logs/stream.log /data/logs/error.log /data/ngi
 # of silently running the whole ingress stack as root.
 DATA_UID="$(stat -c %u /data 2>/dev/null || echo 0)"
 DATA_GID="$(stat -c %g /data 2>/dev/null || echo 0)"
-if [ "${PUID+x}" != "x" ]; then
+if [ -z "${PUID:-}" ]; then
   if [ "$DATA_UID" = "0" ]; then PUID="$(id -u node)"; else PUID="$DATA_UID"; fi
 fi
-if [ "${PGID+x}" != "x" ]; then
+if [ -z "${PGID:-}" ]; then
   if [ "$DATA_GID" = "0" ]; then PGID="$(id -g node)"; else PGID="$DATA_GID"; fi
 fi
 

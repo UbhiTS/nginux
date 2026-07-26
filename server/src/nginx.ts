@@ -381,13 +381,20 @@ const cookieStripMaps: string[] = [
 ];
 for (let i = 1; i <= COOKIE_STRIP_PASSES; i++) {
   const source = i === 1 ? "$http_cookie" : `$backend_cookie_${i - 1}`;
-  const target = i === COOKIE_STRIP_PASSES ? "$backend_cookie" : `$backend_cookie_${i}`;
+  const target = `$backend_cookie_${i}`;
   cookieStripMaps.push(`map ${source} ${target} {
     default ${source};
     "~^nginux_session=[^;]*(?:;[ \\t]*)?(?<rest${i}>.*)$" $rest${i};
     "~^(?<head${i}>.*?);[ \\t]*nginux_session=[^;]*(?<tail${i}>.*)$" "\${head${i}}\${tail${i}}";
 }`);
 }
+// If an adversarial header contains more duplicates than the normal stripping
+// budget, fail closed by dropping the whole Cookie header. Application sessions
+// may be disrupted for that request, but the NginUX bearer can never leak.
+cookieStripMaps.push(`map $backend_cookie_${COOKIE_STRIP_PASSES} $backend_cookie {
+    default $backend_cookie_${COOKIE_STRIP_PASSES};
+    "~(?:^|;[ \\t]*)nginux_session=" "";
+}`);
 const COOKIE_STRIP_MAP = cookieStripMaps.join("\n") + "\n";
 
 /** Build the full desired config set (absolute path -> content) for a given host

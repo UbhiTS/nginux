@@ -628,6 +628,12 @@ test("A1  the NginUX session cookie is stripped before proxy_pass; other cookies
   assertAllowed(duplicate, "valid last same-name session still authenticates");
   assert.ok(!/nginux_session=/.test(duplicate.body), "every duplicate session cookie is stripped");
   assert.match(duplicate.body, /cookie=\[a=1; b=2\]/, "unrelated cookies survive duplicate stripping");
+
+  const many = await via("plex.example.com", {
+    cookie: `${Array.from({ length: 9 }, (_, i) => `nginux_session=decoy${i}`).join("; ")}; ${cookies.admin}`,
+  });
+  assertAllowed(many, "valid last session authenticates even beyond the strip budget");
+  assert.match(many.body, /cookie=\[\]/, "an over-budget duplicate header fails closed instead of leaking a bearer");
 });
 
 test("A1c an inbound X-Forwarded-For value cannot spoof the upstream client IP", { skip: SKIP }, async () => {

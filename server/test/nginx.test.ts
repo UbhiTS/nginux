@@ -136,9 +136,10 @@ test("forwarded client IP overwrites an untrusted inbound X-Forwarded-For chain"
 test("cookie-strip map removes repeated nginux_session cookies in chained passes", () => {
   const desired = buildDesiredConfigs([makeHost({ id: "cookie-map" })]);
   const map = [...desired.entries()].find(([path]) => path.endsWith("_nginux_cookie_strip.conf"))?.[1] ?? "";
-  assert.equal((map.match(/^map /gm) ?? []).length, 8);
+  assert.equal((map.match(/^map /gm) ?? []).length, 9);
   assert.ok(map.includes("map $http_cookie $backend_cookie_1"));
-  assert.ok(map.includes("map $backend_cookie_7 $backend_cookie"));
+  assert.ok(map.includes("map $backend_cookie_7 $backend_cookie_8"));
+  assert.ok(map.includes("map $backend_cookie_8 $backend_cookie"));
 });
 
 // --- 7. REGRESSION: maintenance-mode reflects the service name into HTML, escaped ---

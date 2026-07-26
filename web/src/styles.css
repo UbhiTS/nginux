@@ -219,6 +219,7 @@ button { font-family: inherit; cursor: pointer; }
 .search svg { width: 15px; height: 15px; }
 .search input { background: none; border: none; color: var(--text); outline: none; flex: 1; font-size: 13px; }
 .search .kbd { font-size: 10px; border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--text-faint); }
+.sidebar-search { flex: none; width: calc(100% - 24px); max-width: none; min-height: 34px; margin: 12px 12px 0; cursor: pointer; }
 .content { padding: 26px 28px 60px; max-width: 1180px; }
 
 /* ---------- Buttons ---------- */
