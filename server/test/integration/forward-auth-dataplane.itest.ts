@@ -127,7 +127,7 @@ function startEcho(port: number, tag: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const srv = http.createServer((req, res) => {
       res.setHeader("X-Upstream", tag);
-      res.end(`UPSTREAM_OK ${tag} cookie=[${req.headers.cookie ?? ""}]`);
+      res.end(`UPSTREAM_OK ${tag} cookie=[${req.headers.cookie ?? ""}] xff=[${req.headers["x-forwarded-for"] ?? ""}]`);
     });
     echoServers.push(srv);
     srv.on("error", reject); // surface EADDRINUSE as an actionable setup failure, not a crash
@@ -619,6 +619,22 @@ test("A1  the NginUX session cookie is stripped before proxy_pass; other cookies
   const mid = await via("plex.example.com", { cookie: `a=1; ${cookies.admin}; b=2` });
   assert.ok(!/nginux_session=/.test(mid.body), "middle nginux_session stripped");
   assert.match(mid.body, /cookie=\[a=1; b=2\]/, "neighbours of a middle cookie are preserved, not merged");
+  // Same-name cookies can coexist when their Domain/Path attributes differ.
+  // Keep the valid one last so forward-auth admits the request, then prove that
+  // neither the attacker-controlled decoy nor the valid token reaches upstream.
+  const duplicate = await via("plex.example.com", {
+    cookie: `nginux_session=decoy; a=1; ${cookies.admin}; b=2`,
+  });
+  assertAllowed(duplicate, "valid last same-name session still authenticates");
+  assert.ok(!/nginux_session=/.test(duplicate.body), "every duplicate session cookie is stripped");
+  assert.match(duplicate.body, /cookie=\[a=1; b=2\]/, "unrelated cookies survive duplicate stripping");
+});
+
+test("A1c an inbound X-Forwarded-For value cannot spoof the upstream client IP", { skip: SKIP }, async () => {
+  const r = await via("open.example.com", { headers: { "X-Forwarded-For": "203.0.113.250" } });
+  assertAllowed(r, "open host");
+  assert.match(r.body, /xff=\[127\.0\.0\.1\]/);
+  assert.ok(!r.body.includes("203.0.113.250"), "attacker-provided XFF must be discarded at the edge");
 });
 
 test("A1b the control-plane self-host KEEPS the session cookie — admin stays logged in", { skip: SKIP }, async () => {

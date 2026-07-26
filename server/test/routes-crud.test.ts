@@ -11,8 +11,8 @@ import { setupTestEnv, makeHost } from "./helpers.ts";
 setupTestEnv();
 const { app } = await import("../src/index.ts");
 const { db, saveSettings } = await import("../src/db.ts");
-const { createSession } = await import("../src/auth.ts");
-const { createHost } = await import("../src/repo.ts");
+const { createSession, createUser } = await import("../src/auth.ts");
+const { createHost, deleteHost } = await import("../src/repo.ts");
 
 // Seed a user row directly (bypassing the create-user API so we can pick the role,
 // scope, and mustChangePassword flag freely). Mirrors routes-rbac.test.ts's helper.
@@ -197,7 +197,10 @@ test("GET metrics/traffic feeds are denied to a scoped user (host enumeration gu
 test("PUT /api/hosts/:id: port-only edit that repoints the portal domain off the control plane is 409", async () => {
   saveSettings({ ssoLoginUrl: "https://portal.example.com" });
   // A host correctly forwarding the portal domain to the control plane (:6767).
-  const portal = createHost(makeHost({ id: "portal-host", name: "portal", domain: "portal.example.com", forwardPort: 6767 }));
+  const portal = createHost(makeHost({
+    id: "portal-host", name: "portal", domain: "portal.example.com",
+    forwardScheme: "http", forwardHost: "127.0.0.1", forwardPort: 6767,
+  }));
   const admin = cookieFor(makeUser("admin"));
 
   // Changing ONLY the port to something other than 6767 would break the sign-in
@@ -205,10 +208,33 @@ test("PUT /api/hosts/:id: port-only edit that repoints the portal domain off the
   const bad = await put(`/api/hosts/${portal.id}`, admin, { forwardPort: 8080 });
   assert.equal(bad.statusCode, 409, "a port-only edit that breaks the sign-in portal must be refused");
 
+  const exfiltrate = await put(`/api/hosts/${portal.id}`, admin, { forwardHost: "attacker.example" });
+  assert.equal(exfiltrate.statusCode, 409, "a host-only edit must not send portal cookies to a remote :6767");
+
   // An unrelated edit that leaves domain + port intact is still allowed.
   const ok = await put(`/api/hosts/${portal.id}`, admin, { name: "Portal (renamed)" });
   assert.equal(ok.statusCode, 200, "an unrelated field edit on the portal host must still succeed");
   saveSettings({ ssoLoginUrl: "" }); // restore default so later tests aren't affected
+});
+
+test("POST /api/auth/login only returns redirects to enabled configured services", async () => {
+  createHost(makeHost({ id: "login-rd", name: "redirect target", domain: "safe-rd.example.com", enabled: true }));
+  const wildcard = createHost(makeHost({ id: "login-wildcard", name: "wildcard target", domain: "*.github.io", enabled: true }));
+  const username = `rd_${Math.random().toString(36).slice(2)}`;
+  await createUser({ username, password: "correct horse battery staple", role: "admin" });
+
+  const valid = await post("/api/auth/login", undefined, {
+    username, password: "correct horse battery staple", returnUrl: "https://safe-rd.example.com/path?q=1",
+  });
+  assert.equal(valid.statusCode, 200);
+  assert.equal(valid.json().redirectTo, "https://safe-rd.example.com/path?q=1");
+
+  const external = await post("/api/auth/login", undefined, {
+    username, password: "correct horse battery staple", returnUrl: "https://evil.github.io/phish",
+  });
+  assert.equal(external.statusCode, 200);
+  assert.equal(external.json().redirectTo, undefined, "a wildcard on a multi-tenant suffix must not authorize redirects");
+  deleteHost(wildcard.id);
 });
 
 // ---------------------------------------------------------------------------

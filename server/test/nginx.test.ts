@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { makeHost, setupTestEnv } from "./helpers.ts";
 
 setupTestEnv();
-const { generateHostConfig, generateStreamConfig, generateSniPassthrough, redactConfig } =
+const { buildDesiredConfigs, generateHostConfig, generateStreamConfig, generateSniPassthrough, redactConfig } =
   await import("../src/nginx.ts");
 const { saveSettings } = await import("../src/db.ts");
 
@@ -111,6 +111,34 @@ test("forward secret is present in raw config but masked by redactConfig", () =>
 test("server_name is the host domain", () => {
   const conf = generateHostConfig(makeHost({ domain: "app.example.com" }));
   assert.ok(conf.includes("server_name app.example.com;"), "server_name must be the host domain");
+});
+
+test("only the exact control target receives the session cookie", () => {
+  saveSettings({ ssoLoginUrl: "https://portal.example.com" });
+  const exact = generateHostConfig(makeHost({
+    domain: "portal.example.com", forwardScheme: "http", forwardHost: "127.0.0.1", forwardPort: 6767,
+  }));
+  assert.ok(!exact.includes("proxy_set_header Cookie $backend_cookie;"));
+
+  const remoteSamePort = generateHostConfig(makeHost({
+    domain: "portal.example.com", forwardScheme: "http", forwardHost: "attacker.example", forwardPort: 6767,
+  }));
+  assert.ok(remoteSamePort.includes("proxy_set_header Cookie $backend_cookie;"));
+  saveSettings({ ssoLoginUrl: "" });
+});
+
+test("forwarded client IP overwrites an untrusted inbound X-Forwarded-For chain", () => {
+  const conf = generateHostConfig(makeHost({ pathRules: "/api 10.0.0.2:8080" }));
+  assert.ok(conf.includes("proxy_set_header X-Forwarded-For $remote_addr;"));
+  assert.ok(!conf.includes("$proxy_add_x_forwarded_for"));
+});
+
+test("cookie-strip map removes repeated nginux_session cookies in chained passes", () => {
+  const desired = buildDesiredConfigs([makeHost({ id: "cookie-map" })]);
+  const map = [...desired.entries()].find(([path]) => path.endsWith("_nginux_cookie_strip.conf"))?.[1] ?? "";
+  assert.equal((map.match(/^map /gm) ?? []).length, 8);
+  assert.ok(map.includes("map $http_cookie $backend_cookie_1"));
+  assert.ok(map.includes("map $backend_cookie_7 $backend_cookie"));
 });
 
 // --- 7. REGRESSION: maintenance-mode reflects the service name into HTML, escaped ---

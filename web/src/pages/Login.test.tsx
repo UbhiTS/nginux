@@ -50,7 +50,7 @@ describe("Login", () => {
     await userEvent.type(passwordInput(), "hunter2");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(api.login).toHaveBeenCalledWith("admin", "hunter2", undefined);
+    expect(api.login).toHaveBeenCalledWith("admin", "hunter2", undefined, undefined);
   });
 
   it("calls onSignedIn with the returned user on a successful login", async () => {
@@ -122,7 +122,7 @@ describe("Login", () => {
     // Trailing {Enter} triggers implicit form submission.
     await userEvent.type(passwordInput(), "hunter2{Enter}");
 
-    await waitFor(() => expect(api.login).toHaveBeenCalledWith("admin", "hunter2", undefined));
+    await waitFor(() => expect(api.login).toHaveBeenCalledWith("admin", "hunter2", undefined, undefined));
   });
 
   it("switches to the 2FA code step when the server requires a token", async () => {

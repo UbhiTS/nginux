@@ -14,8 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write   # create tags + releases
-  packages: write   # push to GHCR
+  contents: read
 
 # Run the bundled JS actions (checkout, setup-node, buildx, login, build-push) on
 # Node 24 now - they still ship a Node 20 runtime, which GitHub is deprecating and
@@ -30,12 +29,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run typecheck --workspace server
       - run: npm run test --workspace server
       # Prove the data-plane boundary end-to-end: real nginx, fed the app's own generated
@@ -60,11 +60,11 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build runtime image (single-arch, fast)
         run: docker build -t nginux:smoke --build-arg GIT_SHA="$GITHUB_SHA" .
       - name: Boot the container on a throwaway volume
-        run: docker run -d --name smoke -e PUID=0 -e PGID=0 -v "$RUNNER_TEMP/smoke:/data" nginux:smoke
+        run: docker run -d --name smoke -v "$RUNNER_TEMP/smoke:/data" nginux:smoke
       - name: Control plane must answer /api/health (catches a boot crash-loop)
         run: |
           for i in $(seq 1 30); do
@@ -84,9 +84,12 @@ jobs:
   release:
     needs: [verify, smoke]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create tags + releases
+      packages: write   # push to GHCR
     steps:
       - name: Checkout (full history for tags)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -128,20 +131,20 @@ jobs:
       # QEMU lets the amd64 runner cross-build the arm64 image (Apple Silicon,
       # Raspberry Pi, ARM NAS) so the published image is multi-arch.
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64

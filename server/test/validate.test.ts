@@ -27,7 +27,10 @@ test("isHost accepts hostnames + IPv4 + IPv6, rejects nginx metachars (injection
   }
   // A forwardHost is emitted into `proxy_pass http://<host>:<port>` - these must
   // never pass or an editor/agent could inject directives.
-  for (const s of ["", "a;b", "a b", "host{}", "h'x", 'h"x', "a\\b", "a\nb", "1.2.3.4; return 403"]) {
+  for (const s of [
+    "", "a;b", "a b", "host{}", "h'x", 'h"x', "a\\b", "a\nb",
+    "1.2.3.4; return 403", "::::", "2852039166", "0xa9fea9fe",
+  ]) {
     assert.equal(isHost(s), false, JSON.stringify(s));
   }
 });
@@ -73,7 +76,13 @@ test("hasNginxMetachars flags directive-breakout chars", () => {
 });
 
 test("isDangerousHost blocks cloud-metadata / link-local / unspecified (SSRF guard)", () => {
-  for (const s of ["169.254.169.254", "169.254.0.1", "metadata.google.internal", "0.0.0.0", "0.1.2.3", "::", "fe80::1", "[::]"]) {
+  for (const s of [
+    "169.254.169.254", "169.254.0.1", "100.100.100.200",
+    "metadata.google.internal", "metadata.google.internal.", "metadata.goog",
+    "fd00:ec2::254", "fd00:ec2:0:0:0:0:0:254",
+    "2852039166", "0xa9fea9fe",
+    "0.0.0.0", "0.1.2.3", "::", "fe80::1", "[::]",
+  ]) {
     assert.equal(isDangerousHost(s), true, s);
   }
 });
@@ -82,6 +91,7 @@ test("isDangerousHost normalises IPv4-mapped IPv6 (regression: audit finding #18
   assert.equal(isDangerousHost("::ffff:169.254.169.254"), true);
   assert.equal(isDangerousHost("[::ffff:169.254.169.254]"), true);
   assert.equal(isDangerousHost("::ffff:a9fe:a9fe"), true); // a9fe.a9fe = 169.254.169.254
+  assert.equal(isDangerousHost("::a9fe:a9fe"), true);
   assert.equal(isDangerousHost("::169.254.169.254"), true);
 });
 test("isDangerousHost allows legitimate homelab LAN targets", () => {

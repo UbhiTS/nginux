@@ -47,6 +47,9 @@ const INVALID_PATCHES: Record<string, unknown>[] = [
   { pathRules: "/a 1.2.3.4:80 extra" },     // trailing junk after host:port
   { certDomain: "../etc" },                 // traversal into the cert dir
   { upstreams: "not-a-hostport" },          // not a host:port
+  { forwardHost: "169.254.169.254" },       // cloud metadata proxy exposure
+  { upstreams: "100.100.100.200:80" },      // Alibaba metadata
+  { pathRules: "/meta [fd00:ec2::254]:80" }, // AWS IMDS IPv6
   { iconUrl: "javascript:alert(1)" },       // non-CDN, non-data icon URL
   { rateLimitRps: 999999 },                 // above the cap
 ];
@@ -111,9 +114,10 @@ test("sanitizeHostPatch returns ONLY the fields that were sent (no default injec
 // -------------------------------------------------------------------------
 test("isControlPlaneDomain flags a portal-domain host pointed off :6767, allows :6767", () => {
   saveSettings({ ssoLoginUrl: "https://portal.example.com" });
-  assert.equal(isControlPlaneDomain("portal.example.com", 8080), true, "off the control plane -> hijack");
-  assert.equal(isControlPlaneDomain("portal.example.com", 6767), false, "forwarding TO the control plane is allowed");
-  assert.equal(isControlPlaneDomain("other.example.com", 8080), false, "a different domain is unaffected");
+  assert.equal(isControlPlaneDomain("portal.example.com", "127.0.0.1", 8080), true, "off the control plane -> hijack");
+  assert.equal(isControlPlaneDomain("portal.example.com", "127.0.0.1", 6767), false, "exact control target is allowed");
+  assert.equal(isControlPlaneDomain("portal.example.com", "attacker.example", 6767), true, "matching port on a remote host is still a hijack");
+  assert.equal(isControlPlaneDomain("other.example.com", "attacker.example", 8080), false, "a different domain is unaffected");
   saveSettings({ ssoLoginUrl: "" });
-  assert.equal(isControlPlaneDomain("portal.example.com", 8080), false, "no SSO URL configured -> nothing to protect");
+  assert.equal(isControlPlaneDomain("portal.example.com", "attacker.example", 8080), false, "no SSO URL configured -> nothing to protect");
 });

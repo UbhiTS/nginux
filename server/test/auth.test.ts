@@ -3,6 +3,7 @@
 // invariants a regression here must never silently break.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { setupTestEnv } from "./helpers.ts";
 
 setupTestEnv();
@@ -72,13 +73,22 @@ test("destroySession invalidates a token immediately", async () => {
 test("userForSession rejects (and reaps) an expired session", async () => {
   const user = await auth.createUser({ username: "sess_carol", password: "pw-carol" });
   const token = "expired0".repeat(8); // deterministic 64-char token
+  const stored = createHash("sha256").update(token).digest("hex");
   const past = new Date(Date.now() - 60_000).toISOString();
   db.prepare("INSERT INTO sessions (token, userId, device, ip, createdAt, expiresAt) VALUES (?,?,?,?,?,?)")
-    .run(token, user.id, "dev", "127.0.0.1", past, past);
+    .run(stored, user.id, "dev", "127.0.0.1", past, past);
   assert.equal(auth.userForSession(token), null, "an already-expired session must not resolve");
   // ...and it should have been reaped on read.
-  const still = db.prepare("SELECT token FROM sessions WHERE token = ?").get(token);
+  const still = db.prepare("SELECT token FROM sessions WHERE token = ?").get(stored);
   assert.equal(still, undefined, "expired session should be deleted on access");
+});
+
+test("session database rows contain a hash, never the bearer token", async () => {
+  const user = await auth.createUser({ username: "sess_hashed", password: "pw-hashed" });
+  const token = auth.createSession(user.id, "dev", "127.0.0.1");
+  const row = db.prepare("SELECT token FROM sessions WHERE userId = ?").get(user.id) as { token: string };
+  assert.notEqual(row.token, token);
+  assert.equal(row.token, createHash("sha256").update(token).digest("hex"));
 });
 
 test("destroyUserSessions clears every session for a user", async () => {
@@ -166,6 +176,20 @@ test("useBackupCode accepts a real code exactly once, then rejects the reuse", a
   assert.equal(auth.useBackupCode(user.id, codes[0]), false, "the SAME code must not work a second time");
   // A different, still-unused code must still work (only the spent one is burned).
   assert.equal(auth.useBackupCode(user.id, codes[1]), true, "an unused sibling code must still verify");
+});
+
+test("starting a replacement 2FA setup keeps the active secret until verification", async () => {
+  const user = await auth.createUser({ username: "twofa_rebind", password: "pw-twofa" });
+  const first = auth.beginTwofaSetup(user.id).secret;
+  auth.enableTwofa(user.id);
+  assert.equal(auth.getTwofaSecret(user.id), first);
+
+  const replacement = auth.beginTwofaSetup(user.id).secret;
+  assert.notEqual(replacement, first);
+  assert.equal(auth.getTwofaSecret(user.id), first, "abandoned setup must not lock out the old authenticator");
+  assert.equal(auth.getPendingTwofaSecret(user.id), replacement);
+  auth.enableTwofa(user.id);
+  assert.equal(auth.getTwofaSecret(user.id), replacement);
 });
 
 test("useBackupCode rejects an unknown code, whitespace tolerance aside, and an unknown user", async () => {

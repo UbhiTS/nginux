@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { resolve, sep } from "node:path";
 
 // Input validation shared by the API and the nginx generator. The generator
@@ -9,24 +10,26 @@ import { resolve, sep } from "node:path";
 const HOSTNAME_RE = /^(\*\.)?(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 /** A bare label like "localhost" or a single-segment internal name. */
 const LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
-const IPV4_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
-const IPV6_RE = /^[0-9a-f:]+$/i; // permissive; only used after rejecting metacharacters
 
 export function isHostname(s: string): boolean {
   return HOSTNAME_RE.test(s) || LABEL_RE.test(s);
 }
 
 function isIpv4(s: string): boolean {
-  return IPV4_RE.test(s);
+  return isIP(s) === 4;
 }
 
 /** Host portion of a forward/upstream target: hostname or IP (no port). */
 export function isHost(s: string): boolean {
   if (!s || /[\s;{}'"\\]/.test(s)) return false;
-  if (isIpv4(s) || isHostname(s)) return true;
+  if (isIpv4(s)) return true;
+  // Reject legacy inet_aton forms (integer/hex/octal) that URL stacks can
+  // reinterpret as an IPv4 address after validation.
+  if (/^(?:\d+|0x[0-9a-f]+)$/i.test(s)) return false;
+  if (isHostname(s)) return true;
   // bracketed or bare IPv6
   const v6 = s.replace(/^\[|\]$/g, "");
-  return v6.includes(":") && IPV6_RE.test(v6);
+  return isIP(v6) === 6;
 }
 
 /** "host:port" upstream target. */
@@ -47,8 +50,10 @@ export function isIpOrCidr(s: string): boolean {
     const max = addr.includes(":") ? 128 : 32;
     if (!Number.isInteger(bits) || bits < 0 || bits > max) return false;
   }
-  if (isIpv4(addr)) return true;
-  return addr.includes(":") && IPV6_RE.test(addr);
+  const kind = isIP(addr);
+  if (!kind) return false;
+  if (cidr !== undefined && Number(cidr) > (kind === 6 ? 128 : 32)) return false;
+  return true;
 }
 
 /** HTTP header name (custom response headers). */
@@ -90,14 +95,23 @@ const CLOUD_METADATA_V4 = new Set([
 ]);
 
 export function isDangerousHost(host: string): boolean {
-  let h = host.replace(/^\[|\]$/g, "").toLowerCase();
+  let h = host.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  // Canonicalize IPv6 and legacy integer/hex IPv4 spellings before matching.
+  // URL follows the same host parser used by fetch(), closing validation/parser
+  // disagreement such as 2852039166 -> 169.254.169.254.
+  if (isIP(h) === 6 || /^(?:\d+|0x[0-9a-f]+)$/i.test(h)) {
+    try {
+      h = new URL(isIP(h) === 6 ? `http://[${h}]/` : `http://${h}/`)
+        .hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    } catch { /* leave it unchanged */ }
+  }
   if (h === "metadata.google.internal" || h === "metadata.goog") return true;
   // Normalise IPv4-mapped/-compatible IPv6 to the embedded IPv4 so the v4 rules
   // below still catch it - otherwise `::ffff:169.254.169.254` (or the hex form
   // `::ffff:a9fe:a9fe`) reaches cloud metadata past the /^169\.254\./ check.
   const dotted = h.match(/^::(?:ffff:)?((?:\d{1,3}\.){3}\d{1,3})$/);
   if (dotted) h = dotted[1];
-  const hex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  const hex = h.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (hex) {
     const a = parseInt(hex[1], 16), b = parseInt(hex[2], 16);
     h = `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`;

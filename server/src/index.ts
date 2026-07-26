@@ -133,6 +133,12 @@ if (!getSettings().ssoForwardSecret) {
   saveSettings({ ssoForwardSecret: randomBytes(24).toString("hex") });
 }
 const seeded = await seedAuthIfEmpty();
+if (seeded.bootstrapPassword) {
+  // Emit immediately after the DB commit, before any later boot step can fail.
+  // This is intentionally one-time output; the plaintext is never stored.
+  process.stderr.write(`[nginux] first-run admin password: ${seeded.bootstrapPassword}\n`);
+  process.stderr.write("[nginux] sign in as admin and replace this bootstrap password immediately.\n");
+}
 seedTokensIfEmpty();
 seedBuiltinProfiles(); // idempotent starter security profiles
 writeGeoipConf(); // keep the country-lock include in sync with settings on boot
@@ -1127,7 +1133,9 @@ function safeLoginRedirect(raw: string | undefined): string | undefined {
     if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username || u.password) return undefined;
     if ((u.protocol === "http:" && u.port && u.port !== "80")
       || (u.protocol === "https:" && u.port && u.port !== "443")) return undefined;
-    const host = getHostByDomainCached(u.hostname);
+    // Redirects require an exact host row; a wildcard proxy entry must not turn
+    // into a blanket redirect allowlist for a multi-tenant suffix.
+    const host = getHostByDomain(u.hostname);
     return host?.enabled ? u.href : undefined;
   } catch {
     return undefined;
@@ -1511,10 +1519,6 @@ app.listen({ port: PORT, host: HOST }).then(async () => {
   app.log.info(`NginUX control plane on http://${HOST}:${PORT}`);
   if (seeded.usingDefault) {
     app.log.warn(`First run - default login is "admin" / "admin". You'll be required to set a new password on first sign-in.`);
-  }
-  if (seeded.bootstrapPassword) {
-    app.log.warn(`First run - generated admin password: ${seeded.bootstrapPassword}`);
-    app.log.warn("Sign in as admin and replace this bootstrap password immediately.");
   }
   if (process.env.NODE_ENV === "production" && !forwardSecret()) {
     app.log.warn("No forward-auth secret set - generate one in Settings → Login gate so /api/auth/forward can't be invoked directly. Per-host login gates are weaker without it.");
