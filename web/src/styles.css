@@ -426,7 +426,8 @@ button { font-family: inherit; cursor: pointer; }
 .collapsible-head:hover { background: var(--bg-elev2); }
 .collapsible-caret { width: 15px !important; height: 15px !important; color: var(--text-faint); transition: transform .15s; flex-shrink: 0; }
 .collapsible-caret.open { transform: rotate(90deg); }
-.collapsible-title { flex-shrink: 0; }
+.collapsible-title { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.collapsible-title > svg { width: 16px; height: 16px; color: var(--text-faint); flex-shrink: 0; }
 .host-analytics .stat .value { font-size: 22px; }
 
 .adv-toggle { display: flex; align-items: center; gap: 9px; padding: 13px 20px; cursor: pointer; color: var(--text-dim); font-weight: 600; font-size: 13px; user-select: none; }

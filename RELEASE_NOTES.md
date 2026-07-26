@@ -1,21 +1,21 @@
-# NginUX v0.1.15
+# NginUX v0.1.16
 
-NginUX v0.1.15 brings the new neon NginUX artwork to the browser tab and fixes
-the Users & Access role guide layout.
+NginUX v0.1.16 corrects icon sizing in service analytics and removes overlapping
+placeholder glyphs from service logos.
 
 ## Fixed
 
-### New favicon
+### Service analytics section icons
 
-The browser favicon now uses the same new neon NginUX icon as the dashboard.
-Vite fingerprints the production asset, preventing an older cached favicon from
-surviving a deployment.
+The icons beside Traffic & errors, Top clients & paths, Geography, and Live
+access log now have an explicit 16-pixel size. They no longer use the browser's
+large intrinsic SVG dimensions when those sections are collapsed.
 
-### Users & Access role guide
+### Sidebar service logos
 
-The shield beside "What each role can do" now has an explicit icon size. This
-prevents the inline SVG from expanding across the page and pushing the role
-descriptions out of position.
+The generic service glyph remains visible while a remote logo is loading or
+when it fails, but is removed as soon as the real logo loads. Transparent app
+logos therefore no longer show a second generic icon underneath.
 
 ## Upgrade
 
@@ -29,7 +29,7 @@ docker compose up -d
 Or pull the immutable version directly:
 
 ```bash
-docker pull ghcr.io/ubhits/nginux:v0.1.15
+docker pull ghcr.io/ubhits/nginux:v0.1.16
 ```
 
 The image is multi-architecture (`linux/amd64` and `linux/arm64`). Existing data

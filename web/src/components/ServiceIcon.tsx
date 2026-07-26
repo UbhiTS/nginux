@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const ICON_CDN = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons";
 /** Full logo URL for a dashboard-icons slug (empty slug -> no logo / generic). */
@@ -19,17 +19,21 @@ function GenericIcon({ size }: { size: number }) {
  *  neutral generic glyph. Falls back to the glyph if the image fails to load, so
  *  the UI never shows a broken image. */
 export function ServiceIcon({ iconUrl, size = 20 }: { iconUrl?: string; size?: number }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [iconUrl]); // retry when the URL changes
+  const [loadedUrl, setLoadedUrl] = useState("");
+  const [failedUrl, setFailedUrl] = useState("");
+  const loaded = loadedUrl === iconUrl;
+  const failed = failedUrl === iconUrl;
   if (!iconUrl || failed) return <GenericIcon size={size} />;
-  // Render the generic glyph as an absolute underlay: on a firewalled homelab the
-  // CDN request can hang forever (never firing onError), so without an underlay the
-  // box would stay blank. The <img> paints on top once (if) it actually loads.
+  // Keep the generic glyph visible while a remote logo is pending, but remove it
+  // once the image loads. Leaving it permanently underneath transparent logos
+  // makes the generic outline show through as a second, overlapping icon.
   return (
     <span style={{ position: "relative", display: "inline-block", width: size, height: size, verticalAlign: "middle" }}>
-      <span style={{ position: "absolute", inset: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }} aria-hidden="true">
-        <GenericIcon size={size} />
-      </span>
+      {!loaded && (
+        <span style={{ position: "absolute", inset: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }} aria-hidden="true">
+          <GenericIcon size={size} />
+        </span>
+      )}
       <img
         src={iconUrl}
         alt=""
@@ -37,8 +41,9 @@ export function ServiceIcon({ iconUrl, size = 20 }: { iconUrl?: string; size?: n
         height={size}
         loading="lazy"
         decoding="async"
-        style={{ position: "relative", width: size, height: size, objectFit: "contain", display: "inline-block", verticalAlign: "middle", borderRadius: 4 }}
-        onError={() => setFailed(true)}
+        style={{ position: "relative", width: size, height: size, objectFit: "contain", display: "inline-block", verticalAlign: "middle", borderRadius: 4, opacity: loaded ? 1 : 0 }}
+        onLoad={() => { setLoadedUrl(iconUrl); setFailedUrl(""); }}
+        onError={() => { setFailedUrl(iconUrl); setLoadedUrl(""); }}
       />
     </span>
   );

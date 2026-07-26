@@ -21,12 +21,16 @@ describe("ServiceIcon", () => {
     expect(img).toHaveAttribute("src", "https://example.com/logo.svg");
   });
 
-  it("renders the generic glyph as an always-present underlay so the box is never blank while loading", () => {
-    // On a firewalled homelab the CDN request can hang forever without firing
-    // onError; the underlay glyph guarantees something is always painted.
+  it("shows the generic glyph while loading, then removes it when the real logo loads", () => {
     const { container } = render(<ServiceIcon iconUrl="https://example.com/logo.svg" />);
-    expect(container.querySelector("img")).toBeInTheDocument();
+    const img = container.querySelector("img")!;
     expect(container.querySelector("svg")).toBeInTheDocument();
+    expect(img).toHaveStyle({ opacity: "0" });
+
+    fireEvent.load(img);
+
+    expect(container.querySelector("svg")).not.toBeInTheDocument();
+    expect(container.querySelector("img")).toHaveStyle({ opacity: "1" });
   });
 
   it("marks the image lazy-loading and async-decoding so a hanging CDN never blocks", () => {
