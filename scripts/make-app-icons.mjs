@@ -1,9 +1,10 @@
 // Build installable-app icons from the canonical NginUX artwork.
 //
-// Apple applies its own rounded-square mask to home-screen icons. The source
-// artwork already contains a rounded neon frame, so drawing it edge-to-edge
-// causes iOS to crop that frame at all four corners. Keep the complete artwork
-// inside Apple's safe area and extend its navy corner colour to the canvas edge.
+// Apple applies its own rounded-square (squircle) mask to home-screen icons. The
+// neon frame therefore needs to follow that outer silhouette: padding the whole
+// badge creates an unwanted black border, while a conventional round-rectangle
+// gets clipped at the corners. Draw the artwork full-bleed and reinforce its
+// frame directly on an iOS-shaped superellipse at the canvas boundary.
 //
 //   node scripts/make-app-icons.mjs
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -15,8 +16,7 @@ import puppeteer from "puppeteer-core";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC = join(ROOT, "web", "public");
 const SOURCE = join(PUBLIC, "website-icon.png");
-const SAFE_INSET_RATIO = 0.12;
-const FALLBACK_BACKGROUND = "#05083d";
+const IOS_SQUIRCLE_EXPONENT = 5;
 const OUTPUTS = [
   ["app-icon-1024.png", 1024],
   ["icon-512.png", 512],
@@ -45,59 +45,64 @@ const browser = await puppeteer.launch({
 
 try {
   const page = await browser.newPage();
-  const rendered = await page.evaluate(async ({ sourceUrl, outputs, insetRatio, fallbackBackground }) => {
+  const rendered = await page.evaluate(async ({ sourceUrl, outputs, squircleExponent }) => {
     const image = new Image();
     image.src = sourceUrl;
     await image.decode();
-
-    // Average small patches in all four source corners. This produces a
-    // seamless canvas even if the canonical artwork's navy shade changes.
-    const sampleCanvas = document.createElement("canvas");
-    sampleCanvas.width = image.naturalWidth;
-    sampleCanvas.height = image.naturalHeight;
-    const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
-    sampleContext.drawImage(image, 0, 0);
-    const patch = Math.max(2, Math.round(image.naturalWidth * 0.02));
-    const corners = [
-      [0, 0],
-      [image.naturalWidth - patch, 0],
-      [0, image.naturalHeight - patch],
-      [image.naturalWidth - patch, image.naturalHeight - patch],
-    ];
-    const totals = [0, 0, 0, 0];
-    let pixels = 0;
-    for (const [x, y] of corners) {
-      const data = sampleContext.getImageData(x, y, patch, patch).data;
-      for (let i = 0; i < data.length; i += 4) {
-        totals[0] += data[i];
-        totals[1] += data[i + 1];
-        totals[2] += data[i + 2];
-        totals[3] += data[i + 3];
-        pixels += 1;
-      }
-    }
-    const background = totals[3] / pixels < 250
-      ? fallbackBackground
-      : `rgb(${totals.slice(0, 3).map((value) => Math.round(value / pixels)).join(",")})`;
 
     return outputs.map(([name, size]) => {
       const canvas = document.createElement("canvas");
       canvas.width = size;
       canvas.height = size;
       const context = canvas.getContext("2d");
-      context.fillStyle = background;
-      context.fillRect(0, 0, size, size);
       context.imageSmoothingEnabled = true;
       context.imageSmoothingQuality = "high";
-      const inset = Math.round(size * insetRatio);
-      context.drawImage(image, inset, inset, size - (2 * inset), size - (2 * inset));
+      context.drawImage(image, 0, 0, size, size);
+
+      // Parametric superellipse: |x/a|^n + |y/b|^n = 1. With n≈5 this follows
+      // Apple's continuous-corner icon mask much more closely than a circular
+      // CSS border-radius. The path sits on the canvas boundary, so the visible
+      // half of each stroke is the icon's outer edge—there is no black band
+      // outside the neon line for iOS to reveal.
+      const frame = new Path2D();
+      const half = size / 2;
+      const power = 2 / squircleExponent;
+      const points = Math.max(256, size);
+      for (let i = 0; i <= points; i++) {
+        const angle = (i / points) * Math.PI * 2;
+        const cosine = Math.cos(angle);
+        const sine = Math.sin(angle);
+        const x = half + (half * Math.sign(cosine) * Math.abs(cosine) ** power);
+        const y = half + (half * Math.sign(sine) * Math.abs(sine) ** power);
+        if (i === 0) frame.moveTo(x, y);
+        else frame.lineTo(x, y);
+      }
+      frame.closePath();
+
+      const gradient = context.createLinearGradient(0, 0, size, size);
+      gradient.addColorStop(0, "#ff2d9b");
+      gradient.addColorStop(0.52, "#8b36ff");
+      gradient.addColorStop(1, "#15e0f5");
+      context.save();
+      context.globalCompositeOperation = "screen";
+      context.strokeStyle = gradient;
+      context.lineJoin = "round";
+      for (const [width, alpha] of [
+        [0.10, 0.16],
+        [0.065, 0.28],
+        [0.038, 0.95],
+      ]) {
+        context.globalAlpha = alpha;
+        context.lineWidth = size * width;
+        context.stroke(frame);
+      }
+      context.restore();
       return [name, canvas.toDataURL("image/png")];
     });
   }, {
     sourceUrl,
     outputs: OUTPUTS,
-    insetRatio: SAFE_INSET_RATIO,
-    fallbackBackground: FALLBACK_BACKGROUND,
+    squircleExponent: IOS_SQUIRCLE_EXPONENT,
   });
 
   for (const [name, dataUrl] of rendered) {

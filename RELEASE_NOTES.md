@@ -1,24 +1,25 @@
-# NginUX v0.1.13
+# NginUX v0.1.14
 
-NginUX v0.1.13 corrects the installable app icon on iPhone and other platforms
-that apply their own rounded icon mask.
+NginUX v0.1.14 makes the iPhone Home Screen icon full-bleed, with the neon frame
+forming the icon's outer outline.
 
 ## Fixed
 
-### Complete neon outline on the iPhone Home Screen
+### Full-bleed iPhone icon with no black outer border
 
-The previous Apple touch icon placed the neon frame directly on the image
-boundary. iOS applies an additional rounded-square mask when a website is added
-to the Home Screen, which clipped the top, sides, and lower-right portion of the
-frame.
+v0.1.13 protected the neon frame by shrinking the complete badge into a safe
+area. Although this prevented clipping, it left a visible black frame between
+the neon line and the iOS icon boundary.
 
-The installable icon artwork now sits inside a 12% safe area on a matching dark
-canvas. The full pink, purple, and cyan outline remains visible after iOS applies
-its mask, while the dashboard and sidebar branding remain unchanged.
+The artwork is full-size again. Its neon frame now follows an iOS-style
+superellipse directly on the canvas boundary, so Apple's rounded mask retains a
+continuous pink, purple, and cyan outline without revealing a second black
+border. The central NginUX artwork and dashboard branding remain unchanged.
 
-The 180, 192, 512, and 1024 pixel app assets are generated reproducibly from the
-canonical NginUX artwork. Their URLs are versioned so a newly added Home Screen
-shortcut cannot reuse the cropped icon from Safari's cache.
+The icon regression test now verifies that neon pixels reach the midpoint of
+all four outer edges, preventing the padded black-frame treatment from
+returning. Icon URLs are versioned so a newly added Home Screen shortcut fetches
+the corrected asset.
 
 ## Upgrade
 
@@ -32,7 +33,7 @@ docker compose up -d
 Or pull the immutable version directly:
 
 ```bash
-docker pull ghcr.io/ubhits/nginux:v0.1.13
+docker pull ghcr.io/ubhits/nginux:v0.1.14
 ```
 
 The image is multi-architecture (`linux/amd64` and `linux/arm64`). Existing data

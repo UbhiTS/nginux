@@ -64,21 +64,20 @@ describe("installable app icons", () => {
     expect(png.readUInt32BE(20)).toBe(size);
   });
 
-  it("keeps the Apple artwork out of the outer 8% iOS mask-crop band", () => {
+  it("puts neon directly on each outer edge instead of adding a black border", () => {
     const { width, height, rgba } = decodeRgbaPng("apple-touch-icon.png");
-    const background = rgba.subarray(0, 4);
-    const band = Math.floor(width * 0.08);
-    let colorfulPixels = 0;
+    const pixel = (x: number, y: number) => {
+      const offset = ((y * width) + x) * 4;
+      return [...rgba.subarray(offset, offset + 4)];
+    };
+    const isNeon = ([red, green, blue, alpha]: number[]) =>
+      alpha === 255 && Math.max(red, green, blue) > 90 && Math.max(red, green, blue) - Math.min(red, green, blue) > 35;
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const offset = ((y * width) + x) * 4;
-        const sameAsBackground = background.every((value, channel) => rgba[offset + channel] === value);
-        const inOuterBand = x < band || y < band || x >= width - band || y >= height - band;
-        if (inOuterBand) expect(sameAsBackground).toBe(true);
-        if (!sameAsBackground) colorfulPixels++;
-      }
-    }
-    expect(colorfulPixels).toBeGreaterThan(width * height * 0.25);
+    // These are the pixels iOS keeps at the flat midpoint of each side. A
+    // padded badge would leave all four dark, reproducing the reported border.
+    expect(isNeon(pixel(Math.floor(width / 2), 0))).toBe(true);
+    expect(isNeon(pixel(Math.floor(width / 2), height - 1))).toBe(true);
+    expect(isNeon(pixel(0, Math.floor(height / 2)))).toBe(true);
+    expect(isNeon(pixel(width - 1, Math.floor(height / 2)))).toBe(true);
   });
 });
