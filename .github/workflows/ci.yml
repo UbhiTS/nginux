@@ -17,7 +17,9 @@ jobs:
           cache: npm
 
       - name: Install
-        run: npm install
+        run: npm ci
+      - name: Dependency audit
+        run: npm audit --audit-level=high
 
       - name: Typecheck server
         run: npm run typecheck --workspace server

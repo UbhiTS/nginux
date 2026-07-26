@@ -75,10 +75,31 @@ function findMmdbInTar(tar: Buffer): Buffer | null {
     if (!name) break; // end-of-archive (zero block)
     const size = parseInt(header.slice(124, 136).replace(/[^0-7]/g, "") || "0", 8) || 0;
     const start = off + 512;
+    if (!Number.isSafeInteger(size) || size < 0 || start + size > tar.length) return null;
     if (name.endsWith(".mmdb")) return tar.subarray(start, start + size);
     off = start + Math.ceil(size / 512) * 512;
   }
   return null;
+}
+
+async function readBodyLimited(res: Response, maxBytes: number): Promise<Buffer> {
+  const declared = Number(res.headers.get("content-length") ?? 0);
+  if (declared > maxBytes) throw new Error("MaxMind response was unexpectedly large - aborting.");
+  if (!res.body) throw new Error("MaxMind returned an empty response.");
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error("MaxMind response was unexpectedly large - aborting.");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
 }
 
 /** Download the free GeoLite2-Country database from MaxMind using the configured
@@ -98,13 +119,12 @@ export async function downloadGeoipDb(): Promise<{ sizeBytes: number }> {
         : `MaxMind download failed (HTTP ${res.status}).`,
     );
   }
-  const gz = Buffer.from(await res.arrayBuffer());
-  // The GeoLite2-Country archive is a few MB; cap the gzip input so a wrong/huge
-  // response can't OOM the 512 MB container before we even decompress.
-  if (gz.length > 64 * 1024 * 1024) throw new Error("MaxMind response was unexpectedly large - aborting.");
+  // Cap while streaming, before buffering. Checking after arrayBuffer() is too
+  // late to prevent a huge response from exhausting the container.
+  const gz = await readBodyLimited(res, 64 * 1024 * 1024);
   let tar: Buffer;
   try {
-    tar = gunzipSync(gz);
+    tar = gunzipSync(gz, { maxOutputLength: 256 * 1024 * 1024 });
   } catch {
     throw new Error("The downloaded file wasn't a valid archive.");
   }
