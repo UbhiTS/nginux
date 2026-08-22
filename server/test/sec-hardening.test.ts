@@ -24,6 +24,34 @@ test("sanitizeHostPatch strips transport/TLS fields (protocol, listenPort, ssl, 
   assert.equal(out.forwardPort, 8080, "a legitimate routing field still passes");
 });
 
+test("create_service (agent) rejects UNDECLARED fields — no raw customNginx / posture injection", async () => {
+  // A control-scope agent smuggled forbidden fields (customNginx, blockExploits, ipAllow,
+  // protocol) as undeclared args past the schema, because create_service spread `{...a}`
+  // into hostInput and validateToolArgs didn't reject extras. Now it must be refused.
+  const controlAgent = { kind: "agent" as const, id: "tok1", name: "ops-bot", scopes: ["read", "report", "control"] as const, trust: "trusted" as const };
+  const res = await tools.callTool(controlAgent, "create_service", {
+    name: "x", domain: "inject.example.com", forwardHost: "192.168.1.5", forwardPort: 80,
+    customNginx: "auth_request off;\nadd_header X-Owned yes;", blockExploits: false, ipAllow: "", protocol: "http",
+  });
+  assert.equal(res.status, "error", "undeclared/forbidden fields must be rejected, not silently applied");
+  assert.match(res.message ?? "", /Unexpected argument/, "the reject-undeclared guard fires");
+  assert.equal(getHostByDomain("inject.example.com"), null, "no host created with injected directives/posture");
+});
+
+test("cookie strip cannot be bypassed via extra upstreams on a control-plane-targeted host", () => {
+  // Attack: a host that LOOKS like the control plane (so the session-cookie strip is
+  // suppressed) but ALSO load-balances to an attacker target to collect the forwarded
+  // nginux_session on ~half of round-robin requests. The attacker upstream must be dropped.
+  const h = makeHost({
+    id: "h_steal", name: "steal", domain: "steal.example.com", ssl: false, requireLogin: false,
+    forwardScheme: "http", forwardHost: "127.0.0.1", forwardPort: 6767, // == NGINUX_CONTROL_URL default
+    upstreams: "attacker.evil.com:80",
+  });
+  const conf = generateHostConfig(h);
+  assert.ok(!conf.includes("attacker.evil.com"), "an attacker load-balancer target must NOT join a control-plane-targeted host's pool");
+  assert.ok(!/upstream ngx_steal/.test(conf), "no load-balancer pool for a control-plane target — proxy_pass goes straight to the control plane");
+});
+
 test("enable_login cannot LOWER require2fa (only raises protection)", async () => {
   const h = createHost(makeHost({ id: "h_2fa", domain: "vault2fa.example.com", requireLogin: true, require2fa: true }));
   const { getHost } = await import("../src/repo.ts");

@@ -143,6 +143,16 @@ function bump(map: Map<string, number>, key: string) {
     for (const [k, n] of keep) map.set(k, n);
   }
 }
+// Same cardinality cap for the per-host Stat maps (keyed on the attacker-controlled Host
+// header — e.g. plain-HTTP requests to the :80 catch-all are still logged). Without this a
+// flood of distinct Host headers grows byHostStat + the per-bucket inner maps without bound
+// (memory-exhaustion DoS). Evict the cold (lowest-request) half. (Security audit follow-up.)
+function capStatMap(map: Map<string, Stat>) {
+  if (map.size <= MAX_KEYS) return;
+  const keep = [...map.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, MAX_KEYS >> 1);
+  map.clear();
+  for (const [k, v] of keep) map.set(k, v);
+}
 
 export function ingest(e: LogEntry): void {
   ring.push(e);
@@ -168,13 +178,13 @@ export function ingest(e: LogEntry): void {
   let hsec = hostSecond.get(second);
   if (!hsec) { hsec = new Map(); hostSecond.set(second, hsec); }
   const hsv = hsec.get(e.host) ?? emptyStat();
-  bumpStat(hsv, e); hsec.set(e.host, hsv);
+  bumpStat(hsv, e); hsec.set(e.host, hsv); capStatMap(hsec);
   if (hostSecond.size > 150) hostSecond.delete(hostSecond.keys().next().value as number);
 
   let hm = hostMinute.get(minute);
   if (!hm) { hm = new Map(); hostMinute.set(minute, hm); }
   const hmv = hm.get(e.host) ?? emptyStat();
-  bumpStat(hmv, e); hm.set(e.host, hmv);
+  bumpStat(hmv, e); hm.set(e.host, hmv); capStatMap(hm);
   if (hostMinute.size > 1500) hostMinute.delete(hostMinute.keys().next().value as number);
 
   // Hour rollups (global + per-host) for the long-range traffic graph.
@@ -185,11 +195,11 @@ export function ingest(e: LogEntry): void {
   let hmh = hostStatHour.get(hour);
   if (!hmh) { hmh = new Map(); hostStatHour.set(hour, hmh); }
   const hmhv = hmh.get(e.host) ?? emptyStat();
-  bumpStat(hmhv, e); hmh.set(e.host, hmhv);
+  bumpStat(hmhv, e); hmh.set(e.host, hmhv); capStatMap(hmh);
   if (hostStatHour.size > HOUR_CAP) hostStatHour.delete(hostStatHour.keys().next().value as number);
 
   const bh = byHostStat.get(e.host) ?? emptyStat();
-  bumpStat(bh, e); byHostStat.set(e.host, bh);
+  bumpStat(bh, e); byHostStat.set(e.host, bh); capStatMap(byHostStat);
 
   const cls = `${Math.floor(e.status / 100)}xx` as keyof typeof statusClass;
   if (cls in statusClass) statusClass[cls]++;

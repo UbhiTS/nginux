@@ -69,6 +69,11 @@ export interface Tool {
   /** Restrict to admin users (and scoped tokens with the scope) - for ops a
    *  non-admin operator can't do in the REST UI either (settings, bans, users). */
   adminOnly?: boolean;
+  /** Opt in to accepting arguments NOT declared in inputSchema (e.g. update_service's
+   *  open-ended host patch). Such a tool MUST sanitize the extra keys itself
+   *  (sanitizeHostPatch). Default (unset): undeclared arguments are REJECTED, so a tool
+   *  can never silently receive an un-vetted field like `customNginx`. */
+  flexibleArgs?: boolean;
   inputSchema: Record<string, unknown>;
   handler: (args: Record<string, unknown>, principal?: Principal) => Promise<unknown> | unknown;
   summarize: (args: Record<string, unknown>) => string;
@@ -288,6 +293,9 @@ export const TOOLS: Record<string, Tool> = {
   update_service: {
     name: "update_service", title: "Update a service", scope: "control", tier: "medium",
     description: "Edit a host's routing or options (cannot set raw nginx directives).",
+    // Accepts an open-ended host patch beyond the declared `id`; sanitizeHostPatch strips
+    // every FORBIDDEN_TOOL_FIELD before the patch is applied, so flexible args are safe here.
+    flexibleArgs: true,
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `update service ${a.id}`,
     handler: async (a) => {
@@ -543,6 +551,17 @@ function validateToolArgs(tool: Tool, args: Record<string, unknown>): string | n
   };
   for (const key of schema.required ?? []) {
     if (!Object.prototype.hasOwnProperty.call(args, key)) return `Missing required argument: ${key}.`;
+  }
+  // Reject any argument NOT declared in the schema, so no handler can receive an un-vetted
+  // field. Without this, create_service's `{...a}` spread let a control-scope agent smuggle
+  // customNginx / ipAllow / blockExploits / protocol past the schema and into the host
+  // record. Tools that intentionally take an open-ended patch (update_service) opt in via
+  // `flexibleArgs` and MUST sanitize the extras themselves. (Security audit follow-up.)
+  if (!tool.flexibleArgs) {
+    const declared = schema.properties ?? {};
+    for (const key of Object.keys(args)) {
+      if (!Object.prototype.hasOwnProperty.call(declared, key)) return `Unexpected argument: ${key}.`;
+    }
   }
   for (const [key, rule] of Object.entries(schema.properties ?? {})) {
     const value = args[key];

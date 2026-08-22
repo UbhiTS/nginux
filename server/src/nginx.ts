@@ -138,9 +138,13 @@ export function generateHostConfig(h: ProxyHost): string {
   }
 
   // Load balancing: emit an upstream block when extra targets are configured.
-  // A login portal must have one deterministic upstream: the control plane.
-  // Ignore legacy load-balancer targets that could otherwise receive its cookie.
-  const extraTargets = portalSelfHost ? [] : splitLines(h.upstreams);
+  // A login portal — OR ANY host whose primary target is the control plane — must have
+  // ONE deterministic upstream: the control plane. Ignore load-balancer targets that would
+  // otherwise join the pool and receive the (un-stripped) session cookie. Without this an
+  // editor could create a control-plane-targeted host with `upstreams: attacker:80` to
+  // exfiltrate nginux_session on ~half of round-robin requests. (Security audit follow-up.)
+  const extraTargets = (portalSelfHost || isControlPlaneTarget(h.forwardHost, h.forwardPort, h.forwardScheme))
+    ? [] : splitLines(h.upstreams);
   let proxyPass = upstream;
   if (extraTargets.length > 0) {
     const poolName = "ngx_" + h.domain.replace(/[^a-z0-9]/gi, "_");
@@ -313,8 +317,12 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   // the bearer. A domain/port heuristic alone would not provide that guarantee.
   const proxiesControlPlane = portalSelfHost
     || isControlPlaneTarget(h.forwardHost, h.forwardPort, h.forwardScheme);
-  const cookieStrip = proxiesControlPlane ? "" : `\n        proxy_set_header Cookie $backend_cookie;`;
-  const grpcCookieStrip = proxiesControlPlane ? "" : `\n        grpc_set_header Cookie $backend_cookie;`;
+  // Suppress the cookie strip ONLY when the ENTIRE effective upstream set is the control
+  // plane (extraTargets is emptied for such hosts above) — never when a load-balancer pool
+  // could carry the session cookie to an extra, possibly attacker-chosen, target.
+  const keepSessionCookie = proxiesControlPlane && extraTargets.length === 0;
+  const cookieStrip = keepSessionCookie ? "" : `\n        proxy_set_header Cookie $backend_cookie;`;
+  const grpcCookieStrip = keepSessionCookie ? "" : `\n        grpc_set_header Cookie $backend_cookie;`;
 
   const locationBody = h.maintenanceMode
     ? `        default_type text/html;${headerBlock}

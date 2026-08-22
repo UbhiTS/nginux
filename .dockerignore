@@ -9,3 +9,15 @@ server/data
 mockup.html
 NginUI-PRD.md
 .claude
+# Never bake secrets or local state into the image (defensive — a local `build: .`
+# would otherwise COPY whatever sits in the working tree).
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+*.p12
+*.sqlite
+*.sqlite-*
+# Tests are run in CI, not shipped — keep them (and their fixtures) out of the runtime image.
+server/test

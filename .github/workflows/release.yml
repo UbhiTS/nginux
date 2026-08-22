@@ -66,7 +66,16 @@ jobs:
       - name: Build runtime image (single-arch, fast)
         run: docker build -t nginux:smoke --build-arg GIT_SHA="$GITHUB_SHA" .
       - name: Boot the container on a throwaway volume
-        run: docker run -d --name smoke -v "$RUNNER_TEMP/smoke:/data" nginux:smoke
+        # Boot under the SAME hardening the product ships (docker-compose cap set +
+        # no-new-privileges), so the smoke gate exercises the real setpriv/ambient-cap
+        # path instead of default-privileged Docker.
+        run: >
+          docker run -d --name smoke
+          --cap-drop ALL
+          --cap-add NET_BIND_SERVICE --cap-add CHOWN --cap-add SETUID
+          --cap-add SETGID --cap-add DAC_OVERRIDE --cap-add KILL
+          --security-opt no-new-privileges:true
+          -v "$RUNNER_TEMP/smoke:/data" nginux:smoke
       - name: Control plane must answer /api/health (catches a boot crash-loop)
         run: |
           for i in $(seq 1 30); do

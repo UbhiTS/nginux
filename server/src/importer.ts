@@ -1,6 +1,7 @@
 import { createHost, getHostByDomain } from "./repo.ts";
 import type { NewProxyHost } from "./types.ts";
 import { isHost, isHostname } from "./validate.ts";
+import { hostInput } from "./hostschema.ts";
 
 interface Parsed {
   domain: string;
@@ -83,6 +84,7 @@ export function previewNginxConf(text: string): ImportPreview {
 export function importNginxConf(text: string): { imported: string[]; skipped: string[] } {
   const preview = previewNginxConf(text);
   const imported: string[] = [];
+  const skipped = preview.skipped.map((s) => s.domain);
   for (const d of preview.toImport) {
     const host: NewProxyHost = {
       name: d.name, domain: d.domain, forwardScheme: d.forwardScheme, forwardHost: d.forwardHost,
@@ -90,8 +92,13 @@ export function importNginxConf(text: string): { imported: string[]; skipped: st
       requireLogin: false, require2fa: false, countryLock: false,
       serverGroup: d.forwardHost, serverIp: d.forwardHost, enabled: true,
     };
-    createHost(host);
+    // Route imported hosts through the SAME zod boundary as POST /api/hosts, so a value
+    // parsed out of an untrusted nginx.conf (e.g. an out-of-range forwardPort) can't create
+    // an invalid host that then breaks every config apply. (Security audit follow-up.)
+    const parsed = hostInput.safeParse(host);
+    if (!parsed.success) { skipped.push(d.domain); continue; }
+    createHost(parsed.data);
     imported.push(d.domain);
   }
-  return { imported, skipped: preview.skipped.map((s) => s.domain) };
+  return { imported, skipped };
 }

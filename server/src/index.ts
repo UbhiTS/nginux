@@ -358,6 +358,10 @@ const SCOPED_FORBIDDEN_FIELDS = [
   // here: moving your own app to a new port on the same box is legitimate management
   // (they still can't point at a different host), so the SSRF-pivot door stays shut.
   "forwardHost", "forwardScheme", "domain", "ssl",
+  // Mirror the agent path's FORBIDDEN_TOOL_FIELDS: `protocol`/`listenPort` could turn a
+  // login-gated HTTP host into an un-gated TCP/UDP/SNI stream (no auth_request), and
+  // `preset` can disable exploit-path blocking — posture, not management.
+  "protocol", "listenPort", "preset",
 ] as const;
 
 function rejectPrivilegedFields(req: FastifyRequest, reply: FastifyReply, body: Record<string, unknown>): boolean {
