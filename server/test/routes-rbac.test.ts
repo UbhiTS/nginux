@@ -11,7 +11,10 @@ import { makeHost } from "./helpers.ts";
 setupTestEnv();
 const { app } = await import("../src/index.ts");
 const { db, saveSettings } = await import("../src/db.ts");
-const { createSession, listUsers, updateUserRole, countAdmins } = await import("../src/auth.ts");
+const {
+  beginTwofaSetup, countAdmins, createSession, createUser, enableTwofa,
+  getTwofaSecret, getUserById, listUsers, updateUserRole,
+} = await import("../src/auth.ts");
 const { createHost, getHost, getHostByDomain } = await import("../src/repo.ts");
 const { createToken } = await import("../src/tokens.ts");
 
@@ -312,6 +315,49 @@ test("certificate routes reject internal names and do not report deletion of unt
   assert.equal(missing.statusCode, 404, "only a tracked certificate may be deleted");
 });
 
+test("admin can password-confirm and reset another user's lost 2FA, revoking target sessions", async () => {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const actorPassword = "actor-admin-pass-123";
+  const actor = await createUser({ username: `recovery-admin-${suffix}`, password: actorPassword, role: "admin" });
+  const target = await createUser({ username: `lost-factor-${suffix}`, password: "target-pass-123", role: "admin" });
+  beginTwofaSetup(target.id);
+  enableTwofa(target.id);
+  const activeSecret = getTwofaSecret(target.id);
+  const targetCookie = cookieFor(target.id);
+  const actorCookie = cookieFor(actor.id);
+
+  const readonly = await app.inject({
+    method: "POST", url: `/api/users/${target.id}/2fa/reset`,
+    headers: { cookie: cookieFor(makeUser("readonly")) }, payload: { currentPassword: "irrelevant" },
+  });
+  assert.equal(readonly.statusCode, 403);
+
+  const wrongPassword = await app.inject({
+    method: "POST", url: `/api/users/${target.id}/2fa/reset`,
+    headers: { cookie: actorCookie }, payload: { currentPassword: "wrong-password" },
+  });
+  assert.equal(wrongPassword.statusCode, 403);
+  assert.equal(getTwofaSecret(target.id), activeSecret, "wrong acting-admin password leaves target factor intact");
+
+  const selfReset = await app.inject({
+    method: "POST", url: `/api/users/${actor.id}/2fa/reset`,
+    headers: { cookie: actorCookie }, payload: { currentPassword: actorPassword },
+  });
+  assert.equal(selfReset.statusCode, 400, "self-service must use safe replacement, not destructive reset");
+
+  const reset = await app.inject({
+    method: "POST", url: `/api/users/${target.id}/2fa/reset`,
+    headers: { cookie: actorCookie }, payload: { currentPassword: actorPassword },
+  });
+  assert.equal(reset.statusCode, 200, reset.payload);
+  assert.equal(getUserById(target.id)?.twofaEnabled, false);
+  assert.equal(getTwofaSecret(target.id), null);
+  assert.equal((await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: targetCookie } })).statusCode, 401, "target sessions are revoked");
+  const audit = db.prepare("SELECT actor, summary FROM audit_events WHERE type='security.2fa_reset' ORDER BY id DESC LIMIT 1").get() as { actor: string; summary: string };
+  assert.equal(audit.actor, actor.username);
+  assert.match(audit.summary, new RegExp(target.username));
+});
+
 test("non-admin host reads redact custom nginx secrets and an empty PUT cannot erase them", async () => {
   const marker = "upstream-admin-secret-DO-NOT-LEAK";
   const host = createHost(makeHost({
@@ -357,6 +403,7 @@ test("sensitive mutation matrix rejects unauthenticated and readonly callers bef
   const readonly = cookieFor(makeUser("readonly"));
   const cases: Array<[string, string]> = [
     ["PUT", "/api/settings"],
+    ["POST", "/api/users/not-found/2fa/reset"],
     ["POST", "/api/tokens"], ["DELETE", "/api/tokens/not-found"],
     ["POST", "/api/webhooks"], ["DELETE", "/api/webhooks/not-found"],
     ["POST", "/api/channels"], ["PUT", "/api/channels/not-found/enabled"],

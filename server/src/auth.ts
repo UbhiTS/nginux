@@ -194,13 +194,29 @@ export function enableTwofa(userId: string): string[] {
   db.prepare(
     `UPDATE users
      SET twofaSecret = COALESCE(twofaPendingSecret, twofaSecret),
-         twofaPendingSecret = NULL, twofaEnabled = 1, backupCodes = ?
+         twofaPendingSecret = NULL, twofaEnabled = 1, backupCodes = ?,
+         twofaLastCounter = -1
      WHERE id = ?`,
   ).run(
     JSON.stringify(codes.map(hashCode)),
     userId,
   );
   return codes;
+}
+
+/** Administrative recovery for a user who lost their authenticator and backup
+ * codes. Clears both active/pending factors and revokes every session; a manager
+ * is then forced through enrollment again when the policy is enabled. */
+export function resetTwofa(userId: string): boolean {
+  const result = db.prepare(
+    `UPDATE users
+     SET twofaSecret = NULL, twofaPendingSecret = NULL, twofaEnabled = 0,
+         backupCodes = '[]', twofaLastCounter = -1
+     WHERE id = ? AND twofaEnabled = 1`,
+  ).run(userId);
+  if (!result.changes) return false;
+  destroyUserSessions(userId);
+  return true;
 }
 
 /** Consume a one-time backup code (constant-time match); true if it was valid.

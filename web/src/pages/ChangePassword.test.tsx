@@ -79,7 +79,8 @@ describe("ChangePassword", () => {
   });
 
   it("submits current + new password and calls onChanged on success", async () => {
-    vi.mocked(api.changePassword).mockResolvedValue({ ok: true, user: { ...user, mustChangePassword: false } });
+    const transitioned = { ...user, mustChangePassword: false, mustEnable2fa: true };
+    vi.mocked(api.changePassword).mockResolvedValue({ ok: true, user: transitioned });
     const onChanged = vi.fn();
     render(<ChangePassword user={user} onChanged={onChanged} />);
     const [current, next, confirm] = passwordInputs();
@@ -89,7 +90,14 @@ describe("ChangePassword", () => {
     await userEvent.click(screen.getByRole("button", { name: /save and continue/i }));
 
     expect(api.changePassword).toHaveBeenCalledWith("oldpass1", "newpassword1");
-    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(transitioned));
+  });
+
+  it("offers a sign-out escape hatch while onboarding is forced", async () => {
+    const onLogout = vi.fn();
+    render(<ChangePassword user={user} onChanged={() => {}} onLogout={onLogout} />);
+    await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
+    expect(onLogout).toHaveBeenCalled();
   });
 
   it("surfaces an API rejection through the alert banner", async () => {

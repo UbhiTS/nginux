@@ -11,8 +11,9 @@ import { setupTestEnv, makeHost } from "./helpers.ts";
 setupTestEnv();
 const { app } = await import("../src/index.ts");
 const { db, saveSettings } = await import("../src/db.ts");
-const { createSession, createUser } = await import("../src/auth.ts");
+const { beginTwofaSetup, createSession, createUser, enableTwofa, getTwofaSecret } = await import("../src/auth.ts");
 const { createHost, deleteHost } = await import("../src/repo.ts");
+const { totp } = await import("../src/totp.ts");
 
 // Seed a user row directly (bypassing the create-user API so we can pick the role,
 // scope, and mustChangePassword flag freely). Mirrors routes-rbac.test.ts's helper.
@@ -361,6 +362,103 @@ test("require2faForManagers confines a manager without 2FA to the enrollment flo
   const setup = await app.inject({ method: "POST", url: "/api/auth/2fa/setup", headers: { cookie: admin }, payload: { password: "wrong" } });
   assert.notEqual((setup.json() as { mustEnable2fa?: boolean }).mustEnable2fa, true, "the enrollment path is not self-blocked");
   saveSettings({ require2faForManagers: false });
+});
+
+test("temporary-password manager completes password change before mandatory 2FA enrollment", async () => {
+  saveSettings({ require2faForManagers: true });
+  try {
+    const username = `onboard-${Math.random().toString(36).slice(2, 9)}`;
+    const temporaryPassword = "temporary-pass-123";
+    const newPassword = "permanent-pass-456";
+    const user = await createUser({ username, password: temporaryPassword, role: "admin", mustChangePassword: true });
+    const oldCookie = cookieFor(user.id);
+
+    const initial = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: oldCookie } });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.json().mustChangePassword, true);
+    assert.equal(initial.json().mustEnable2fa, true);
+
+    const blockedApp = await app.inject({ method: "GET", url: "/api/hosts", headers: { cookie: oldCookie } });
+    assert.equal(blockedApp.statusCode, 403);
+    assert.equal(blockedApp.json().mustChangePassword, true, "password onboarding has precedence");
+    assert.equal("mustEnable2fa" in blockedApp.json(), false);
+
+    const premature2fa = await app.inject({
+      method: "POST", url: "/api/auth/2fa/setup", headers: { cookie: oldCookie }, payload: { password: temporaryPassword },
+    });
+    assert.equal(premature2fa.statusCode, 403);
+    assert.equal(premature2fa.json().mustChangePassword, true, "2FA cannot jump ahead of password replacement");
+
+    const changed = await app.inject({
+      method: "POST", url: "/api/auth/change-password", headers: { cookie: oldCookie },
+      payload: { currentPassword: temporaryPassword, newPassword },
+    });
+    assert.equal(changed.statusCode, 200, changed.payload);
+    assert.equal(changed.json().user.mustChangePassword, false);
+    assert.equal(changed.json().user.mustEnable2fa, true, "response sends the SPA directly to mandatory 2FA");
+    const freshCookie = String(changed.headers["set-cookie"]).split(";")[0];
+    assert.match(freshCookie, /^nginux_session=/);
+
+    const oldSession = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: oldCookie } });
+    assert.equal(oldSession.statusCode, 401, "password change revokes the temporary-password session");
+    const stillConfined = await app.inject({ method: "GET", url: "/api/hosts", headers: { cookie: freshCookie } });
+    assert.equal(stillConfined.statusCode, 403);
+    assert.equal(stillConfined.json().mustEnable2fa, true);
+
+    const setup = await app.inject({
+      method: "POST", url: "/api/auth/2fa/setup", headers: { cookie: freshCookie }, payload: { password: newPassword },
+    });
+    assert.equal(setup.statusCode, 200, setup.payload);
+    const secret = String(setup.json().secret);
+    assert.ok(secret);
+    // A second password-only session must not silently inherit 2FA assurance when
+    // this browser completes enrollment.
+    const secondPre2faCookie = cookieFor(user.id);
+    const verified = await app.inject({
+      method: "POST", url: "/api/auth/2fa/verify", headers: { cookie: freshCookie }, payload: { token: totp(secret) },
+    });
+    assert.equal(verified.statusCode, 200, verified.payload);
+    assert.equal(verified.json().backupCodes.length, 8);
+    const post2faCookie = String(verified.headers["set-cookie"]).split(";")[0];
+    assert.match(post2faCookie, /^nginux_session=/);
+    assert.equal((await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: freshCookie } })).statusCode, 401, "verifying rotates its pre-2FA session");
+    assert.equal((await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: secondPre2faCookie } })).statusCode, 401, "another password-only session cannot inherit 2FA assurance");
+
+    const complete = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: post2faCookie } });
+    assert.equal(complete.json().twofaEnabled, true);
+    assert.equal(complete.json().mustEnable2fa, false);
+    assert.equal((await app.inject({ method: "GET", url: "/api/hosts", headers: { cookie: post2faCookie } })).statusCode, 200);
+  } finally {
+    saveSettings({ require2faForManagers: false });
+  }
+});
+
+test("2FA replacement revokes sessions authenticated under the old factor", async () => {
+  const username = `replace-factor-${Math.random().toString(36).slice(2, 9)}`;
+  const password = "replacement-pass-123";
+  const user = await createUser({ username, password, role: "readonly" });
+  beginTwofaSetup(user.id);
+  enableTwofa(user.id);
+  const oldSecret = getTwofaSecret(user.id);
+  const verifyingCookie = cookieFor(user.id);
+  const otherOldCookie = cookieFor(user.id);
+
+  const setup = await app.inject({
+    method: "POST", url: "/api/auth/2fa/setup", headers: { cookie: verifyingCookie }, payload: { password },
+  });
+  assert.equal(setup.statusCode, 200, setup.payload);
+  const replacementSecret = String(setup.json().secret);
+  assert.notEqual(replacementSecret, oldSecret);
+
+  const verified = await app.inject({
+    method: "POST", url: "/api/auth/2fa/verify", headers: { cookie: verifyingCookie }, payload: { token: totp(replacementSecret) },
+  });
+  assert.equal(verified.statusCode, 200, verified.payload);
+  const newCookie = String(verified.headers["set-cookie"]).split(";")[0];
+  assert.match(newCookie, /^nginux_session=/);
+  assert.equal((await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: verifyingCookie } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: otherOldCookie } })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: newCookie } })).statusCode, 200);
 });
 
 // ---------------------------------------------------------------------------

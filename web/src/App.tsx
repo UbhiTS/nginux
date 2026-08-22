@@ -145,7 +145,9 @@ export function App() {
 
   // Load app data once signed in.
   useEffect(() => {
-    if (user) reload();
+    // Onboarding accounts are server-confined to their password/2FA endpoints;
+    // loading normal app data here only produces a wall of expected 403s.
+    if (user && !user.mustChangePassword && !user.mustEnable2fa) reload();
   }, [user, reload]);
 
   const navigate = useCallback((r: Route, replace = false) => {
@@ -178,7 +180,7 @@ export function App() {
     );
   }
   if (!user) return <Login onSignedIn={setUser} />;
-  if (user.mustChangePassword) return <ChangePassword user={user} onChanged={setUser} />;
+  if (user.mustChangePassword) return <ChangePassword user={user} onChanged={setUser} onLogout={logout} />;
   // Policy: managers must have 2FA. The server also confines them to the enrollment
   // endpoints, so this gate can't be skipped by editing client state.
   if (user.mustEnable2fa) return <Enable2fa user={user} onEnabled={refreshMe} onLogout={logout} />;
@@ -207,7 +209,7 @@ export function App() {
         {route.name === "services" && <Services hosts={hosts} navigate={navigate} reload={reload} />}
         {route.name === "host" && route.hostId && <HostDetail hostId={route.hostId} navigate={navigate} reload={reload} tab={route.tab} />}
         {route.name === "wizard" && <Wizard settings={settings} navigate={navigate} reload={reload} />}
-        {route.name === "settings" && <SettingsPage reload={reload} />}
+        {route.name === "settings" && <SettingsPage reload={reload} refreshMe={refreshMe} />}
         {route.name === "security" && <SecurityCenter tab={route.tab} setTab={(t) => navigate({ name: "security", tab: t }, true)} />}
         {route.name === "useraccess" && <UsersAccess currentUser={user} refreshMe={refreshMe} tab={route.tab} setTab={(t) => navigate({ name: "useraccess", tab: t }, true)} />}
         {route.name === "certs" && <Certificates />}

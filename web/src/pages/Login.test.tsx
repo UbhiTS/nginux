@@ -65,6 +65,24 @@ describe("Login", () => {
     await waitFor(() => expect(onSignedIn).toHaveBeenCalledWith(sampleUser));
   });
 
+  it("does not redirect a user away from required onboarding", async () => {
+    const returnUrl = "https://app.example.com/private";
+    history.replaceState(null, "", `/?rd=${encodeURIComponent(returnUrl)}`);
+    const gated = { ...sampleUser, mustChangePassword: true, mustEnable2fa: true };
+    vi.mocked(api.login).mockResolvedValue({ user: gated, redirectTo: returnUrl });
+    const onSignedIn = vi.fn();
+    try {
+      render(<Login onSignedIn={onSignedIn} />);
+      await userEvent.type(screen.getByRole("textbox"), "admin");
+      await userEvent.type(passwordInput(), "temporary-password");
+      await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+      await waitFor(() => expect(onSignedIn).toHaveBeenCalledWith(gated));
+      expect(window.location.href).not.toBe(returnUrl);
+    } finally {
+      history.replaceState(null, "", "/");
+    }
+  });
+
   it("shows the error message when the login is rejected", async () => {
     vi.mocked(api.login).mockRejectedValue(new Error("Invalid credentials"));
     const onSignedIn = vi.fn();

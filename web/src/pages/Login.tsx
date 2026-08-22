@@ -29,8 +29,12 @@ export function Login({ onSignedIn }: { onSignedIn: (u: AuthUser) => void }) {
         setError(needs2fa ? "That 2FA code didn't match - try the current one." : "");
       } else if (res.user) {
         // Only follow a destination that the server matched to an enabled,
-        // configured NginUX service.
-        if (res.redirectTo) { window.location.href = res.redirectTo; return; }
+        // configured NginUX service. Onboarding takes precedence: redirecting a
+        // temp-password/unenrolled manager back to a gated service creates a loop.
+        if (res.redirectTo && !res.user.mustChangePassword && !res.user.mustEnable2fa) {
+          window.location.href = res.redirectTo;
+          return;
+        }
         onSignedIn(res.user);
       }
     } catch (err) {

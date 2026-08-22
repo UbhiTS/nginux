@@ -5,7 +5,7 @@ import { BrandLogo } from "../components/BrandLogo.tsx";
 import { Field } from "../components/Field.tsx";
 
 /** Forced on first login when the account still has the default password. */
-export function ChangePassword({ user, onChanged }: { user: AuthUser; onChanged: (u: AuthUser) => void }) {
+export function ChangePassword({ user, onChanged, onLogout }: { user: AuthUser; onChanged: (u: AuthUser) => void; onLogout?: () => void }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -100,6 +100,11 @@ export function ChangePassword({ user, onChanged }: { user: AuthUser; onChanged:
             {busy ? <span className="spinner" /> : null}
             Save and continue
           </button>
+          {onLogout && (
+            <button type="button" className="btn btn-ghost" style={{ width: "100%", justifyContent: "center", marginTop: 8 }} disabled={busy} onClick={onLogout}>
+              Sign out
+            </button>
+          )}
         </form>
       </div>
     </div>

@@ -17,6 +17,7 @@ vi.mock("../api.ts", async (importOriginal) => {
       createUser: vi.fn(),
       deleteUser: vi.fn(),
       adminSetUserPassword: vi.fn(),
+      resetUserTwofa: vi.fn(),
       changePassword: vi.fn(),
       twofaSetup: vi.fn(),
       twofaVerify: vi.fn(),
@@ -71,6 +72,7 @@ beforeEach(() => {
   vi.mocked(api.revokeSession).mockResolvedValue({ ok: true } as never);
   vi.mocked(api.updateUserRole).mockResolvedValue(makeUser() as never);
   vi.mocked(api.adminSetUserPassword).mockResolvedValue({ ok: true } as never);
+  vi.mocked(api.resetUserTwofa).mockResolvedValue({ ok: true } as never);
   vi.mocked(api.changePassword).mockResolvedValue({ ok: true } as never);
   vi.mocked(api.twofaSetup).mockResolvedValue({ secret: "ABCD", otpauth: "otpauth://x" } as never);
   vi.mocked(api.twofaVerify).mockResolvedValue({ ok: true, backupCodes: ["code-1", "code-2"] } as never);
@@ -174,6 +176,37 @@ describe("UsersAccess — session revoke", () => {
 });
 
 describe("UsersAccess — forms & feedback", () => {
+  it("lets an enrolled current user safely replace their authenticator", async () => {
+    const { refreshMe } = renderPage();
+    await screen.findByText("alice@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Replace 2FA" }));
+    await userEvent.type(screen.getByLabelText("Confirm password"), "current-admin-password");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(api.twofaSetup).toHaveBeenCalledWith("current-admin-password");
+    expect(await screen.findByText("Replace your authenticator")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("6-digit code"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: /Verify & replace/i }));
+    expect(api.twofaVerify).toHaveBeenCalledWith("123456");
+    expect(await screen.findByRole("status")).toHaveTextContent("2FA replaced");
+    expect(refreshMe).toHaveBeenCalled();
+  });
+
+  it("lets an admin password-confirm recovery-reset another user's lost 2FA", async () => {
+    vi.mocked(api.users).mockResolvedValue([
+      makeUser(),
+      makeUser({ id: "u2", username: "bob", email: "bob@example.com", role: "admin", twofaEnabled: true }),
+    ]);
+    renderPage();
+    await screen.findByText("bob@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Reset 2FA for bob" }));
+    await userEvent.type(screen.getByLabelText("Confirm your admin password"), "actor-password");
+    await userEvent.click(screen.getByRole("button", { name: "Reset 2FA" }));
+
+    await waitFor(() => expect(api.resetUserTwofa).toHaveBeenCalledWith("u2", "actor-password"));
+    expect(await screen.findByRole("status")).toHaveTextContent("Two-factor authentication reset for bob");
+  });
+
   it("labels the change-password fields (htmlFor wiring via Field)", async () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("alice@example.com")).toBeInTheDocument());

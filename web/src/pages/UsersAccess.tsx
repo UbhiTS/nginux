@@ -52,6 +52,7 @@ export function UsersAccess({
   const [code, setCode] = useState("");
   const [backup, setBackup] = useState<string[] | null>(null);
   const [err, setErr] = useState("");
+  const [replacingSelf, setReplacingSelf] = useState(false);
 
   // change-password (self-service)
   const [pwOpen, setPwOpen] = useState(false);
@@ -65,6 +66,13 @@ export function UsersAccess({
   // admin: delete a user
   const [delUser, setDelUser] = useState<AuthUser | null>(null);
   const [delBusy, setDelBusy] = useState(false);
+
+  // admin recovery: clear another user's lost 2FA and revoke their sessions.
+  const [reset2faUser, setReset2faUser] = useState<AuthUser | null>(null);
+  const [reset2faBusy, setReset2faBusy] = useState(false);
+  const [reset2faDone, setReset2faDone] = useState("");
+  const [reset2faPw, setReset2faPw] = useState("");
+  const [reset2faErr, setReset2faErr] = useState("");
 
   // admin: revoke a session / change a role in place
   const [revokeS, setRevokeS] = useState<Session | null>(null);
@@ -136,6 +144,26 @@ export function UsersAccess({
     }
   };
 
+  const openReset2fa = (u: AuthUser) => {
+    setReset2faUser(u); setReset2faPw(""); setReset2faErr(""); setReset2faDone("");
+  };
+  const confirmReset2fa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reset2faUser) return;
+    if (!reset2faPw) return setReset2faErr("Confirm your own admin password.");
+    setReset2faBusy(true); setReset2faErr("");
+    try {
+      await api.resetUserTwofa(reset2faUser.id, reset2faPw);
+      setReset2faDone(`Two-factor authentication reset for ${reset2faUser.username}. Their active sessions were revoked.`);
+      setReset2faUser(null); setReset2faPw("");
+      load();
+    } catch (e2) {
+      setReset2faErr(e2 instanceof Error ? e2.message : "Couldn't reset two-factor authentication.");
+    } finally {
+      setReset2faBusy(false);
+    }
+  };
+
   const resetPw = () => { setPwCur(""); setPwNext(""); setPwConfirm(""); setPwErr(""); };
   const openPw = () => { resetPw(); setPwOk(false); setPwOpen(true); };
   const submitPw = async (e: React.FormEvent) => {
@@ -165,6 +193,11 @@ export function UsersAccess({
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Couldn't start 2FA setup.");
     }
+  };
+  const openEnroll = () => {
+    setReplacingSelf(currentUser.twofaEnabled);
+    setBackup(null); setEnroll(null); setCode(""); setPw(""); setErr("");
+    setPwPrompt(true);
   };
   const verifyEnroll = async () => {
     setErr("");
@@ -208,39 +241,39 @@ export function UsersAccess({
               <div className="test-result ok" role="status" style={{ marginBottom: 18 }}><Icon.check /><div>Your password was changed.</div></div>
             )}
 
-            {!currentUser.twofaEnabled && (
-              <div className="nudge animate-rise" style={{ marginBottom: 18 }}>
-                <Icon.lock />
-                <div style={{ flex: 1 }}>
-                  <div className="nt">Protect your account with 2FA</div>
-                  <div className="nd">Add a one-time code on top of your password. Strongly recommended for admins.</div>
-                </div>
-                {!enroll && !pwPrompt && (
-                  <button className="btn btn-primary btn-sm" style={{ alignSelf: "center" }} onClick={() => { setErr(""); setPwPrompt(true); }}>
-                    Enable 2FA
-                  </button>
-                )}
-                {!enroll && pwPrompt && (
-                  <div style={{ display: "flex", gap: 8, alignItems: "flex-end", alignSelf: "center", flexWrap: "wrap" }}>
-                    <Field label="Confirm password">
-                      <input className="input" type="password" style={{ maxWidth: 180 }} value={pw}
-                        onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void startEnroll(); }} autoFocus />
-                    </Field>
-                    <button className="btn btn-primary btn-sm" onClick={() => void startEnroll()}>Continue</button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => { setPwPrompt(false); setPw(""); setErr(""); }}>Cancel</button>
-                  </div>
-                )}
+            <div className="nudge animate-rise" style={{ marginBottom: 18 }}>
+              <Icon.lock />
+              <div style={{ flex: 1 }}>
+                <div className="nt">{currentUser.twofaEnabled ? "Two-factor authentication is on" : "Protect your account with 2FA"}</div>
+                <div className="nd">{currentUser.twofaEnabled
+                  ? "Replace your authenticator safely. The current one remains valid until the replacement code is verified."
+                  : "Add a one-time code on top of your password. Strongly recommended for admins."}</div>
               </div>
-            )}
+              {!enroll && !pwPrompt && (
+                <button className="btn btn-primary btn-sm" style={{ alignSelf: "center" }} onClick={openEnroll}>
+                  {currentUser.twofaEnabled ? "Replace 2FA" : "Enable 2FA"}
+                </button>
+              )}
+              {!enroll && pwPrompt && (
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-end", alignSelf: "center", flexWrap: "wrap" }}>
+                  <Field label="Confirm password">
+                    <input className="input" type="password" autoComplete="current-password" style={{ maxWidth: 180 }} value={pw}
+                      onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void startEnroll(); }} autoFocus />
+                  </Field>
+                  <button className="btn btn-primary btn-sm" onClick={() => void startEnroll()}>Continue</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setPwPrompt(false); setPw(""); setErr(""); }}>Cancel</button>
+                </div>
+              )}
+            </div>
             {pwPrompt && err && (
               <div className="test-result bad" role="alert" style={{ marginBottom: 18 }}><Icon.x /><div>{err}</div></div>
             )}
 
             {enroll && (
               <div className="card card-pad" style={{ marginBottom: 18 }}>
-                <div style={{ fontWeight: 650, marginBottom: 8 }}>Set up two-factor authentication</div>
+                <div style={{ fontWeight: 650, marginBottom: 8 }}>{replacingSelf ? "Replace your authenticator" : "Set up two-factor authentication"}</div>
                 <p className="muted" style={{ fontSize: 13 }}>
-                  Scan this QR code with your authenticator app - or enter the key manually - then enter the 6-digit code to confirm.
+                  Scan this QR code with your authenticator app - or enter the key manually - then enter the 6-digit code to {replacingSelf ? "replace the old authenticator" : "confirm"}.
                 </p>
                 <div style={{ display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap", margin: "14px 0" }}>
                   <div style={{ background: "#fff", padding: 10, borderRadius: 10, flexShrink: 0, lineHeight: 0 }}>
@@ -255,7 +288,7 @@ export function UsersAccess({
                       <Field label="6-digit code">
                         <input className="input mono" style={{ maxWidth: 160, letterSpacing: 4, textAlign: "center" }} maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} placeholder="123456" />
                       </Field>
-                      <button className="btn btn-primary" onClick={verifyEnroll}>Verify &amp; enable</button>
+                      <button className="btn btn-primary" onClick={verifyEnroll}>Verify &amp; {replacingSelf ? "replace" : "enable"}</button>
                       <button className="btn btn-ghost" onClick={() => setEnroll(null)}>Cancel</button>
                     </div>
                   </div>
@@ -266,7 +299,7 @@ export function UsersAccess({
 
             {backup && (
               <div className="card card-pad" role="status" style={{ marginBottom: 18 }}>
-                <div style={{ fontWeight: 650, marginBottom: 6, color: "var(--green)" }}>2FA enabled ✓ - save your backup codes</div>
+                <div style={{ fontWeight: 650, marginBottom: 6, color: "var(--green)" }}>{replacingSelf ? "2FA replaced" : "2FA enabled"} ✓ - save your backup codes</div>
                 <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>Each code works once if you lose your authenticator.</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   {backup.map((c) => (
@@ -278,6 +311,10 @@ export function UsersAccess({
 
             {rpDone && (
               <div className="test-result ok" role="status" style={{ marginBottom: 18 }}><Icon.check /><div>{rpDone}</div></div>
+            )}
+
+            {reset2faDone && (
+              <div className="test-result ok" role="status" style={{ marginBottom: 18 }}><Icon.check /><div>{reset2faDone}</div></div>
             )}
 
             {roleErr && (
@@ -340,8 +377,11 @@ export function UsersAccess({
                         </span>
                       )}
                     </div>
-                    <div style={{ textAlign: "center" }}>
+                    <div style={{ textAlign: "center", display: "flex", justifyContent: "center", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       <span className={`pill ${u.twofaEnabled ? "g" : "r"}`}>{u.twofaEnabled ? "On" : "Not set up"}</span>
+                      {currentUser.role === "admin" && u.id !== currentUser.id && u.twofaEnabled && (
+                        <button className="btn btn-ghost btn-sm" aria-label={`Reset 2FA for ${u.username}`} onClick={() => openReset2fa(u)}>Reset</button>
+                      )}
                     </div>
                     <div className="muted">{u.lastLoginAt ? fmt(u.lastLoginAt) : "never"}</div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 64px", gap: 10, alignItems: "center" }}>
@@ -488,6 +528,27 @@ export function UsersAccess({
         />
       )}
 
+      {reset2faUser && (
+        <div className="modal-backdrop" onClick={() => !reset2faBusy && setReset2faUser(null)}>
+          <div className="card card-pad modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontWeight: 650, marginBottom: 4 }}>Reset 2FA — {reset2faUser.username}</div>
+            <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
+              This removes their authenticator and backup codes and signs out every active session. If manager 2FA is required, they'll enroll a new authenticator after their next login.
+            </p>
+            <form onSubmit={confirmReset2fa}>
+              <Field label="Confirm your admin password">
+                <input className="input" type="password" autoComplete="current-password" value={reset2faPw} onChange={(e) => setReset2faPw(e.target.value)} autoFocus />
+              </Field>
+              {reset2faErr && <div className="test-result bad" role="alert" style={{ marginTop: 0, marginBottom: 12 }}><Icon.x /><div>{reset2faErr}</div></div>}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn btn-danger" disabled={reset2faBusy}>{reset2faBusy ? <span className="spinner" /> : null}Reset 2FA</button>
+                <button type="button" className="btn btn-ghost" disabled={reset2faBusy} onClick={() => setReset2faUser(null)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {pwOpen && (
         <div className="modal-backdrop" onClick={() => setPwOpen(false)}>
           <div className="card card-pad modal-card" onClick={(e) => e.stopPropagation()}>
@@ -518,7 +579,7 @@ export function UsersAccess({
           <div className="card card-pad modal-card" onClick={(e) => e.stopPropagation()}>
             <div style={{ fontWeight: 650, marginBottom: 4 }}>Add a user</div>
             <p className="muted" style={{ fontSize: 13, marginBottom: 14 }}>
-              They'll be asked to change this password on first sign-in.
+              They'll change this password on first sign-in. Admins/editors will then enroll 2FA when the manager policy requires it.
             </p>
             <form onSubmit={submitAdd}>
               <Field label="Username">

@@ -32,6 +32,7 @@ import {
   createUser,
   deleteUser,
   destroySession,
+  destroyUserSessions,
   enableTwofa,
   getLastTotpCounter,
   getPendingTwofaSecret,
@@ -40,6 +41,7 @@ import {
   listSessions,
   listUsers,
   revokeSession,
+  resetTwofa,
   sessionSid,
   countAdmins,
   updateUserRole,
@@ -276,8 +278,13 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
     if (!principal(req)) return reply.code(401).send({ error: "Valid session or API token required" });
     // A cookie user with a temporary password is still confined, even via MCP.
     const cu = currentUser(req);
-    if (cu?.mustChangePassword && !PW_CHANGE_ALLOWED.has(path)) {
-      return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
+    if (cu?.mustChangePassword) {
+      if (!PW_CHANGE_ALLOWED.has(path)) {
+        return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
+      }
+      // Password onboarding is the first gate. Do not simultaneously apply the
+      // manager-2FA gate or each flow blocks the other's endpoint.
+      return;
     }
     if (cu && mustEnroll2fa(cu) && !TWOFA_ENROLL_ALLOWED.has(path)) {
       return reply.code(403).send({ error: "Two-factor authentication is required for your role.", mustEnable2fa: true });
@@ -288,8 +295,13 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   if (!u) return reply.code(401).send({ error: "Authentication required" });
   // A temporary-password account is confined to the change-password flow until it
   // sets a real password - enforced here, not just in the SPA.
-  if (u.mustChangePassword && !PW_CHANGE_ALLOWED.has(path)) {
-    return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
+  if (u.mustChangePassword) {
+    if (!PW_CHANGE_ALLOWED.has(path)) {
+      return reply.code(403).send({ error: "Set a new password before continuing.", mustChangePassword: true });
+    }
+    // Finish replacing the temporary credential before evaluating whether this
+    // role must enroll in 2FA. The returned user then transitions to that gate.
+    return;
   }
   // Managers owing 2FA enrollment (require2faForManagers) are confined to the
   // enrollment flow until it's set up - enforced server-side, not just in the SPA.
@@ -1372,7 +1384,8 @@ app.post("/api/auth/change-password", async (req, reply) => {
   const fresh = createSession(u.id, device(req), clientIp(req));
   reply.header("set-cookie", sessionCookie(fresh, cookieSecure(req.protocol === "https"), authCookieDomain(req)));
   logEvent({ type: "security.password_changed", severity: "notice", actor: u.username, summary: "Changed account password", ip: clientIp(req), meta: {} });
-  return { ok: true, user: getUserById(u.id) };
+  const changed = getUserById(u.id);
+  return { ok: true, user: changed ? withPolicyFlags(changed) : changed };
 });
 
 app.post("/api/auth/2fa/setup", async (req, reply) => {
@@ -1399,8 +1412,21 @@ app.post("/api/auth/2fa/verify", async (req, reply) => {
   if (!secret || !verifyTotp(token, secret)) {
     return reply.code(400).send({ error: "That code didn't match - try the current one." });
   }
+  const replacing = u.twofaEnabled;
   const backupCodes = enableTwofa(u.id);
-  logEvent({ type: "security.2fa_enabled", severity: "info", actor: u.username, summary: "Enabled two-factor authentication", ip: clientIp(req), meta: {} });
+  // 2FA assurance is stored on the user, not on each session. Once the factor is
+  // enabled/replaced, every earlier cookie would otherwise inherit that stronger
+  // state without proving the new factor. Revoke them all and keep only this
+  // verifying browser signed in with a freshly-issued session.
+  destroyUserSessions(u.id);
+  const fresh = createSession(u.id, device(req), clientIp(req));
+  reply.header("set-cookie", sessionCookie(fresh, cookieSecure(req.protocol === "https"), authCookieDomain(req)));
+  logEvent({
+    type: replacing ? "security.2fa_replaced" : "security.2fa_enabled",
+    severity: "info", actor: u.username,
+    summary: replacing ? "Replaced two-factor authenticator" : "Enabled two-factor authentication",
+    ip: clientIp(req), meta: {},
+  });
   return { ok: true, backupCodes };
 });
 
@@ -1469,6 +1495,36 @@ app.post("/api/users/:id/password", async (req, reply) => {
   if (!(await adminSetPassword(id, parsed.data.newPassword))) return reply.code(404).send({ error: "User not found" });
   const target = getUserById(id);
   logEvent({ type: "user.password_reset", severity: "warn", actor: admin.username, summary: `Reset password for ${target?.username ?? id}`, ip: clientIp(req), meta: { id } });
+  return { ok: true };
+});
+
+// Admin recovery for another user who lost both their authenticator and backup
+// codes. Self-service uses the safer replacement flow, which keeps the old factor
+// active until the new one is verified. Recovery revokes all target sessions.
+app.post("/api/users/:id/2fa/reset", async (req, reply) => {
+  const admin = requireAdmin(req, reply);
+  if (!admin) return;
+  const { id } = req.params as { id: string };
+  if (id === admin.id) {
+    return reply.code(400).send({ error: "Use Replace 2FA for your own account so the old authenticator stays active until verification." });
+  }
+  const target = getUserById(id);
+  if (!target) return reply.code(404).send({ error: "User not found" });
+  if (!target.twofaEnabled) return reply.code(409).send({ error: "Two-factor authentication is not enabled for this user." });
+  if (rateLimited(`reauth:${admin.id}`, 10, LOGIN_WINDOW_MS)) {
+    return reply.code(429).send({ error: "Too many attempts — wait a minute and try again." });
+  }
+  const parsed = z.object({ currentPassword: z.string().min(1).max(200) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  if (!(await checkCredentials(admin.username, parsed.data.currentPassword))) {
+    return reply.code(403).send({ error: "Confirm your own admin password before resetting another user's 2FA." });
+  }
+  if (!resetTwofa(id)) return reply.code(409).send({ error: "Two-factor authentication was already reset." });
+  logEvent({
+    type: "security.2fa_reset", severity: "warn", actor: admin.username,
+    summary: `Reset two-factor authentication for ${target.username}`,
+    ip: clientIp(req), meta: { id },
+  });
   return { ok: true };
 });
 

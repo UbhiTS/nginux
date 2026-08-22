@@ -25,8 +25,10 @@ const countryName = (code: string): string => COUNTRY_NAME.get(code) ?? code;
 
 export function SettingsPage({
   reload,
+  refreshMe,
 }: {
   reload: () => Promise<void>;
+  refreshMe?: () => Promise<void>;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   // Baseline snapshot taken on load / after each successful save, so we can tell
@@ -74,7 +76,10 @@ export function SettingsPage({
     setSaveError("");
     try {
       await api.saveSettings(settings);
-      await reload();
+      // Enabling mandatory manager 2FA changes the current identity's computed
+      // policy immediately; refresh it so App enters the enrollment screen now.
+      if (refreshMe) await refreshMe();
+      else await reload();
       setBaseline(JSON.stringify(settings));
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);

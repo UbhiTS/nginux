@@ -129,6 +129,8 @@ export const api = {
     req<AuthUser>(`/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role, scope }) }),
   adminSetUserPassword: (id: string, newPassword: string) =>
     req<{ ok: boolean }>(`/users/${id}/password`, { method: "POST", body: JSON.stringify({ newPassword }) }),
+  resetUserTwofa: (id: string, currentPassword: string) =>
+    req<{ ok: boolean }>(`/users/${id}/2fa/reset`, { method: "POST", body: JSON.stringify({ currentPassword }) }),
   // Profile avatar: `image` is a resized data URL; the server stores the bytes.
   uploadAvatar: (image: string) => req<{ ok: boolean }>("/users/me/avatar", { method: "POST", body: JSON.stringify({ image }) }),
   removeAvatar: () => req<{ ok: boolean }>("/users/me/avatar", { method: "DELETE" }),

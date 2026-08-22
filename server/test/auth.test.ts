@@ -188,8 +188,27 @@ test("starting a replacement 2FA setup keeps the active secret until verificatio
   assert.notEqual(replacement, first);
   assert.equal(auth.getTwofaSecret(user.id), first, "abandoned setup must not lock out the old authenticator");
   assert.equal(auth.getPendingTwofaSecret(user.id), replacement);
+  auth.setLastTotpCounter(user.id, 123);
   auth.enableTwofa(user.id);
   assert.equal(auth.getTwofaSecret(user.id), replacement);
+  assert.equal(auth.getLastTotpCounter(user.id), -1, "a replacement secret resets the old secret's replay watermark");
+});
+
+test("administrative 2FA reset clears factor state and revokes every target session", async () => {
+  const user = await auth.createUser({ username: "twofa_recovery", password: "pw-twofa" });
+  auth.beginTwofaSetup(user.id);
+  auth.enableTwofa(user.id);
+  const token = auth.createSession(user.id, "lost device", "192.0.2.10");
+  assert.ok(auth.userForSession(token));
+
+  assert.equal(auth.resetTwofa(user.id), true);
+  assert.equal(auth.getUserById(user.id)?.twofaEnabled, false);
+  assert.equal(auth.getTwofaSecret(user.id), null);
+  assert.equal(auth.getPendingTwofaSecret(user.id), null);
+  assert.equal(auth.getLastTotpCounter(user.id), -1);
+  assert.equal(String((db.prepare("SELECT backupCodes FROM users WHERE id = ?").get(user.id) as { backupCodes: string }).backupCodes), "[]");
+  assert.equal(auth.userForSession(token), null, "recovery invalidates potentially stolen sessions");
+  assert.equal(auth.resetTwofa(user.id), false, "reset is not reported twice");
 });
 
 test("useBackupCode rejects an unknown code, whitespace tolerance aside, and an unknown user", async () => {

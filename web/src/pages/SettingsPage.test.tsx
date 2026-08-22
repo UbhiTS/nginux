@@ -134,6 +134,15 @@ describe("SettingsPage - dirty state (fix 1)", () => {
 });
 
 describe("SettingsPage - save feedback (fix 2)", () => {
+  it("refreshes current-user policy immediately after enabling manager 2FA", async () => {
+    const refreshMe = vi.fn().mockResolvedValue(undefined);
+    render(<SettingsPage reload={reload} refreshMe={refreshMe} />);
+    await screen.findByDisplayValue("NginUX");
+    await userEvent.click(screen.getByRole("switch", { name: "Require 2FA for admins and editors" }));
+    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+    await waitFor(() => expect(refreshMe).toHaveBeenCalled());
+  });
+
   it("surfaces an error alert when saveSettings rejects", async () => {
     vi.mocked(api.saveSettings).mockRejectedValueOnce(new Error("Server exploded"));
     await renderReady();
