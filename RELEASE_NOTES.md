@@ -1,4 +1,4 @@
-# NginUX v0.1.17
+# NginUX v0.1.18
 
 A security release from a full adversarial audit of every surface. Two high-severity
 issues (both privilege-escalation paths for a non-admin manager/agent) and several
@@ -45,4 +45,7 @@ bound. They now evict the coldest keys at the same limit as the other counters.
 - The image no longer bundles tests or matches secret/env file patterns.
 - The CI boot smoke-test runs under the production capability set + `no-new-privileges`.
 
-Dependency audit: **0 known vulnerabilities** in the shipped runtime.
+- Patched high-severity transitive advisories (brace-expansion, fast-uri — a Fastify
+  runtime dependency — nanoid, undici) via compatible version bumps.
+
+Dependency audit: **0 known vulnerabilities**.
