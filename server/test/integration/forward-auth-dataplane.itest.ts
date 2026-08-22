@@ -335,7 +335,9 @@ before(async () => {
   streamOk = sd.ok;
   streamLoadModule = sd.loadModule;
   if (streamOk) {
-    H({ id: "tcp", name: "TCP", domain: "tcp.example.com", protocol: "tcp", listenPort: STREAM_LISTEN, forwardHost: "127.0.0.1", forwardPort: STREAM_ECHO });
+    // Passthrough must live outside the shared .example.com login-cookie realm;
+    // otherwise buildDesiredConfigs deliberately withholds it to prevent session leakage.
+    H({ id: "tcp", name: "TCP", domain: "tcp.separate.net", protocol: "tcp", listenPort: STREAM_LISTEN, forwardHost: "127.0.0.1", forwardPort: STREAM_ECHO });
   } else {
     console.log("[integration] nginx has no usable stream{} module — skipping the L4 ban test (A2).");
   }

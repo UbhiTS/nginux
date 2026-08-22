@@ -9,7 +9,10 @@ import assert from "node:assert/strict";
 import { setupTestEnv, makeHost } from "./helpers.ts";
 
 setupTestEnv();
-const { isLocalIp, addBan, listBans, removeBan } = await import("../src/bans.ts");
+const {
+  isLocalIp, addBan, listBans, removeBan,
+  noteLoginFailure, pruneLoginFailures, loginFailureStateSize, clearLoginFailures,
+} = await import("../src/bans.ts");
 const { recordCheck, httpProbe } = await import("../src/uptime.ts");
 const { createHost, getHost, updateHost } = await import("../src/repo.ts");
 const http = await import("node:http");
@@ -21,7 +24,7 @@ test("isLocalIp flags loopback, private LAN, link-local and ULA (auto-ban must s
   for (const ip of [
     "127.0.0.1", "::1", "::ffff:127.0.0.1",
     "10.0.0.5", "192.168.1.66", "172.16.0.1", "172.31.255.254",
-    "169.254.10.10", "fe80::1", "fc00::1", "fd12:3456::9",
+    "169.254.10.10", "fe80::1", "fe81::1", "fe9f::7", "febf::ffff", "fc00::1", "fd12:3456::9",
     "::ffff:192.168.1.9", // IPv4-mapped IPv6 must be unwrapped and matched
   ]) {
     assert.equal(isLocalIp(ip), true, `${ip} must be treated as local (exempt from auto-ban)`);
@@ -32,9 +35,31 @@ test("isLocalIp does NOT flag public / out-of-range addresses (they remain banna
   for (const ip of [
     "203.0.113.5", "8.8.8.8", "1.1.1.1",
     "172.15.0.1", "172.32.0.1", // just outside the 172.16.0.0/12 private block
-    "2606:4700::1111",          // public IPv6
+    "2606:4700::1111", "fec0::1", // public / deprecated site-local, outside fe80::/10
   ]) {
     assert.equal(isLocalIp(ip), false, `${ip} must NOT be treated as local`);
+  }
+});
+
+test("login-failure tracker expires stale IPs and bounds per-IP/global state", () => {
+  clearLoginFailures();
+  const now = 1_000_000;
+  try {
+    let count = 0;
+    for (let i = 0; i < 100; i++) count = noteLoginFailure("198.51.100.9", now + i);
+    assert.equal(count, 5, "one noisy IP keeps at most the threshold-sized timestamp window");
+
+    // More unique scanners than the cap must evict old entries instead of growing
+    // for the process lifetime.
+    for (let i = 0; i < 5_500; i++) {
+      noteLoginFailure(`198.51.${Math.floor(i / 256)}.${i % 256}`, now + i);
+    }
+    assert.ok(loginFailureStateSize() <= 5_000, "distinct-source state stays hard-capped");
+
+    pruneLoginFailures(now + 5 * 60_000 + 6_000);
+    assert.equal(loginFailureStateSize(), 0, "timestamps older than the five-minute window are removed");
+  } finally {
+    clearLoginFailures();
   }
 });
 

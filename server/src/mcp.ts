@@ -1,11 +1,11 @@
-import { listEvents, scopedAllows, securityExposure, securityOverview, listUsers } from "./auth.ts";
-import { getTopology, listHosts } from "./repo.ts";
+import { listEvents, securityExposure, securityOverview, listUsers } from "./auth.ts";
+import { getTopology } from "./repo.ts";
 import { listCerts } from "./certs.ts";
 import { listBans } from "./bans.ts";
 import { summary as metricsSummary } from "./metrics.ts";
 import { PRESETS } from "./presets.ts";
 import { getSettings, redactSettings } from "./db.ts";
-import { callTool, canCallTool, toolCatalogFor, type Principal } from "./tools.ts";
+import { callTool, canCallTool, toolCatalogFor, visibleHosts, type Principal } from "./tools.ts";
 import { getPrompt, promptCatalog } from "./prompts.ts";
 import type { Scope } from "./tokens.ts";
 import { VERSION } from "./version.ts";
@@ -29,13 +29,6 @@ interface ResourceDef {
   scope: Scope;
   adminOnly?: boolean;
   read: (p: Principal) => unknown;
-}
-
-function visibleHosts(p: Principal) {
-  const hosts = listHosts();
-  return p.kind === "user" && p.user.role === "scoped"
-    ? hosts.filter((h) => scopedAllows(p.user, h))
-    : hosts;
 }
 
 const RESOURCES: ResourceDef[] = [

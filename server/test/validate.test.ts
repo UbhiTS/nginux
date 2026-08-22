@@ -80,8 +80,8 @@ test("isDangerousHost blocks cloud-metadata / link-local / unspecified (SSRF gua
     "169.254.169.254", "169.254.0.1", "100.100.100.200",
     "metadata.google.internal", "metadata.google.internal.", "metadata.goog",
     "fd00:ec2::254", "fd00:ec2:0:0:0:0:0:254",
-    "2852039166", "0xa9fea9fe",
-    "0.0.0.0", "0.1.2.3", "::", "fe80::1", "[::]",
+    "2852039166", "0xa9fea9fe", "0xa9.0xfe.0xa9.0xfe", "0xa9.0xfe.0xa9.0xfe:80",
+    "0.0.0.0", "0.1.2.3", "::", "fe80::1", "fe90::1", "febf::1", "[::]",
   ]) {
     assert.equal(isDangerousHost(s), true, s);
   }

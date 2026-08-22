@@ -4,7 +4,7 @@
 // The ACME / Let's Encrypt NETWORK path is deliberately NOT exercised here.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import forge from "node-forge";
 import { setupTestEnv } from "./helpers.ts";
@@ -81,6 +81,26 @@ test("deleteCert removes the DB row and the on-disk key/cert directory", async (
   assert.equal(certs.getCert("delete.example.com"), null, "DB row must be gone");
   assert.ok(!certs.listCerts().some((c) => c.domain === "delete.example.com"), "must not appear in listCerts");
   assert.ok(!existsSync(dir), "on-disk cert directory must be removed so no dangling path is served");
+});
+
+test("deleteCert cannot target the internal ACME account key or an untracked path", async () => {
+  mkdirSync(certs.CERT_DIR, { recursive: true });
+  const accountKey = join(certs.CERT_DIR, "acme-account.key");
+  writeFileSync(accountKey, "internal-account-secret");
+
+  assert.equal(certs.deleteCert("acme-account.key"), false, "reserved internal names are never certificate deletion targets");
+  assert.ok(existsSync(accountKey), "the ACME account key must survive a route-shaped delete");
+  await assert.rejects(
+    () => certs.issueSelfSigned("ACME-ACCOUNT.KEY"),
+    /reserved for internal use/i,
+    "reserved names are case-insensitively refused before key generation",
+  );
+
+  const untracked = join(certs.CERT_DIR, "untracked.example.com");
+  mkdirSync(untracked, { recursive: true });
+  writeFileSync(join(untracked, "sentinel"), "keep");
+  assert.equal(certs.deleteCert("untracked.example.com"), false, "a DB certificate row is required before filesystem removal");
+  assert.ok(existsSync(join(untracked, "sentinel")), "untracked filesystem content must not be recursively removed");
 });
 
 // --- 3. PATH TRAVERSAL (importCertFiles) ---

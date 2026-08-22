@@ -32,6 +32,7 @@ export function setupTestEnv(): { dir: string; cleanup: () => void } {
     NGINX_STREAM_BANNED_FILE: p("stream_banned.conf"),
     NGINX_DEFAULT_CERT: p("selfsigned.crt"),
     NGINX_DEFAULT_KEY: p("selfsigned.key"),
+    NGINUX_ADMIN_PASSWORD: "nginux-test-admin-password",
     // Force the "nginx not installed" path so applyConfig() is a deterministic
     // no-op (writes config, skips validate/reload) on EVERY runner. Without this,
     // a CI host that ships nginx (e.g. ubuntu-latest) would actually run `nginx -t`
@@ -49,7 +50,7 @@ export function setupTestEnv(): { dir: string; cleanup: () => void } {
 export function makeHost(overrides: Partial<ProxyHost> = {}): ProxyHost {
   return {
     id: "svc", name: "Service", iconUrl: "", domain: "app.example.com",
-    forwardScheme: "http", forwardHost: "192.168.1.60", forwardPort: 3000, preset: "custom",
+    forwardScheme: "http", forwardHost: "192.168.1.60", forwardPort: 3000, upstreamTlsVerify: true, preset: "custom",
     websockets: false, http2: true, ssl: true, requireLogin: false, require2fa: false,
     countryLock: false, serverGroup: "s", serverIp: "192.168.1.60", enabled: true, health: "online",
     certExpiresAt: null, certDomain: "", maintenanceMode: false, securityHeaders: true, hsts: false,

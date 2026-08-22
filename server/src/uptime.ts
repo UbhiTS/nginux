@@ -113,15 +113,15 @@ function probe(host: string, port: number, timeoutMs: number): Promise<{ up: boo
 }
 
 /** HTTP(S) health check: issue a GET and check the status. "app healthy", not just
- *  "port open". TLS verification is off - homelab backends commonly serve
- *  self-signed certs, and this is an internal liveness probe, not a trust boundary.
- *  expectStatus 0 accepts any 2xx/3xx; otherwise the status must match exactly. */
-export function httpProbe(scheme: string, host: string, port: number, path: string, expectStatus: number, timeoutMs: number): Promise<{ up: boolean; ms: number }> {
+ *  "port open". TLS verification follows the host's upstream policy so monitoring
+ *  cannot call an intercepted backend healthy. Existing upgraded hosts may retain
+ *  the explicit self-signed opt-out. */
+export function httpProbe(scheme: string, host: string, port: number, path: string, expectStatus: number, timeoutMs: number, verifyTls = false): Promise<{ up: boolean; ms: number }> {
   return new Promise((resolve) => {
     const start = Date.now();
     const lib = scheme === "https" ? https : http;
     const req = lib.request(
-      { host, port, path: path || "/", method: "GET", timeout: timeoutMs, rejectUnauthorized: false, headers: { "User-Agent": "NginUX-healthcheck" } },
+      { host, port, path: path || "/", method: "GET", timeout: timeoutMs, rejectUnauthorized: scheme === "https" && verifyTls, headers: { "User-Agent": "NginUX-healthcheck" } },
       (res) => {
         const code = res.statusCode ?? 0;
         const up = expectStatus ? code === expectStatus : code >= 200 && code < 400;
@@ -138,7 +138,7 @@ export function httpProbe(scheme: string, host: string, port: number, path: stri
 /** Probe one host by its configured method (TCP connect, or an HTTP GET). */
 function probeHost(h: ProxyHost, timeoutMs = 4000): Promise<{ up: boolean; ms: number }> {
   return h.healthCheckType === "http"
-    ? httpProbe(h.forwardScheme, h.forwardHost, h.forwardPort, h.healthCheckPath, h.healthCheckStatus, timeoutMs)
+    ? httpProbe(h.forwardScheme, h.forwardHost, h.forwardPort, h.healthCheckPath, h.healthCheckStatus, timeoutMs, h.upstreamTlsVerify)
     : probe(h.forwardHost, h.forwardPort, timeoutMs);
 }
 

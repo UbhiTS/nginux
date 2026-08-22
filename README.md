@@ -115,7 +115,10 @@ npm run build        # builds the web bundle (+ server check)
 npm start            # serves API + built UI on http://localhost:6767
 ```
 
-**Default admin login:** `admin` / `admin` - you'll be required to set a new password on first sign-in. (Set `NGINUX_ADMIN_PASSWORD` to skip the default.)
+On first start, NginUX prints a random one-time admin password to the terminal;
+you'll be required to replace it after signing in. Set `NGINUX_ADMIN_PASSWORD` to
+supply it through your secrets system. Source starts bind to `127.0.0.1` unless
+`HOST` is explicitly set.
 
 The CLI talks to the control plane over MCP/REST:
 
@@ -310,7 +313,8 @@ Set via environment variables (the Docker image ships sensible defaults):
 | `NGINX_DEFAULT_CERT` / `NGINX_DEFAULT_KEY` | Bootstrap self-signed cert | `/data/nginx/selfsigned.*` |
 | `CERT_DIR` | Per-host certs & client CAs | `/data/certs` |
 | `NGINX_BIN` | Nginx binary for test/reload | `nginx` |
-| `NGINUX_ADMIN_PASSWORD` | First-run admin password. If unset, the account is seeded as `admin`/`admin` and must be changed on first login. | - |
+| `NGINUX_ADMIN_PASSWORD` | First-run admin password. If unset, a random one-time password is printed at startup and must be changed on first login. | - |
+| `NGINUX_INSECURE_DEV_DEFAULTS` | Explicit local-only escape hatch: set `1` to use `admin`/`admin`. Never use on a shared machine or network. | - |
 | `NGINUX_TRUST_PROXY` | Trust `X-Forwarded-For` from the proxy in front (set `true` in the container). Off by default to prevent IP spoofing. | `true` (compose) |
 | `NGINUX_SECURE_COOKIES` | Force the `Secure` cookie flag. Defaults on in production. | (prod on) |
 | `NGINUX_CONTROL_URL` | Where nginx reaches the control plane for forward-auth. | `http://127.0.0.1:6767` |

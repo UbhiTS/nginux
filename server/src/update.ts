@@ -1,15 +1,26 @@
-import { existsSync, readFileSync } from "node:fs";
-import { hostname } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
+import { join } from "node:path";
 import http from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { VERSION } from "./version.ts";
 import { getSettings } from "./db.ts";
 import { logEvent } from "./auth.ts";
 
-// Where releases are announced. Overridable so forks (and tests) can point at
-// their own repo; the default is the upstream NginUX repo.
+// Where releases are announced. Tests may override the API endpoint, but image
+// identity remains fixed to the upstream repository and signed release workflow.
 const UPDATE_API = process.env.NGINUX_UPDATE_API ?? "https://api.github.com/repos/UbhiTS/nginux";
-// The image a self-update pulls and relaunches from.
-export const UPDATE_IMAGE = process.env.NGINUX_UPDATE_IMAGE ?? "ghcr.io/ubhits/nginux:latest";
+// The one trusted image repository. A release tag is selected from GitHub, then
+// its signed artifact attestation supplies the immutable digest used by Docker.
+export const UPDATE_IMAGE = "ghcr.io/ubhits/nginux";
+const UPDATE_REPO = "UbhiTS/nginux";
+const UPDATE_WORKFLOW = "github.com/UbhiTS/nginux/.github/workflows/release.yml";
+const UPDATE_SOURCE_REF = "refs/heads/main";
+const RELEASE_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const COMMIT_RE = /^[0-9a-f]{40}$/i;
+const IMAGE_DIGEST_RE = /^[0-9a-f]{64}$/i;
+const execFileAsync = promisify(execFile);
 // Baked at image build time (release workflow passes the commit SHA). Lets the
 // checker detect "same version number, newer build" - without it only version
 // bumps are detectable.
@@ -21,6 +32,7 @@ const UA = { "User-Agent": `nginux/${VERSION}`, Accept: "application/vnd.github+
 export interface UpdateState {
   current: string;
   buildSha: string;
+  latestTag: string | null;
   latestVersion: string | null;
   latestSha: string | null;
   releaseName: string | null;
@@ -42,6 +54,7 @@ export interface UpdateState {
 const state: UpdateState = {
   current: VERSION,
   buildSha: BUILD_SHA,
+  latestTag: null,
   latestVersion: null,
   latestSha: null,
   releaseName: null,
@@ -70,6 +83,89 @@ export function semverCompare(a: string, b: string): number {
   return 0;
 }
 
+/** Validate the exact release-tag grammar produced by release.yml. */
+export function releaseVersion(tag: string): string | null {
+  const match = RELEASE_TAG_RE.exec(tag);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+}
+
+export function releaseImage(tag: string): string {
+  if (!releaseVersion(tag)) throw new Error(`Invalid release tag: ${tag}`);
+  return `${UPDATE_IMAGE}:${tag}`;
+}
+
+type AttestationOutput = Array<{
+  verificationResult?: {
+    statement?: {
+      subject?: Array<{ name?: string; digest?: { sha256?: string } }>;
+    };
+  };
+}>;
+
+/** Extract the one signed subject digest and bind it to our expected repository. */
+export function attestedImageRef(output: string): string {
+  let parsed: AttestationOutput;
+  try {
+    parsed = JSON.parse(output) as AttestationOutput;
+  } catch {
+    throw new Error("GitHub returned malformed attestation JSON.");
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("GitHub returned no verified image attestation.");
+
+  const digests = new Set<string>();
+  for (const result of parsed) {
+    for (const subject of result.verificationResult?.statement?.subject ?? []) {
+      if (subject.name?.toLowerCase() !== UPDATE_IMAGE) continue;
+      const digest = subject.digest?.sha256?.toLowerCase() ?? "";
+      if (IMAGE_DIGEST_RE.test(digest)) digests.add(digest);
+    }
+  }
+  if (digests.size !== 1) throw new Error("Verified attestation did not contain exactly one NginUX image digest.");
+  return `${UPDATE_IMAGE}@sha256:${[...digests][0]}`;
+}
+
+export function attestationVerifyArgs(tag: string, sourceSha: string): string[] {
+  if (!COMMIT_RE.test(sourceSha)) throw new Error("Attestation source must be a full Git commit SHA.");
+  return [
+    "attestation", "verify", `oci://${releaseImage(tag)}`,
+    "--repo", UPDATE_REPO,
+    "--signer-workflow", UPDATE_WORKFLOW,
+    "--source-digest", sourceSha.toLowerCase(),
+    "--source-ref", UPDATE_SOURCE_REF,
+    "--deny-self-hosted-runners",
+    "--bundle-from-oci",
+    "--format", "json",
+  ];
+}
+
+async function verifyReleaseImage(tag: string, sourceSha: string): Promise<string> {
+  // The control plane runs unprivileged and may inherit HOME=/root. Give gh an
+  // isolated writable home for Sigstore trusted-root/cache material, then remove it.
+  const ghHome = mkdtempSync(join(tmpdir(), "nginux-gh-"));
+  let stdout: string | Buffer;
+  try {
+    ({ stdout } = await execFileAsync("/usr/bin/gh", attestationVerifyArgs(tag, sourceSha), {
+      encoding: "utf8",
+      timeout: 90_000,
+      maxBuffer: 4 * 1024 * 1024,
+      env: {
+        ...process.env,
+        HOME: ghHome,
+        GH_CONFIG_DIR: join(ghHome, "config"),
+        XDG_CACHE_HOME: join(ghHome, "cache"),
+        GH_PROMPT_DISABLED: "1",
+        GH_NO_UPDATE_NOTIFIER: "1",
+      },
+    }));
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(`Image attestation verification failed: ${detail}`);
+  } finally {
+    rmSync(ghHome, { recursive: true, force: true });
+  }
+  return attestedImageRef(String(stdout));
+}
+
 async function ghJson(path: string): Promise<Record<string, unknown> | null> {
   const res = await fetch(`${UPDATE_API}${path}`, { headers: UA, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`GitHub API ${res.status} for ${path}`);
@@ -80,9 +176,14 @@ export async function checkForUpdate(): Promise<UpdateState> {
   try {
     const rel = await ghJson("/releases/latest");
     const tag = String(rel?.tag_name ?? "");
-    if (!tag) throw new Error("Release feed had no tag.");
-    const latest = tag.replace(/^v/i, "");
+    const latest = releaseVersion(tag);
+    if (!latest) throw new Error("Release feed tag must be canonical semver (vMAJOR.MINOR.PATCH).");
+    const commit = await ghJson(`/commits/${encodeURIComponent(tag)}`);
+    const latestSha = String(commit?.sha ?? "");
+    if (!COMMIT_RE.test(latestSha)) throw new Error("Release tag did not resolve to a full Git commit SHA.");
+    state.latestTag = tag;
     state.latestVersion = latest;
+    state.latestSha = latestSha.toLowerCase();
     state.releaseName = String(rel?.name ?? tag);
     state.notes = String(rel?.body ?? "").slice(0, 4000) || null;
     state.releaseUrl = String(rel?.html_url ?? "") || null;
@@ -90,16 +191,11 @@ export async function checkForUpdate(): Promise<UpdateState> {
 
     const cmp = semverCompare(latest, VERSION);
     if (cmp > 0) {
-      state.latestSha = null;
       state.available = true;
     } else if (cmp === 0 && BUILD_SHA) {
-      // Same version number - compare build SHAs so a re-cut release of the
-      // same tag (rebuilt image) is still detected.
-      const commit = await ghJson(`/commits/${encodeURIComponent(tag)}`);
-      state.latestSha = String(commit?.sha ?? "") || null;
+      // Same version number - compare the tag's commit to the running build.
       state.available = !!state.latestSha && !state.latestSha.startsWith(BUILD_SHA) && !BUILD_SHA.startsWith(state.latestSha);
     } else {
-      state.latestSha = null;
       state.available = false;
     }
     state.checkError = null;
@@ -178,15 +274,22 @@ async function dockerAlive(): Promise<boolean> {
 }
 
 /** Pull an image, consuming the progress stream until completion. */
-function dockerPull(imageRef: string, timeoutMs = 300_000): Promise<void> {
-  const idx = imageRef.lastIndexOf(":");
+export function dockerPullTarget(imageRef: string): { image: string; tag: string } {
   const slash = imageRef.lastIndexOf("/");
-  const [img, tag] = idx > slash ? [imageRef.slice(0, idx), imageRef.slice(idx + 1)] : [imageRef, "latest"];
+  const at = imageRef.lastIndexOf("@");
+  const idx = imageRef.lastIndexOf(":");
+  if (at > slash) return { image: imageRef.slice(0, at), tag: imageRef.slice(at + 1) };
+  if (idx > slash) return { image: imageRef.slice(0, idx), tag: imageRef.slice(idx + 1) };
+  throw new Error("Docker pull requires an explicit tag or digest.");
+}
+
+function dockerPull(imageRef: string, timeoutMs = 300_000): Promise<void> {
+  const { image, tag } = dockerPullTarget(imageRef);
   return new Promise((resolve, reject) => {
     const req = http.request({
       socketPath: DOCKER_SOCK,
       method: "POST",
-      path: `/images/create?fromImage=${encodeURIComponent(img)}&tag=${encodeURIComponent(tag)}`,
+      path: `/images/create?fromImage=${encodeURIComponent(image)}&tag=${encodeURIComponent(tag)}`,
       headers: { Host: "docker" },
       timeout: timeoutMs,
     }, (res) => {
@@ -245,10 +348,10 @@ async function sweepUpdaters(): Promise<void> {
 }
 
 /**
- * One-click self-update: pull the new image, then hand off to a short-lived
- * updater container (created FROM the new image, so it runs the new updater
- * code) which stops this container, recreates it with the same configuration
- * on the new image, waits for it to become healthy, and rolls back if not.
+ * One-click self-update: verify and pull the new image by digest, then hand off
+ * to a short-lived updater container created from the CURRENT trusted image.
+ * It stops this container, recreates it with the same configuration on the
+ * verified image, waits for it to become healthy, and rolls back if not.
  */
 export async function applyUpdate(actor: string): Promise<{ ok: boolean; message: string }> {
   if (!(await dockerAlive())) {
@@ -268,21 +371,41 @@ export async function applyUpdate(actor: string): Promise<{ ok: boolean; message
     return { ok: false, message: "Couldn't determine this container's id - update manually with docker compose pull && up -d." };
   }
 
+  // Refresh release metadata at the security boundary. Never install from stale
+  // UI state, and always bind the release tag to its full source commit.
+  const checked = await checkForUpdate();
+  if (checked.checkError || !checked.latestTag || !checked.latestSha) {
+    const message = checked.checkError ?? "Latest release metadata was incomplete.";
+    state.applyState = "failed";
+    state.applyError = message;
+    return { ok: false, message };
+  }
+  if (!checked.available) return { ok: false, message: "No newer verified release is available." };
+
   try {
     state.applyState = "pulling";
     state.applyError = null;
-    logEvent({ type: "system.update_started", severity: "notice", actor, summary: `Self-update to ${state.latestVersion ?? "latest"} started`, ip: "", meta: { image: UPDATE_IMAGE } });
-    await dockerPull(UPDATE_IMAGE);
+    const verifiedImage = await verifyReleaseImage(checked.latestTag, checked.latestSha);
+    state.image = verifiedImage;
+    logEvent({ type: "system.update_started", severity: "notice", actor, summary: `Self-update to ${state.latestVersion} started`, ip: "", meta: { image: verifiedImage } });
+    await dockerPull(verifiedImage);
 
-    // Updater runs from the image we just pulled - override the entrypoint so it
-    // runs ONLY the updater script (no nginx/control-plane startup).
+    // The helper gets the root-equivalent Docker socket, so run the updater code
+    // from our current trusted image rather than from the candidate being installed.
+    const current = await dockerReq<{ Image?: string; message?: string }>("GET", `/containers/${selfId}/json`, undefined, 5000);
+    const trustedImageId = current.body?.Image ?? "";
+    if (current.status !== 200 || !/^sha256:[0-9a-f]{64}$/i.test(trustedImageId)) {
+      throw new Error(`Couldn't resolve the current trusted image id: ${current.body?.message ?? `HTTP ${current.status}`}`);
+    }
+
+    // Override the entrypoint so the trusted image runs only the updater script.
     state.applyState = "handing-off";
     const name = `nginux-updater-${Date.now()}`;
     const create = await dockerReq<{ Id?: string; message?: string }>("POST", `/containers/create?name=${name}`, {
-      Image: UPDATE_IMAGE,
+      Image: trustedImageId,
       Entrypoint: ["node"],
       Cmd: ["/app/server/updater.mjs"],
-      Env: [`NGINUX_OLD_ID=${selfId}`, `NGINUX_NEW_IMAGE=${UPDATE_IMAGE}`],
+      Env: [`NGINUX_OLD_ID=${selfId}`, `NGINUX_NEW_IMAGE=${verifiedImage}`],
       HostConfig: {
         Binds: [`${DOCKER_SOCK}:/var/run/docker.sock`],
         AutoRemove: false, // keep it around so `docker logs` can tell the story if something goes wrong

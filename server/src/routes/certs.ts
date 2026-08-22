@@ -11,6 +11,7 @@ import {
   getCert,
   getCertDetails,
   importCertFiles,
+  isReservedCertDomain,
   issue,
   listCerts,
   reconcileImportedCerts,
@@ -19,7 +20,9 @@ import {
 } from "../certs.ts";
 
 // Validate a :domain path param the same way everywhere: a hostname, length-bounded.
-const domainParam = z.string().min(1).max(253).refine(isHostname, "Invalid domain.");
+const domainParam = z.string().min(1).max(253)
+  .refine(isHostname, "Invalid domain.")
+  .refine((domain) => !isReservedCertDomain(domain), "Reserved certificate name.");
 
 // Certificate lifecycle: list / ACME activity feed / issue / renew / auto-renew /
 // import / details / delete. Every mutation re-applies nginx so the new (or removed)
@@ -110,7 +113,9 @@ export function registerCertRoutes(app: FastifyInstance, ctx: RouteCtx): void {
     if (!requireRole(req, reply, "admin", "editor")) return;
     const dp = domainParam.safeParse((req.params as { domain: string }).domain);
     if (!dp.success) return reply.code(400).send({ error: "Invalid domain." });
-    deleteCert(dp.data);
+    if (!getCert(dp.data) || !deleteCert(dp.data)) {
+      return reply.code(404).send({ error: "No certificate for that domain." });
+    }
     // Re-apply so any host on this domain drops back to the bootstrap cert cleanly.
     const apply = await applyConfig();
     logEvent({ type: "cert.deleted", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Deleted certificate for ${dp.data}`, ip: clientIp(req), meta: {} });

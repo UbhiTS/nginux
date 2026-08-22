@@ -12,7 +12,13 @@ import { hostStats, recentLogs, rangeSummary as metricsRangeSummary, summary as 
 import { PRESETS } from "./presets.ts";
 import type { AgentPrincipal, Scope } from "./tokens.ts";
 import { isHostname, isIpOrCidr } from "./validate.ts";
-import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
+import {
+  hostInput,
+  isControlPlaneDomain,
+  normalizeProtocolFields,
+  protocolCapabilityError,
+  protocolSupportsHttpControls,
+} from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
 import type { ProxyHost } from "./types.ts";
 
@@ -32,7 +38,7 @@ const FORBIDDEN_TOOL_FIELDS = new Set([
   // HTTP host into an un-gated TCP/UDP/SNI stream passthrough (no auth_request), and
   // `ssl:false` downgrades HTTPS→plaintext; `preset` can disable exploit-path blocking.
   // None may be changed via the low-trust agent path (security audit 2026-07-12).
-  "protocol", "listenPort", "ssl", "preset",
+  "protocol", "listenPort", "ssl", "upstreamTlsVerify", "preset",
 ]);
 
 /** Strip forbidden fields, then validate the rest through the SAME schema the
@@ -92,9 +98,16 @@ function canSeeHost(p: Principal | undefined, host: Pick<ProxyHost, "id" | "name
   if (p?.kind === "user" && p.user.role === "scoped") return scopedAllows(p.user, host);
   return true; // tokens & non-scoped users: feature-scope already gates the tool
 }
-function visibleHosts(p: Principal | undefined): ProxyHost[] {
+function mayReadCustomNginx(p: Principal | undefined): boolean {
+  return p?.kind === "user" ? p.user.role === "admin" : !!p?.scopes.includes("security");
+}
+export function hostForPrincipal(p: Principal | undefined, host: ProxyHost): ProxyHost {
+  return mayReadCustomNginx(p) ? host : { ...host, customNginx: "" };
+}
+export function visibleHosts(p: Principal | undefined): ProxyHost[] {
   const hosts = listHosts();
-  return p?.kind === "user" && p.user.role === "scoped" ? hosts.filter((h) => scopedAllows(p.user, h)) : hosts;
+  const visible = p?.kind === "user" && p.user.role === "scoped" ? hosts.filter((h) => scopedAllows(p.user, h)) : hosts;
+  return visible.map((h) => hostForPrincipal(p, h));
 }
 
 /** Which feature-scopes a logged-in user's role grants when calling tools via
@@ -141,14 +154,14 @@ export const TOOLS: Record<string, Tool> = {
     description: "Full detail for one host by id.",
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `get service ${a.id}`,
-    handler: (a, p) => { const h = getHost(String(a.id)); return h && canSeeHost(p, h) ? h : null; },
+    handler: (a, p) => { const h = getHost(String(a.id)); return h && canSeeHost(p, h) ? hostForPrincipal(p, h) : null; },
   },
   get_service_config: {
     name: "get_service_config", title: "View generated nginx config", scope: "read", tier: "read",
     description: "The nginx config NginUX generates for one host.",
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `config for service ${a.id}`,
-    handler: (a, p) => { const h = getHost(String(a.id)); if (!h || !canSeeHost(p, h)) return null; return { domain: h.domain, config: redactConfig(hostConfigFor(h)) }; },
+    handler: (a, p) => { const h = getHost(String(a.id)); if (!h || !canSeeHost(p, h)) return null; return { domain: h.domain, config: redactConfig(hostConfigFor(hostForPrincipal(p, h))) }; },
   },
   get_service_uptime: {
     name: "get_service_uptime", title: "Service uptime", scope: "read", tier: "read",
@@ -277,14 +290,17 @@ export const TOOLS: Record<string, Tool> = {
       };
       const parsed = hostInput.safeParse(candidate);
       if (!parsed.success) throw new Error(parsed.error.issues.map((i) => i.message).join("; "));
-      const { domain, forwardHost, forwardPort: port, forwardScheme } = parsed.data;
+      const capabilityError = protocolCapabilityError(parsed.data);
+      if (capabilityError) throw new Error(capabilityError);
+      const normalized = normalizeProtocolFields(parsed.data);
+      const { domain, forwardHost, forwardPort: port, forwardScheme } = normalized;
       // Mirror the REST guards: clear duplicate-domain error, and don't let an
       // agent repoint NginUX's own portal domain away from the control plane.
       if (getHostByDomain(domain)) throw new Error(`${domain} is already in use.`);
       if (isControlPlaneDomain(domain, forwardHost, port, forwardScheme)) {
         throw new Error("That domain is where NginUX itself runs; forward it to the exact control plane target or pick another.");
       }
-      const host = createHost(parsed.data);
+      const host = createHost(normalized);
       if (host.ssl) { try { await ensureCert(host.domain); } catch { /* non-fatal */ } }
       await applyOrRevert(() => deleteHost(host.id));
       return host;
@@ -304,10 +320,13 @@ export const TOOLS: Record<string, Tool> = {
       if (!prev) throw new Error("Service not found.");
       const safePatch = sanitizeHostPatch(patch);
       const merged = { ...prev, ...safePatch };
+      const capabilityError = protocolCapabilityError(merged);
+      if (capabilityError) throw new Error(capabilityError);
+      const normalized = normalizeProtocolFields(merged);
       if (isControlPlaneDomain(merged.domain, merged.forwardHost, merged.forwardPort, merged.forwardScheme)) {
         throw new Error("The public NginUX portal must forward to the exact configured control plane.");
       }
-      const h = updateHost(String(id), safePatch);
+      const h = updateHost(String(id), normalized);
       await applyOrRevert(() => updateHost(String(id), prev));
       return h;
     },
@@ -328,7 +347,14 @@ export const TOOLS: Record<string, Tool> = {
     // require2fa must NEVER lower an existing require2fa=true — that would let a
     // low-trust, auto-approvable agent strip the second factor. Lowering 2FA is
     // reserved for the security-scope, approval-gated disable_login.
-    handler: async (a) => { const prev = getHost(String(a.id)); const h = updateHost(String(a.id), { requireLogin: true, require2fa: a.require2fa === true || prev?.require2fa === true }); await applyOrRevert(() => { if (prev) updateHost(String(a.id), prev); }); return h; },
+    handler: async (a) => {
+      const prev = getHost(String(a.id));
+      if (!prev) throw new Error("Service not found.");
+      if (!protocolSupportsHttpControls(prev.protocol)) throw new Error("NginUX login cannot protect TCP/UDP/SNI passthrough.");
+      const h = updateHost(String(a.id), { requireLogin: true, require2fa: a.require2fa === true || prev.require2fa === true });
+      await applyOrRevert(() => updateHost(String(a.id), prev));
+      return h;
+    },
   },
 
   // ---------------- control: certificates ----------------
@@ -365,7 +391,13 @@ export const TOOLS: Record<string, Tool> = {
     description: "Delete a domain's certificate (it falls back to the bootstrap cert).",
     inputSchema: obj({ domain: { type: "string" } }, ["domain"]),
     summarize: (a) => `delete certificate for ${a.domain}`,
-    handler: async (a) => { if (!isHostname(String(a.domain))) throw new Error("Invalid domain."); deleteCert(String(a.domain)); const apply = await applyConfig(); return { ok: true, apply }; },
+    handler: async (a) => {
+      if (!isHostname(String(a.domain))) throw new Error("Invalid domain.");
+      const ok = deleteCert(String(a.domain));
+      if (!ok) return { ok: false, message: "Certificate not found or name is reserved." };
+      const apply = await applyConfig();
+      return { ok: true, apply };
+    },
   },
   issue_client_cert: {
     name: "issue_client_cert", title: "Issue mTLS client cert", scope: "control", tier: "medium",
@@ -377,6 +409,7 @@ export const TOOLS: Record<string, Tool> = {
       if (name.length < 1 || name.length > 64 || /[\r\n]/.test(name)) throw new Error("Client certificate name must be 1-64 characters.");
       const h = getHost(String(a.id));
       if (!h) throw new Error("Service not found.");
+      if (!protocolSupportsHttpControls(h.protocol)) throw new Error("mTLS issuance requires HTTP/gRPC TLS termination.");
       return issueClientCert(h.id, h.domain, name);
     },
   },
@@ -592,11 +625,22 @@ export async function callTool(principal: Principal, name: string, rawArgs: Reco
   if (invalid) return { status: "error", tool: name, message: invalid };
 
   if (needsApproval(tool.tier, principal)) {
+    const serializedArgs = JSON.stringify(args);
+    if (Buffer.byteLength(serializedArgs) > 64 * 1024) {
+      return { status: "error", tool: name, message: "Approval arguments are too large (64 KiB maximum)." };
+    }
+    // A compromised/buggy token must not fill SQLite by queuing approvals faster
+    // than a human can review them. Bound both one principal and the whole queue.
+    const perAgent = Number((db.prepare("SELECT COUNT(*) AS n FROM approvals WHERE status='pending' AND agent=?").get(principal.name) as Row).n);
+    const global = Number((db.prepare("SELECT COUNT(*) AS n FROM approvals WHERE status='pending'").get() as Row).n);
+    if (perAgent >= 25 || global >= 200) {
+      return { status: "error", tool: name, message: "Approval queue limit reached; review or deny pending requests before adding more." };
+    }
     const id = randomUUID();
     const summary = tool.summarize(args);
     db.prepare(
       "INSERT INTO approvals (id, ts, agent, tool, args, tier, summary, status) VALUES (?,?,?,?,?,?,?, 'pending')",
-    ).run(id, new Date().toISOString(), principal.name, name, JSON.stringify(args), tool.tier, summary);
+    ).run(id, new Date().toISOString(), principal.name, name, serializedArgs, tool.tier, summary);
     logEvent({ type: "agent.approval_requested", severity: "notice", actor: principal.name, summary: `Wants to ${summary}`, ip: "", meta: { tool: name, tier: tool.tier, approvalId: id } });
     return { status: "pending_approval", tool: name, tier: tool.tier, approvalId: id, message: `Queued for human approval: ${summary}` };
   }

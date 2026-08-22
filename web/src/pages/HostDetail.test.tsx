@@ -41,6 +41,7 @@ function makeHost(over: Partial<ProxyHost> = {}): ProxyHost {
     forwardScheme: "http",
     forwardHost: "10.0.0.5",
     forwardPort: 8096,
+    upstreamTlsVerify: true,
     preset: "jellyfin",
     websockets: true,
     http2: true,
@@ -196,6 +197,18 @@ describe("HostDetail", () => {
 
     const line = screen.getByText("HSTS").closest(".check-line")!;
     expect(line.className).toContain("bad");
+  });
+
+  it("labels raw passthrough as ungated and never claims HTTP protections", async () => {
+    const stream = makeHost({
+      protocol: "sni", listenPort: 443, ssl: false, websockets: false, http2: false,
+      securityHeaders: false, blockExploits: false,
+    });
+    vi.mocked(api.getHost).mockResolvedValue(stream);
+    renderDetail(stream);
+    expect(await screen.findByText(/Raw passthrough has no NginUX HTTP login\/2FA gate/i)).toBeInTheDocument();
+    expect(screen.getByText(/cannot enforce HTTP login, 2FA, mTLS termination/i)).toBeInTheDocument();
+    expect(screen.queryByText("Login required")).not.toBeInTheDocument();
   });
 
   it("pluralizes certificate lifetimes with days() ('1 day', not '1 days')", async () => {

@@ -113,6 +113,39 @@ test("server_name is the host domain", () => {
   assert.ok(conf.includes("server_name app.example.com;"), "server_name must be the host domain");
 });
 
+test("legacy custom headers cannot expand request secrets or escape nginx quotes", () => {
+  const conf = generateHostConfig(makeHost({
+    customHeaders: "X-Leak: $http_cookie\nX-Escape: trailing\\",
+  }));
+  assert.ok(!conf.includes("add_header X-Leak"), "a legacy $http_cookie header must be dropped at the sink");
+  assert.ok(!conf.includes("add_header X-Escape"), "a trailing backslash must not escape the generated quote");
+});
+
+test("unknown or absent SNI fails closed instead of reaching the first backend", () => {
+  const conf = generateSniPassthrough([
+    makeHost({ protocol: "sni", listenPort: 443, domain: "one.example.com", forwardHost: "10.0.0.10", forwardPort: 443 }),
+    makeHost({ protocol: "sni", listenPort: 443, domain: "*.apps.example.com", forwardHost: "10.0.0.11", forwardPort: 443 }),
+  ]);
+  assert.ok(conf.includes("hostnames;"), "wildcard SNI entries must use nginx hostname matching");
+  assert.ok(conf.includes("default 127.0.0.1:1;"), "unknown/no-SNI must route to a closed local blackhole");
+  assert.ok(!conf.includes("default 10.0.0.10:443;"), "the first backend must never be the default");
+});
+
+test("HTTPS gRPC upstreams stay encrypted and HTTPS proxying sends SNI", () => {
+  const grpc = generateHostConfig(makeHost({ protocol: "grpc", forwardScheme: "https", forwardHost: "grpc.internal" }));
+  assert.ok(grpc.includes("grpc_pass grpcs://grpc.internal:"), "https gRPC must use grpcs, never downgrade to plaintext grpc");
+  assert.ok(grpc.includes("grpc_ssl_verify on;"), "new HTTPS gRPC upstreams authenticate the backend");
+  const https = generateHostConfig(makeHost({ forwardScheme: "https", forwardHost: "app.internal" }));
+  assert.ok(https.includes("proxy_ssl_server_name on;"));
+  assert.ok(https.includes("proxy_ssl_name app.internal;"));
+  assert.ok(https.includes("proxy_ssl_verify on;"));
+  assert.ok(https.includes("proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;"));
+
+  const selfSignedOptOut = generateHostConfig(makeHost({ forwardScheme: "https", upstreamTlsVerify: false }));
+  assert.ok(selfSignedOptOut.includes("proxy_ssl_verify off;"));
+  assert.ok(!selfSignedOptOut.includes("proxy_ssl_trusted_certificate"));
+});
+
 test("the public portal is pinned internally while ordinary backends never receive the session cookie", () => {
   saveSettings({ ssoLoginUrl: "https://portal.example.com" });
   const exact = generateHostConfig(makeHost({

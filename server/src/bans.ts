@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isIP } from "node:net";
 import { db } from "./db.ts";
 import { logEvent } from "./auth.ts";
 import { subscribe } from "./events.ts";
@@ -19,6 +20,10 @@ export const STREAM_BANNED_FILE = process.env.NGINX_STREAM_BANNED_FILE ?? join(_
 const THRESHOLD = 5; // failures
 const WINDOW_MS = 5 * 60_000; // within 5 minutes
 const BAN_MS = 24 * 3600_000; // ban for 24h
+// Attacker-controlled source IPs must not make the in-memory tracker grow for the
+// lifetime of the process. Five thousand active sources is ample for a homelab and
+// keeps the worst-case state small even during a distributed scan.
+const MAX_TRACKED_IPS = 5_000;
 
 export interface Ban {
   ip: string;
@@ -128,6 +133,51 @@ export function writeBannedConf(): void {
 // ---- auto-ban engine ----
 const failures = new Map<string, number[]>();
 
+/** Remove expired failure timestamps and enforce the global cardinality cap.
+ * Exported so the state-bound invariants can be regression-tested without starting
+ * the scheduler. Returns the number of source-IP entries removed. */
+export function pruneLoginFailures(now = Date.now()): number {
+  const before = failures.size;
+  for (const [ip, raw] of failures) {
+    const recent = raw.filter((t) => now - t < WINDOW_MS).slice(-THRESHOLD);
+    if (recent.length) failures.set(ip, recent);
+    else failures.delete(ip);
+  }
+  while (failures.size > MAX_TRACKED_IPS) {
+    const oldest = failures.keys().next().value;
+    if (oldest === undefined) break;
+    failures.delete(oldest);
+  }
+  return before - failures.size;
+}
+
+/** Record one public-source login failure. Per-IP arrays and total distinct IPs
+ * are both bounded. Refreshing insertion order makes hard-cap eviction LRU-like
+ * instead of keeping long-idle scanners ahead of active sources. */
+export function noteLoginFailure(ip: string, now = Date.now()): number {
+  const recent = (failures.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
+  recent.push(now);
+  const bounded = recent.slice(-THRESHOLD);
+  failures.delete(ip);
+  failures.set(ip, bounded);
+  while (failures.size > MAX_TRACKED_IPS) {
+    const oldest = failures.keys().next().value;
+    if (oldest === undefined) break;
+    failures.delete(oldest);
+  }
+  return bounded.length;
+}
+
+/** Current distinct-source count (diagnostics/tests; never exposed over HTTP). */
+export function loginFailureStateSize(): number {
+  return failures.size;
+}
+
+/** Clear tracker state between isolated tests. */
+export function clearLoginFailures(): void {
+  failures.clear();
+}
+
 /** Loopback + private LAN + link-local + ULA. Auto-ban exists to stop INTERNET
  *  brute force; a LAN user (or family member) fat-fingering their password must
  *  not self-ban their device from every proxied service for 24h. Manual bans are
@@ -137,7 +187,12 @@ export function isLocalIp(ip: string): boolean {
   if (h === "::1" || h.startsWith("127.")) return true;
   if (/^(10\.|192\.168\.|169\.254\.)/.test(h)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true; // 172.16.0.0/12
-  if (/^(fe80:|f[cd])/.test(h)) return true; // IPv6 link-local + ULA
+  // IPv6 link-local is fe80::/10 (fe80 through febf), not merely addresses whose
+  // textual form begins with "fe80". Validate the address before inspecting the
+  // high ten bits so a hostname with a similar prefix is not exempted.
+  const firstHextet = /^([0-9a-f]{1,4}):/.exec(h)?.[1];
+  if (isIP(h) === 6 && firstHextet && (parseInt(firstHextet, 16) & 0xffc0) === 0xfe80) return true;
+  if (/^f[cd][0-9a-f]{2}:/.test(h)) return true; // IPv6 ULA fc00::/7
   return false;
 }
 
@@ -146,19 +201,20 @@ export function startBanEngine(): void {
   // Prune expired rows every minute (not hourly) so a lifted ban stops denying at
   // nginx promptly - the deny-list is only rewritten when a row actually expires.
   setInterval(() => {
-    try { if (pruneExpired() > 0) { writeBannedConf(); scheduleBannedApply(); } } catch { /* ignore */ }
+    try {
+      pruneLoginFailures();
+      if (pruneExpired() > 0) { writeBannedConf(); scheduleBannedApply(); }
+    } catch { /* ignore */ }
   }, 60_000).unref?.();
   subscribe((e) => {
     if (e.type !== "login.failed") return;
     const ip = String(e.data?.ip ?? "").trim();
     if (!ip || isLocalIp(ip)) return; // never auto-ban loopback/LAN (internet brute-force only)
     const now = Date.now();
-    const hits = (failures.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
-    hits.push(now);
-    failures.set(ip, hits);
-    if (hits.length >= THRESHOLD) {
+    const hitCount = noteLoginFailure(ip, now);
+    if (hitCount >= THRESHOLD) {
       failures.delete(ip);
-      addBan(ip, `Brute force: ${hits.length} failed logins in ${WINDOW_MS / 60000}m`, "auto");
+      addBan(ip, `Brute force: ${hitCount} failed logins in ${WINDOW_MS / 60000}m`, "auto");
       logEvent({ type: "security.ip_banned", severity: "danger", actor: "fail2ban", summary: `Auto-banned ${ip} (brute force)`, ip, meta: { source: "auto" } });
     }
   });

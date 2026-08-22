@@ -1,6 +1,6 @@
 {
   "name": "nginux",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "private": true,
   "description": "NginUX - a security-first, container-native control plane for an Nginx reverse proxy.",
   "workspaces": [
@@ -19,7 +19,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
-    "puppeteer-core": "^25.1.0"
+    "puppeteer-core": "^25.1.0",
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22.5.0"

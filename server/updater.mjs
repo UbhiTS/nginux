@@ -1,5 +1,7 @@
-// NginUX self-updater. Runs as a short-lived container created from the NEW
-// image with the Docker socket mounted (see server/src/update.ts), and:
+// NginUX self-updater. Runs as a short-lived container created from the CURRENT
+// trusted image with the Docker socket mounted (see server/src/update.ts). The
+// candidate has already passed GitHub artifact-attestation verification and is
+// supplied here only as an immutable image digest. The updater then:
 //
 //   1. inspects the old NginUX container (NGINUX_OLD_ID)
 //   2. stops it and moves it aside (rename -> <name>-old-<ts>)
@@ -19,6 +21,7 @@ const SOCK = "/var/run/docker.sock";
 const OLD_ID = process.env.NGINUX_OLD_ID;
 const NEW_IMAGE = process.env.NGINUX_NEW_IMAGE;
 const HEALTH_TIMEOUT_MS = 150_000;
+const VERIFIED_IMAGE_RE = /^ghcr\.io\/ubhits\/nginux@sha256:[0-9a-f]{64}$/i;
 
 const ts = () => new Date().toISOString();
 const log = (msg) => console.log(`${ts()} [updater] ${msg}`);
@@ -113,6 +116,10 @@ async function waitHealthy(id) {
 
 async function main() {
   if (!OLD_ID || !NEW_IMAGE) throw new Error("NGINUX_OLD_ID and NGINUX_NEW_IMAGE are required.");
+  if (!/^[0-9a-f]{12,64}$/i.test(OLD_ID)) throw new Error("NGINUX_OLD_ID is not a Docker container id.");
+  if (!VERIFIED_IMAGE_RE.test(NEW_IMAGE)) {
+    throw new Error("NGINUX_NEW_IMAGE must be the verified ghcr.io/ubhits/nginux@sha256 digest reference.");
+  }
   log(`updating container ${OLD_ID.slice(0, 12)} to image ${NEW_IMAGE}`);
 
   const inspect = must(await req("GET", `/containers/${OLD_ID}/json`), "inspect old container");

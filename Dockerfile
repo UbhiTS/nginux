@@ -1,5 +1,5 @@
 # ---------- build stage: compile the React SPA ----------
-FROM node:24-alpine AS build
+FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS build
 WORKDIR /app
 
 # install workspace deps reproducibly (cached on lockfile/manifests)
@@ -13,7 +13,7 @@ COPY . .
 RUN npm run build --workspace web
 
 # ---------- deps stage: production-only node_modules ----------
-FROM node:24-alpine AS deps
+FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json ./server/
@@ -21,7 +21,7 @@ COPY web/package.json ./web/
 RUN npm ci --omit=dev
 
 # ---------- runtime stage: nginx (data plane) + node (control plane) ----------
-FROM node:24-alpine AS runtime
+FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runtime
 WORKDIR /app
 
 # nginx is the data plane; openssl bootstraps the self-signed cert; tini is a
@@ -29,7 +29,14 @@ WORKDIR /app
 # setpriv (util-linux) drops the runtime user to PUID/PGID while keeping the
 # NET_BIND_SERVICE ambient capability so nginx can still bind :80/:443 unprivileged
 # (works under no-new-privileges, where setcap file-caps would be neutralised).
-RUN apk add --no-cache nginx nginx-mod-stream nginx-mod-http-geoip2 libmaxminddb openssl tini setpriv
+# npm is needed in the discarded build/deps stages, never in production. Removing
+# it here also removes its otherwise-unreachable bundled dependency CVEs.
+RUN apk upgrade --no-cache \
+    && apk add --no-cache 'nginx>=1.30.4' nginx-mod-stream nginx-mod-http-geoip2 \
+       libmaxminddb openssl tini setpriv github-cli \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+       /usr/local/bin/yarn /usr/local/bin/yarnpkg /usr/local/bin/pnpm /usr/local/bin/pnpx
 
 # prod-only deps + app code (server runs straight from TS via type-stripping)
 COPY --from=deps /app/node_modules ./node_modules

@@ -5,6 +5,7 @@ import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
 import { CERT_DIR, listCerts } from "./certs.ts";
 import { updateStatus } from "./update.ts";
+import { streamSharesSessionCookie } from "./hostschema.ts";
 
 /** A plain-language heads-up shown in the app's notification banner. */
 export interface AppNotification {
@@ -91,6 +92,21 @@ export async function buildNotifications(opts: { isManager: boolean }): Promise<
   }
 
   if (!opts.isManager) return out;
+
+  // Raw TCP/UDP/SNI bypasses the HTTP layer that strips the Domain-scoped NginUX
+  // session cookie. Such a route is deliberately withheld by the generator.
+  const unsafeStreams = enabled.filter((h) => streamSharesSessionCookie(h));
+  if (unsafeStreams.length) {
+    out.push({
+      id: "stream-shared-cookie:" + unsafeStreams.map((h) => h.id).sort().join(","),
+      severity: "critical",
+      title: "A passthrough service was held back to protect your admin session",
+      message:
+        `${list(unsafeStreams.map((h) => h.name))} uses a hostname inside the shared login-cookie domain. ` +
+        "Raw TCP/UDP/SNI would deliver that cookie directly to the backend. Move it to a separate base domain or terminate it as HTTP/gRPC in NginUX.",
+      dismissible: false,
+    });
+  }
 
   // 2b. A newer NginUX release is out - point at the sidebar's Update button.
   const upd = updateStatus();

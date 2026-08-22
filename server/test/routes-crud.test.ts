@@ -70,7 +70,7 @@ test("POST /api/hosts: readonly and scoped are forbidden; editor and admin succe
 
 // ---------------------------------------------------------------------------
 // (2) Host-update scope: a scoped user may only PUT a host in their scope. An
-// out-of-scope scoped user is denied; the in-scope owner is allowed.
+// out-of-scope scoped user is denied; the in-scope owner may edit non-routing data.
 // ---------------------------------------------------------------------------
 test("PUT /api/hosts/:id: scoped user confined to their scope", async () => {
   const plex = createHost(makeHost({ name: "plex", domain: "plex.example.com" }));
@@ -81,7 +81,7 @@ test("PUT /api/hosts/:id: scoped user confined to their scope", async () => {
     `an out-of-scope scoped user must be denied (got ${outOfScope.statusCode})`,
   );
 
-  const inScope = await put(`/api/hosts/${plex.id}`, cookieFor(makeUser("scoped", "plex")), { forwardPort: 3001 });
+  const inScope = await put(`/api/hosts/${plex.id}`, cookieFor(makeUser("scoped", "plex")), { name: "Plex renamed" });
   assert.equal(inScope.statusCode, 200, "the in-scope scoped owner may update their service");
 });
 
@@ -111,6 +111,20 @@ test("POST /api/hosts: admin input is still validated (metachars + port range)",
 
   const badPort = await post("/api/hosts", adminCookie, createPayload({ domain: "portcheck.example.com", forwardPort: 70000 }));
   assert.equal(badPort.statusCode, 400, "a forwardPort above 65535 must be rejected");
+
+  const cookieLeak = await post("/api/hosts", adminCookie, createPayload({ domain: "header-leak.example.com", customHeaders: "X-Leak: $http_cookie" }));
+  assert.equal(cookieLeak.statusCode, 400, "nginx variables in response headers must be rejected (HttpOnly-cookie reflection)");
+
+  const quoteEscape = await post("/api/hosts", adminCookie, createPayload({ domain: "header-escape.example.com", customHeaders: "X-Escape: trailing\\" }));
+  assert.equal(quoteEscape.statusCode, 400, "a backslash must not escape the generated nginx quote");
+});
+
+test("POST /api/test-connection canonicalizes and blocks metadata address spellings", async () => {
+  const editor = cookieFor(makeUser("editor"));
+  for (const host of ["169.254.169.254", "0xa9.0xfe.0xa9.0xfe", "fe90::1"]) {
+    const r = await post("/api/test-connection", editor, { host, port: 80 });
+    assert.equal(r.statusCode, 400, host);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -149,16 +163,15 @@ const get = (url: string, cookie: string) => app.inject({ method: "GET", url, he
 
 // ---------------------------------------------------------------------------
 // (8) REGRESSION (audit): a scoped user manages their service but may not change
-// its ROUTING/POSTURE. Repointing to a different host, hijacking the domain, or
-// flipping TLS is forbidden; moving to a new PORT on the same box is allowed
-// (legitimate management, and can't pivot to a different machine).
+// its ROUTING/POSTURE. A port-only change can still pivot from the intended app
+// to Docker/Portainer/admin daemons on the same machine, so it is forbidden too.
 // ---------------------------------------------------------------------------
-test("PUT /api/hosts/:id: scoped owner may change forwardPort but NOT forwardHost/domain/ssl", async () => {
+test("PUT /api/hosts/:id: scoped owner cannot change any routing/TLS field", async () => {
   const svc = createHost(makeHost({ id: "scoped-fields", name: "scopedfields", domain: "scoped-fields.example.com" }));
   const owner = cookieFor(makeUser("scoped", "scopedfields"));
 
   const port = await put(`/api/hosts/${svc.id}`, owner, { forwardPort: 3001 });
-  assert.equal(port.statusCode, 200, "a scoped owner may move their app to a new port on the same box");
+  assert.equal(port.statusCode, 403, "a scoped owner must not pivot to another daemon on the same machine");
 
   for (const [field, patch] of [
     ["forwardHost", { forwardHost: "10.9.9.9" }],   // repoint to a different machine (SSRF pivot)
@@ -272,6 +285,33 @@ test("POST /api/config/preview: invalid proposed host is 400; unknown update id 
 
   const missing = await post("/api/config/preview", admin, { mode: "update", id: "no-such-host", host: { forwardPort: 3001 } });
   assert.equal(missing.statusCode, 404, "previewing an update to a nonexistent host is 404");
+});
+
+test("stream services cannot claim unenforceable HTTP protections or share the admin cookie domain", async () => {
+  const admin = cookieFor(makeUser("admin"));
+  saveSettings({ ssoLoginUrl: "", ssoCookieDomain: "" });
+  const falseGate = await post("/api/hosts", admin, createPayload({
+    name: "raw gated", domain: "raw-gated.separate.net", protocol: "sni", listenPort: 9443,
+    requireLogin: true,
+  }));
+  assert.equal(falseGate.statusCode, 400);
+  assert.match(String(falseGate.json().error), /cannot enforce.*login/i);
+
+  const clean = await post("/api/hosts", admin, createPayload({
+    name: "raw clean", domain: "raw-clean.separate.net", protocol: "sni", listenPort: 9443,
+    ssl: true,
+  }));
+  assert.equal(clean.statusCode, 201);
+  assert.equal(clean.json().host.ssl, false, "ignored HTTP/TLS-termination flags are normalized off for passthrough");
+  assert.equal(clean.json().host.securityHeaders, false);
+
+  saveSettings({ ssoLoginUrl: "https://nginux.example.com", ssoCookieDomain: "" });
+  const cookieLeak = await post("/api/hosts", admin, createPayload({
+    name: "raw cookie leak", domain: "raw.example.com", protocol: "sni", listenPort: 10443,
+  }));
+  assert.equal(cookieLeak.statusCode, 400);
+  assert.match(String(cookieLeak.json().error), /shared.*cookie|admin session/i);
+  saveSettings({ ssoLoginUrl: "", ssoCookieDomain: "" });
 });
 
 // ---------------------------------------------------------------------------

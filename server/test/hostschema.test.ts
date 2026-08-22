@@ -10,7 +10,10 @@ import assert from "node:assert/strict";
 import { setupTestEnv } from "./helpers.ts";
 
 setupTestEnv();
-const { hostInput, isControlPlaneDomain, isControlPlanePortalDomain } = await import("../src/hostschema.ts");
+const {
+  hostInput, isControlPlaneDomain, isControlPlanePortalDomain,
+  normalizeProtocolFields, protocolCapabilityError, streamSharesSessionCookie,
+} = await import("../src/hostschema.ts");
 const { sanitizeHostPatch } = await import("../src/tools.ts");
 const { saveSettings } = await import("../src/db.ts");
 
@@ -44,6 +47,8 @@ const INVALID_PATCHES: Record<string, unknown>[] = [
   { forwardPort: 70000 },                   // out of range (agent path used to miss this)
   { forwardPort: 0 },                       // out of range
   { customHeaders: "X-Foo: a\nevil" },      // second line has no header name
+  { customHeaders: "X-Leak: $http_cookie" }, // nginx variable expansion leaks HttpOnly session
+  { customHeaders: "X-Escape: trailing\\" }, // escapes generated closing quote
   { pathRules: "/a 1.2.3.4:80 extra" },     // trailing junk after host:port
   { certDomain: "../etc" },                 // traversal into the cert dir
   { upstreams: "not-a-hostport" },          // not a host:port
@@ -133,4 +138,38 @@ test("control-plane portal identity covers the global URL and every configured r
   assert.equal(isControlPlanePortalDomain("PORTAL.SECONDARY.EXAMPLE"), true);
   assert.equal(isControlPlanePortalDomain("app.secondary.example"), false);
   saveSettings({ ssoLoginUrl: "", ssoRealms: "" });
+});
+
+test("stream protocols reject HTTP-only security claims and normalize presentation defaults", () => {
+  const parsed = hostInput.parse({
+    name: "raw", domain: "raw.other.net", forwardHost: "192.168.1.5", forwardPort: 443,
+    protocol: "sni", listenPort: 443, requireLogin: true,
+  });
+  assert.match(protocolCapabilityError(parsed) ?? "", /cannot enforce.*login/i);
+
+  const clean = hostInput.parse({
+    name: "raw", domain: "raw.other.net", forwardHost: "192.168.1.5", forwardPort: 443,
+    protocol: "sni", listenPort: 443,
+  });
+  assert.equal(protocolCapabilityError(clean), null);
+  const normalized = normalizeProtocolFields(clean);
+  assert.equal(normalized.ssl, false);
+  assert.equal(normalized.upstreamTlsVerify, false);
+  assert.equal(normalized.securityHeaders, false);
+  assert.equal(normalized.blockExploits, false);
+});
+
+test("stream services inside the shared session-cookie domain fail closed", () => {
+  saveSettings({ ssoLoginUrl: "https://nginux.example.com", ssoCookieDomain: "" });
+  const inside = hostInput.parse({
+    name: "raw", domain: "raw.example.com", forwardHost: "192.168.1.5", forwardPort: 443,
+    protocol: "sni", listenPort: 443,
+  });
+  assert.equal(streamSharesSessionCookie(inside), true);
+  assert.match(protocolCapabilityError(inside) ?? "", /shared.*cookie|admin session/i);
+
+  const outside = { ...inside, domain: "raw.separate.net" };
+  assert.equal(streamSharesSessionCookie(outside), false);
+  assert.equal(protocolCapabilityError(outside), null);
+  saveSettings({ ssoLoginUrl: "", ssoCookieDomain: "" });
 });

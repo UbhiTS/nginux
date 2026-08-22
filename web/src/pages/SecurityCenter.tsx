@@ -392,14 +392,18 @@ export function SecurityCenter({ tab: tabProp, setTab }: { tab?: string; setTab:
                         </div>
                       </div>
                       <div>
-                        <div className={`check-line ${e.https ? "ok" : "bad"}`}>{e.https ? <Icon.check /> : <Icon.x />}HTTPS</div>
-                        <div className={`check-line ${e.login ? "ok" : "bad"}`}>
-                          {e.login ? <Icon.check /> : <Icon.x />}
-                          {e.login ? (e.twofa ? "Login + 2FA" : "Login required") : "No login required"}
-                        </div>
+                        {e.httpProtectionSupported ? <>
+                          <div className={`check-line ${e.https ? "ok" : "bad"}`}>{e.https ? <Icon.check /> : <Icon.x />}HTTPS</div>
+                          <div className={`check-line ${e.login ? "ok" : "bad"}`}>
+                            {e.login ? <Icon.check /> : <Icon.x />}
+                            {e.login ? (e.twofa ? "Login + 2FA" : "Login required") : "No login required"}
+                          </div>
+                        </> : <div className="check-line bad"><Icon.x />{e.protocol.toUpperCase()} passthrough has no HTTP gate</div>}
                       </div>
                       <span style={{ justifySelf: "center" }}>
-                        {e.wellProtected ? <span className="pill g">Well protected</span> : <span className="pill r">Needs login</span>}
+                        {e.wellProtected
+                          ? <span className="pill g">Well protected</span>
+                          : <span className="pill r">{e.httpProtectionSupported ? "Needs protection" : "Ungated L4"}</span>}
                       </span>
                     </div>
                   ))}

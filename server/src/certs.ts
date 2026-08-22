@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { X509Certificate, createPrivateKey, randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,19 @@ import { assertWithin } from "./validate.ts";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CERT_DIR = process.env.CERT_DIR ?? join(__dirname, "..", "data", "certs");
 const ACME_WEBROOT = process.env.ACME_WEBROOT ?? join(__dirname, "..", "data", "acme-webroot");
+const ACCOUNT_KEY_FILE = "acme-account.key";
+const RESERVED_CERT_NAMES = new Set([ACCOUNT_KEY_FILE]);
+
+/** Internal files share CERT_DIR with per-domain directories but must never be
+ * addressable through a domain route/tool. Hostnames are case-insensitive, so the
+ * reservation is too even on a case-sensitive filesystem. */
+export function isReservedCertDomain(domain: string): boolean {
+  return RESERVED_CERT_NAMES.has(domain.trim().toLowerCase());
+}
+
+function assertCertDomainAvailable(domain: string): void {
+  if (isReservedCertDomain(domain)) throw new Error("That certificate name is reserved for internal use.");
+}
 const RENEW_LEAD_DAYS = 30;
 
 /** Generate an RSA key pair without blocking the event loop. node-forge runs the
@@ -102,15 +115,23 @@ function upsertCert(c: Partial<Certificate> & { domain: string }) {
 export function setAutoRenew(domain: string, on: boolean) {
   db.prepare("UPDATE certificates SET autoRenew = ? WHERE domain = ?").run(on ? 1 : 0, domain);
 }
-export function deleteCert(domain: string) {
+export function deleteCert(domain: string): boolean {
+  // Never let a route-shaped domain target an internal file (notably the ACME
+  // account key), and never remove an arbitrary filesystem entry with no matching
+  // certificate record. The DB row is the authority for per-domain directories.
+  if (isReservedCertDomain(domain) || !getCert(domain)) return false;
   db.prepare("DELETE FROM certificates WHERE domain = ?").run(domain);
   // Remove the on-disk key/cert too, so any host on this domain falls back to the
   // shared bootstrap cert on the next config apply instead of a dangling path.
   try {
-    rmSync(assertWithin(CERT_DIR, join(CERT_DIR, domain)), { recursive: true, force: true });
+    const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
+    // Do not follow a symlink or delete a same-named file: a certificate occupies
+    // a real directory containing fullchain.pem + privkey.pem.
+    if (lstatSync(dir).isDirectory()) rmSync(dir, { recursive: true, force: true });
   } catch {
     /* nothing to remove */
   }
+  return true;
 }
 
 export interface CertDetails {
@@ -205,6 +226,7 @@ export function reconcileImportedCerts(): void {
 }
 
 function writeFiles(domain: string, keyPem: string, certPem: string) {
+  assertCertDomainAvailable(domain);
   const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "privkey.pem"), keyPem, { mode: 0o600 });
@@ -251,6 +273,7 @@ export function importCertFiles(files: { path: string; content: string }[]): Imp
     // CN becomes a cert-dir path segment - reject traversal explicitly (writeFiles'
     // assertWithin is the backstop, but don't rely on it alone).
     if (!domain || !/^[a-z0-9.*-]+$/i.test(domain) || domain.includes("..")) { skipped.push({ name: label, reason: "no valid domain (CN) in the certificate" }); continue; }
+    if (isReservedCertDomain(domain)) { skipped.push({ name: label, reason: "certificate name is reserved for internal use" }); continue; }
     if (!keyOk) { skipped.push({ name: domain, reason: "the private key doesn't match the certificate" }); continue; }
     try {
       writeFiles(domain, keyFile.content, certFile.content);
@@ -269,6 +292,7 @@ function statusFromExpiry(notAfter: Date): CertStatus {
 
 // ---------- self-signed / internal CA (works offline) ----------
 export async function issueSelfSigned(domain: string): Promise<Certificate> {
+  assertCertDomainAvailable(domain);
   const keys = await generateRsaKeyPair(2048);
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
@@ -304,7 +328,7 @@ export async function issueSelfSigned(domain: string): Promise<Certificate> {
 // Generous on purpose - DNS-01 propagation can legitimately take 60-90s with some
 // providers. We no longer retry timeouts, so this is one bounded attempt, not 3×.
 const ACME_TIMEOUT_MS = Number(process.env.ACME_TIMEOUT_MS ?? 120000);
-const ACCOUNT_KEY_PATH = join(CERT_DIR, "acme-account.key");
+const ACCOUNT_KEY_PATH = join(CERT_DIR, ACCOUNT_KEY_FILE);
 
 // ---------- ACME activity log (feeds the live panel on the Certificates page) ----------
 export interface AcmeLogEntry {
@@ -380,6 +404,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 
 // ---------- Let's Encrypt (ACME) - runs with a reachable public domain ----------
 export async function issueLetsEncrypt(domain: string, method: "http-01" | "dns-01"): Promise<Certificate> {
+  assertCertDomainAvailable(domain);
   const s = getSettings();
   if (!s.letsEncryptEmail) {
     acmeLog(domain, "No Let's Encrypt contact email configured - set one in Settings → Network & SSL.", "error");

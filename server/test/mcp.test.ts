@@ -258,3 +258,19 @@ test("prompts/get renders messages, validates required args, and rejects unknown
   assert.ok(isRpcError(unknown));
   assert.equal(unknown.error.code, -32602);
 });
+
+test("MCP read tools redact admin-only custom nginx from non-admin principals", async () => {
+  const marker = "mcp-upstream-secret-never-return";
+  const host = createHost(makeHost({
+    id: `mcp-raw-${Math.random().toString(36).slice(2, 8)}`,
+    domain: `mcp-raw-${Math.random().toString(36).slice(2, 8)}.example.com`,
+    customNginx: `proxy_set_header Authorization "Bearer ${marker}";`,
+  }));
+  const detail = await call(editor, "tools/call", { name: "get_service", arguments: { id: host.id } });
+  const detailText = String(detail.result.content[0].text);
+  assert.doesNotMatch(detailText, new RegExp(marker));
+  assert.equal(JSON.parse(detailText).customNginx, "");
+
+  const config = await call(readToken, "tools/call", { name: "get_service_config", arguments: { id: host.id } });
+  assert.doesNotMatch(String(config.result.content[0].text), new RegExp(marker));
+});

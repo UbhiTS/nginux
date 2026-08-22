@@ -11,6 +11,7 @@ export interface ProxyHost {
   forwardScheme: ForwardScheme;
   forwardHost: string;
   forwardPort: number;
+  upstreamTlsVerify: boolean;
   preset: string;
   websockets: boolean;
   http2: boolean;

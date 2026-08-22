@@ -17,6 +17,9 @@ const banner = {
   down: { cls: "bad", icon: <Icon.x />, title: "NginUX can't reach this service right now." },
   unknown: { cls: "", icon: <Icon.info />, title: "Status unknown." },
 };
+const isL7 = (protocol: ProxyHost["protocol"]) => protocol === "http" || protocol === "grpc";
+const protocolLabel = (protocol: ProxyHost["protocol"]) =>
+  protocol === "sni" ? "SNI/TLS passthrough" : protocol === "grpc" ? "gRPC" : protocol.toUpperCase();
 
 export function HostDetail({
   hostId,
@@ -133,10 +136,11 @@ export function HostDetail({
   }
 
   const b = banner[host.health];
+  const httpControls = isL7(host.protocol);
   // The certificate this host actually serves (its chosen certDomain, or its
   // own), from the cert store - but only when HTTPS is on. With HTTPS off the
   // service is plain HTTP, so any cert still sitting in the store isn't in use.
-  const cert = host.ssl ? (certs.find((c) => c.domain === (host.certDomain || host.domain)) ?? null) : null;
+  const cert = httpControls && host.ssl ? (certs.find((c) => c.domain === (host.certDomain || host.domain)) ?? null) : null;
   const certDays = cert?.daysRemaining ?? null;
   const certStatusCls = cert ? (cert.status === "valid" ? "g" : cert.status === "expiring" || cert.status === "expired" || cert.status === "error" ? "r" : "n") : "n";
 
@@ -251,14 +255,14 @@ export function HostDetail({
             <div className="st">{host.enabled ? b.title : "Paused - this service isn't being served."}</div>
             <div className="sd">
               {host.enabled ? (
-                <>
+                httpControls ? <>
                   {!host.ssl ? "Served over HTTP - not encrypted" : certDays !== null ? `Certificate valid for ${days(certDays)}` : "No certificate yet"} ·{" "}
                   {host.require2fa
                     ? "Protected by login + 2FA"
                     : host.requireLogin
                       ? "Protected by login"
                       : "No NginUX login required"}
-                </>
+                </> : <>{protocolLabel(host.protocol)} · Raw passthrough has no NginUX HTTP login/2FA gate</>
               ) : (
                 <>Its nginx config is removed while paused. Click <b>Resume</b> to serve it again.</>
               )}
@@ -306,7 +310,7 @@ export function HostDetail({
                 <div className="kv">
                   <span className="k">Public address</span>
                   <span className="v mono">
-                    {host.ssl ? "https" : "http"}://{host.domain}
+                    {httpControls ? `${host.ssl ? "https" : "http"}://${host.domain}` : `${protocolLabel(host.protocol)} :${host.listenPort}`}
                   </span>
                 </div>
                 <div className="kv">
@@ -315,18 +319,18 @@ export function HostDetail({
                     {host.forwardHost}:{host.forwardPort}
                   </span>
                 </div>
-                <div className="kv">
+                {httpControls && <div className="kv">
                   <span className="k">WebSockets</span>
                   <span className="v" style={{ color: host.websockets ? "var(--green)" : undefined }}>
                     {host.websockets ? "On" : "Off"}
                   </span>
-                </div>
-                <div className="kv">
+                </div>}
+                {httpControls && <div className="kv">
                   <span className="k">HTTP/2</span>
                   <span className="v" style={{ color: host.http2 ? "var(--green)" : undefined }}>
                     {host.http2 ? "On" : "Off"}
                   </span>
-                </div>
+                </div>}
               </div>
               <button
                 type="button"
@@ -387,7 +391,12 @@ export function HostDetail({
                 )}
               </div>
               <div className="card-pad">
-                {!host.ssl ? (
+                {!httpControls ? (
+                  <div className="kv" style={{ border: "none" }}>
+                    <span className="k">Status</span>
+                    <span className="v muted">Not terminated by NginUX ({protocolLabel(host.protocol)})</span>
+                  </div>
+                ) : !host.ssl ? (
                   <div className="kv" style={{ border: "none" }}>
                     <span className="k">Status</span>
                     <span className="v muted">Not in use - served over HTTP</span>
@@ -419,21 +428,24 @@ export function HostDetail({
             <div className="card">
               <div className="card-head"><span className="ch-t"><Icon.shield /> Protection</span></div>
               <div className="card-pad">
-                <Check ok={host.ssl} label="HTTPS encryption" wrong={host.ssl && cert?.status === "expired"} />
-                <Check ok={host.requireLogin} label="Login required" />
-                <Check ok={host.require2fa} label="2FA enforced" />
-                <Check ok={host.countryLock} label="Country lock (GeoIP)" />
-                <Check ok={host.securityHeaders} label="Security headers" />
-                <Check ok={host.hsts} label="HSTS" wrong={host.hsts && !host.ssl} />
-                <Check ok={host.rateLimit} label="Rate limiting" />
-                <Check ok={host.blockExploits} label="Exploit/bot blocking" />
-                {host.maintenanceMode && <div className="check-line warn"><Icon.alert />Maintenance mode ON</div>}
-                <Check ok={host.mtls} label="Client cert (mTLS)" />
-                {host.rateLimitKbps > 0 && <div className="check-line"><Icon.bolt />Speed limit: {host.rateLimitKbps} KB/s per connection</div>}
-                {host.maxConns > 0 && <div className="check-line"><Icon.bolt />Max {host.maxConns} connections per IP</div>}
+                {httpControls ? <>
+                  <Check ok={host.ssl} label="HTTPS encryption" wrong={host.ssl && cert?.status === "expired"} />
+                  {host.forwardScheme === "https" && <Check ok={host.upstreamTlsVerify} label="Upstream TLS identity verified" />}
+                  <Check ok={host.requireLogin} label="Login required" />
+                  <Check ok={host.require2fa} label="2FA enforced" />
+                  <Check ok={host.countryLock} label="Country lock (GeoIP)" />
+                  <Check ok={host.securityHeaders} label="Security headers" />
+                  <Check ok={host.hsts} label="HSTS" wrong={host.hsts && !host.ssl} />
+                  <Check ok={host.rateLimit} label="Rate limiting" />
+                  <Check ok={host.blockExploits} label="Exploit/bot blocking" />
+                  {host.maintenanceMode && <div className="check-line warn"><Icon.alert />Maintenance mode ON</div>}
+                  <Check ok={host.mtls} label="Client cert (mTLS)" />
+                  {host.rateLimitKbps > 0 && <div className="check-line"><Icon.bolt />Speed limit: {host.rateLimitKbps} KB/s per connection</div>}
+                  {host.maxConns > 0 && <div className="check-line"><Icon.bolt />Max {host.maxConns} connections per IP</div>}
+                </> : <div className="info-line" style={{ color: "var(--red)" }}><Icon.alert />Raw {protocolLabel(host.protocol)} cannot enforce HTTP login, 2FA, mTLS termination, country policy, headers, or request limits.</div>}
               </div>
             </div>
-            {host.mtls && <ClientCerts hostId={host.id} />}
+            {httpControls && host.mtls && <ClientCerts hostId={host.id} />}
           </div>
         </div>
         <HostAnalytics domain={host.domain} />
@@ -524,6 +536,21 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
   onCertsChanged: () => void;
 }) {
   const set = (patch: Partial<ProxyHost>) => setDraft({ ...draft, ...patch });
+  const httpControls = isL7(draft.protocol);
+  const selectProtocol = (protocol: ProxyHost["protocol"]) => {
+    if (isL7(protocol)) { set({ protocol }); return; }
+    // Keep the saved model honest: stream configs cannot enforce any of these
+    // HTTP-only controls. The server independently rejects contradictory input.
+    set({
+      protocol,
+      websockets: false, http2: false, ssl: false, certDomain: "",
+      requireLogin: false, require2fa: false, countryLock: false, mtls: false,
+      maintenanceMode: false, securityHeaders: false, hsts: false,
+      rateLimit: false, blockExploits: false, ipAllow: "", ipDeny: "",
+      customHeaders: "", customNginx: "", pathRules: "",
+      rateLimitKbps: 0, maxConns: 0,
+    });
+  };
   // "Preview changes": dry-run the nginx-config diff this edit would produce.
   const [showDiff, setShowDiff] = useState(false);
   // Logo picker: search the dashboard-icons catalog (debounced) for a real app logo.
@@ -682,7 +709,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       <div className="field">
         <label>Protocol</label>
         <div className="input-group">
-          <select className="input" value={draft.protocol} onChange={(e) => set({ protocol: e.target.value as ProxyHost["protocol"] })}>
+          <select className="input" value={draft.protocol} onChange={(e) => selectProtocol(e.target.value as ProxyHost["protocol"])}>
             <option value="http">HTTP / HTTPS (L7)</option>
             <option value="grpc">gRPC</option>
             <option value="tcp">TCP stream (L4)</option>
@@ -695,6 +722,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
         </div>
         {(draft.protocol === "tcp" || draft.protocol === "udp") && <div className="hint">nginx listens on this port and forwards to the internal target.</div>}
         {draft.protocol === "sni" && <div className="hint">Routes TLS by SNI ({draft.domain}) without terminating - forwards encrypted to the target.</div>}
+        {!httpControls && <div className="state-note error" style={{ marginTop: 10 }}><Icon.alert /><div>Raw passthrough cannot use NginUX login, 2FA, mTLS termination, country lock, HTTP headers, or request limits. Use a separate base domain from the shared login cookie.</div></div>}
       </div>
       <div className="field">
         <label>Internal service</label>
@@ -706,6 +734,13 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
           <input className="input" style={{ maxWidth: 110 }} type="number" value={draft.forwardPort} onChange={(e) => set({ forwardPort: Number(e.target.value) })} />
         </div>
       </div>
+      {httpControls && draft.forwardScheme === "https" && (
+        <Toggle
+          k="upstreamTlsVerify"
+          label="Verify upstream TLS certificate"
+          desc="Authenticate the backend certificate and hostname to prevent a LAN attacker from intercepting gateway-to-service traffic. Turn off only for a known self-signed backend."
+        />
+      )}
       <div className="field">
         <label>Health check</label>
         <div className="input-group">
@@ -727,9 +762,11 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
         </div>
       </div>
 
-      <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.sliders /> Behaviour</span></div>
-      <Toggle k="websockets" label="WebSockets" desc="Support upgrade connections." />
-      <Toggle k="maintenanceMode" label="Maintenance mode" desc="Show visitors a 'be right back' page - the service stays reachable (unlike Disable, which takes it fully offline)." />
+      {httpControls && <>
+        <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.sliders /> Behaviour</span></div>
+        <Toggle k="websockets" label="WebSockets" desc="Support upgrade connections." />
+        <Toggle k="maintenanceMode" label="Maintenance mode" desc="Show visitors a 'be right back' page - the service stays reachable (unlike Disable, which takes it fully offline)." />
+      </>}
 
       {certApplies && (
         <>
@@ -785,6 +822,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
         </>
       )}
 
+      {httpControls && <>
       <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.lock /> Access</span></div>
       <Toggle
         k="requireLogin"
@@ -836,6 +874,7 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
       <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.sliders /> Limits & quotas</span></div>
       <div className="field"><label>Download speed limit per connection (KB/s, 0 = unlimited)</label><input className="input" style={{ maxWidth: 200 }} type="number" min={0} value={draft.rateLimitKbps || ""} onChange={(e) => set({ rateLimitKbps: Number(e.target.value) })} placeholder="0" /></div>
       <div className="field"><label>Max concurrent connections per client IP (0 = unlimited)</label><input className="input" style={{ maxWidth: 200 }} type="number" min={0} value={draft.maxConns || ""} onChange={(e) => set({ maxConns: Number(e.target.value) })} placeholder="0" /></div>
+      </>}
 
       <div className="section-title" style={{ marginTop: 8 }}><span className="ch-t"><Icon.layers /> Load balancing</span></div>
       <div className="field"><label>Extra upstream targets ("host:port" per line - primary is {draft.forwardHost}:{draft.forwardPort})</label><textarea className="input mono" rows={2} value={draft.upstreams} onChange={(e) => set({ upstreams: e.target.value })} placeholder="192.168.1.51:32400" /></div>

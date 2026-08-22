@@ -13,6 +13,7 @@ function mkHost(over: Partial<ProxyHost>): ProxyHost {
     forwardScheme: "http",
     forwardHost: "10.0.0.5",
     forwardPort: 3000,
+    upstreamTlsVerify: true,
     preset: "",
     websockets: false,
     http2: false,

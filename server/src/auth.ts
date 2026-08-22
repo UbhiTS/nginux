@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
-import { db, getSettings } from "./db.ts";
+import { db, getSettings, pruneAuditLog } from "./db.ts";
 import { listHosts } from "./repo.ts";
 import { generateSecret } from "./totp.ts";
 import { emitEvent } from "./events.ts";
@@ -409,6 +409,8 @@ export interface AuditEvent {
   meta: Record<string, unknown>;
 }
 
+let auditWritesSincePrune = 0;
+
 export function logEvent(e: Omit<AuditEvent, "id" | "ts"> & { ts?: string }): void {
   db.prepare(
     "INSERT INTO audit_events (ts, type, severity, actor, summary, ip, meta) VALUES (?,?,?,?,?,?,?)",
@@ -421,6 +423,14 @@ export function logEvent(e: Omit<AuditEvent, "id" | "ts"> & { ts?: string }): vo
     e.ip ?? "",
     JSON.stringify(e.meta ?? {}),
   );
+  // Enforce the absolute cap continuously, not only at boot/the daily timer.
+  // Otherwise unauthenticated event volume can fill /data long before the next
+  // scheduled prune. Amortize the bounded cleanup over batches of writes.
+  auditWritesSincePrune++;
+  if (auditWritesSincePrune >= 100) {
+    auditWritesSincePrune = 0;
+    try { pruneAuditLog(); } catch { /* logging must not take the app down */ }
+  }
   // Stream to SSE subscribers + webhooks (skip backdated seed events).
   if (!e.ts) emitEvent(e.type, { actor: e.actor, summary: e.summary, severity: e.severity, ip: e.ip, ...e.meta });
 }
@@ -444,24 +454,33 @@ export function listEvents(opts: { type?: string; limit?: number } = {}): AuditE
 
 // ---------- security posture ----------
 export function securityExposure() {
-  return listHosts().map((h) => ({
-    id: h.id,
-    name: h.name,
-    iconUrl: h.iconUrl,
-    domain: h.domain,
-    https: h.ssl,
-    login: h.requireLogin,
-    twofa: h.require2fa,
-    countryLock: h.countryLock,
-    wellProtected: h.ssl && h.requireLogin,
-  }));
+  return listHosts().map((h) => {
+    const httpProtectionSupported = h.protocol === "http" || h.protocol === "grpc";
+    return {
+      id: h.id,
+      name: h.name,
+      iconUrl: h.iconUrl,
+      domain: h.domain,
+      protocol: h.protocol,
+      httpProtectionSupported,
+      https: httpProtectionSupported && h.ssl,
+      transportEncrypted: (httpProtectionSupported && h.ssl) || h.protocol === "sni",
+      login: httpProtectionSupported && h.requireLogin,
+      twofa: httpProtectionSupported && h.require2fa,
+      countryLock: httpProtectionSupported && h.countryLock,
+      wellProtected: httpProtectionSupported && h.ssl && h.requireLogin,
+    };
+  });
 }
 
 export function securityOverview() {
   const hosts = listHosts();
   const exposed = hosts.length;
-  const unprotected = hosts.filter((h) => h.ssl && !h.requireLogin).length;
-  const noCountry = hosts.filter((h) => !h.countryLock).length;
+  // Plain HTTP and raw L4 passthrough are not "protected" merely because stale
+  // booleans say login/SSL; only an L7 config can actually enforce those controls.
+  const supports = (h: ProxyHost) => h.protocol === "http" || h.protocol === "grpc";
+  const unprotected = hosts.filter((h) => !supports(h) || !h.ssl || !h.requireLogin).length;
+  const noCountry = hosts.filter((h) => !supports(h) || !h.countryLock).length;
   // simple posture score: start at 100, subtract for gaps
   let score = 100;
   score -= unprotected * 8;
@@ -489,13 +508,15 @@ export async function seedAuthIfEmpty(): Promise<{ usingDefault: boolean; bootst
   const count = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as Row).n as number;
   if (count > 0) return { usingDefault: false };
 
-  // Production must never expose a known first-run credential. If the operator
-  // did not provide one, generate a strong password and print it once at startup.
-  // Local development keeps admin/admin for convenience.
+  // Every network-capable start must avoid a known first-run credential. Source
+  // `npm start` historically bound to all interfaces with admin/admin, allowing
+  // the first LAN visitor to seize the instance. A known dev password now needs
+  // an explicit, loudly named opt-in; otherwise generate and print a one-time one.
   const envPw = process.env.NGINUX_ADMIN_PASSWORD;
-  const bootstrapPassword = !envPw && IS_PROD ? randomBytes(24).toString("base64url") : undefined;
+  const insecureDevDefault = process.env.NGINUX_INSECURE_DEV_DEFAULTS === "1";
+  const bootstrapPassword = !envPw && !insecureDevDefault ? randomBytes(24).toString("base64url") : undefined;
   const adminPassword = envPw || bootstrapPassword || "admin";
-  const usingDefault = !envPw && !bootstrapPassword;
+  const usingDefault = !envPw && insecureDevDefault;
   const settings = getSettings();
 
   const admin = await createUser({

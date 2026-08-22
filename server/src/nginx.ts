@@ -8,7 +8,7 @@ import { listHosts } from "./repo.ts";
 import { getSettings } from "./db.ts";
 import { realmForHost } from "./realms.ts";
 import { writeGeoipConf } from "./geoip.ts";
-import { isControlPlanePortalDomain, isControlPlaneTarget } from "./hostschema.ts";
+import { isControlPlanePortalDomain, isControlPlaneTarget, isCustomHeaderLine, streamSharesSessionCookie } from "./hostschema.ts";
 // Canonical tokenisers (shared with the validators in hostschema.ts, so a value
 // is generated exactly the way it was validated). splitEntries == the old splitList.
 import { splitEntries as splitList, splitLines } from "./validate.ts";
@@ -91,7 +91,10 @@ export function generateSniPassthrough(hosts: ProxyHost[]): string {
     const v = `sni_pass_${port}`;
     const entries = list.map((h) => `    ${h.domain} ${h.forwardHost}:${h.forwardPort};`).join("\n");
     blocks.push(`map $ssl_preread_server_name $${v} {
-    default ${list[0].forwardHost}:${list[0].forwardPort};
+    hostnames;
+    # Unknown or absent SNI must fail closed. Routing it to the first configured
+    # backend exposes that service on every hostname (and to no-SNI clients).
+    default 127.0.0.1:1;
 ${entries}
 }
 
@@ -270,7 +273,9 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   // custom response headers ("Name: value" per line) - also add_header, so same scope.
   for (const line of splitLines(h.customHeaders)) {
     const idx = line.indexOf(":");
-    if (idx > 0) managedHeaders.push(`        add_header ${line.slice(0, idx).trim()} "${line.slice(idx + 1).trim()}" always;`);
+    // Validate again at the sink so a legacy/pre-validation DB row cannot expand
+    // nginx variables (notably $http_cookie) or escape the quoted directive.
+    if (idx > 0 && isCustomHeaderLine(line)) managedHeaders.push(`        add_header ${line.slice(0, idx).trim()} "${line.slice(idx + 1).trim()}" always;`);
   }
   const headerBlock = managedHeaders.length ? "\n" + managedHeaders.join("\n") : "";
 
@@ -323,19 +328,31 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   const keepSessionCookie = proxiesControlPlane && extraTargets.length === 0;
   const cookieStrip = keepSessionCookie ? "" : `\n        proxy_set_header Cookie $backend_cookie;`;
   const grpcCookieStrip = keepSessionCookie ? "" : `\n        grpc_set_header Cookie $backend_cookie;`;
+  const proxyTlsBlock = proxyPass.startsWith("https://") ? `
+        proxy_ssl_server_name on;
+        proxy_ssl_name ${h.forwardHost};
+        proxy_ssl_verify ${h.upstreamTlsVerify ? "on" : "off"};${h.upstreamTlsVerify ? `
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_ssl_verify_depth 4;` : ""}` : "";
+  const grpcTlsBlock = h.forwardScheme === "https" ? `
+        grpc_ssl_server_name on;
+        grpc_ssl_name ${h.forwardHost};
+        grpc_ssl_verify ${h.upstreamTlsVerify ? "on" : "off"};${h.upstreamTlsVerify ? `
+        grpc_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        grpc_ssl_verify_depth 4;` : ""}` : "";
 
   const locationBody = h.maintenanceMode
     ? `        default_type text/html;${headerBlock}
         return 503 '<!doctype html><html><head><meta charset="utf-8"><title>Be right back</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}h1{font-size:22px}</style></head><body><div><h1>🔧 Be right back</h1><p>${safeName} is down for maintenance.</p></div></body></html>';`
     : h.protocol === "grpc" && !portalSelfHost
-    ? `        grpc_pass grpc://${extraTargets.length ? proxyPass.replace(/^https?:\/\//, "") : `${h.forwardHost}:${h.forwardPort}`};
-        grpc_set_header Host $host;${grpcCookieStrip}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
+    ? `        grpc_pass ${h.forwardScheme === "https" ? "grpcs" : "grpc"}://${extraTargets.length ? proxyPass.replace(/^https?:\/\//, "") : `${h.forwardHost}:${h.forwardPort}`};
+        grpc_set_header Host $host;${grpcTlsBlock}${grpcCookieStrip}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 `
     : `        proxy_pass ${proxyPass};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;${cookieStrip}${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
+        proxy_set_header X-Forwarded-Proto $scheme;${proxyTlsBlock}${cookieStrip}${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 ${extra ? extra + "\n" : ""}`;
 
   // Per-path routing: send specific paths to different backends. These are
@@ -431,6 +448,10 @@ export function buildDesiredConfigs(hosts: ProxyHost[]): Map<string, string> {
   let haveHttpHost = false;
   for (const h of hosts) {
     if (!h.enabled) continue;
+    // Existing rows from older releases may combine a raw stream with the SSO
+    // cookie realm. Do not publish a route that hands the domain-wide control
+    // session directly to its backend; the API now rejects new occurrences.
+    if (streamSharesSessionCookie(h)) continue;
     if (h.protocol === "sni") { sniHosts.push(h); continue; }
     const isStream = h.protocol === "tcp" || h.protocol === "udp";
     const file = join(isStream ? STREAM_DIR : CONF_DIR, `${h.domain}.conf`);

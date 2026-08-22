@@ -1,7 +1,9 @@
 import dgram from "node:dgram";
 import net from "node:net";
+import { isIP } from "node:net";
 import { hostname } from "node:os";
 import type { NgxEvent } from "./events.ts";
+import { resolveSafeOutboundHost } from "./outbound.ts";
 
 // RFC 5424 syslog delivery for the audit-event webhooks, so events can stream to a
 // SIEM (rsyslog/Graylog/Splunk) as well as an HTTP collector. A webhook whose URL
@@ -41,19 +43,22 @@ export function formatRfc5424(host: string, e: NgxEvent): string {
 /** Deliver one event to a syslog target. Resolves to a status string (never
  *  rejects) so a broken sink can't break the webhook fan-out. UDP is
  *  fire-and-forget; TCP confirms the connection. */
-export function sendSyslog(target: SyslogTarget, e: NgxEvent): Promise<string> {
+export async function sendSyslog(target: SyslogTarget, e: NgxEvent): Promise<string> {
   const line = formatRfc5424(hostname(), e);
+  let address: string;
+  try { address = await resolveSafeOutboundHost(target.host); }
+  catch (err) { return `failed: ${err instanceof Error ? err.message : "blocked destination"}`; }
   return new Promise((resolve) => {
     if (target.proto === "tcp") {
-      const sock = net.connect({ host: target.host, port: target.port });
+      const sock = net.connect({ host: address, port: target.port });
       sock.setTimeout(5000);
       sock.once("connect", () => { sock.write(line + "\n"); sock.end(); resolve("ok"); });
       sock.once("timeout", () => { sock.destroy(); resolve("failed: timeout"); });
       sock.once("error", (err) => resolve(`failed: ${err.message}`));
     } else {
-      const sock = dgram.createSocket("udp4");
+      const sock = dgram.createSocket(isIP(address) === 6 ? "udp6" : "udp4");
       const buf = Buffer.from(line);
-      sock.send(buf, target.port, target.host, (err) => { sock.close(); resolve(err ? `failed: ${err.message}` : "ok"); });
+      sock.send(buf, target.port, address, (err) => { sock.close(); resolve(err ? `failed: ${err.message}` : "ok"); });
     }
   });
 }

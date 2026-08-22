@@ -12,7 +12,7 @@ setupTestEnv();
 const { app } = await import("../src/index.ts");
 const { db, saveSettings } = await import("../src/db.ts");
 const { createSession, listUsers, updateUserRole, countAdmins } = await import("../src/auth.ts");
-const { createHost, getHostByDomain } = await import("../src/repo.ts");
+const { createHost, getHost, getHostByDomain } = await import("../src/repo.ts");
 const { createToken } = await import("../src/tokens.ts");
 
 // The per-host login-gate shared secret nginx sends on the forward-auth subrequest.
@@ -264,5 +264,119 @@ test("route-split guard matrix: extracted endpoints keep auth + RBAC", async () 
   for (const url of adminEditor) {
     assert.equal((await app.inject({ method: "GET", url, headers: { cookie: readonly } })).statusCode, 403, `${url} must reject readonly`);
     assert.equal((await app.inject({ method: "GET", url, headers: { cookie: editor } })).statusCode, 200, `${url} must allow editor`);
+  }
+});
+
+test("webhook creation audit records only scheme + host/port, never URL credentials", async () => {
+  const admin = cookieFor(makeUser("admin"));
+  const http = await app.inject({
+    method: "POST",
+    url: "/api/webhooks",
+    headers: { cookie: admin },
+    payload: {
+      url: "https://collector-user:TOPSECRET@hooks.example.com:8443/private/token-path?api_key=TOPSECRET",
+      // Do not match webhook.created, so this regression makes no outbound request.
+      events: ["security.ip_banned"],
+    },
+  });
+  assert.equal(http.statusCode, 201);
+  const httpAudit = db.prepare("SELECT summary FROM audit_events WHERE type = 'webhook.created' ORDER BY id DESC LIMIT 1").get() as { summary: string };
+  assert.equal(httpAudit.summary, "Created webhook → https://hooks.example.com:8443");
+  assert.doesNotMatch(httpAudit.summary, /TOPSECRET|collector-user|private|api_key/);
+
+  const syslog = await app.inject({
+    method: "POST",
+    url: "/api/webhooks",
+    headers: { cookie: admin },
+    payload: { url: "syslog+tcp://siem.example.com:6514", events: ["security.ip_banned"] },
+  });
+  assert.equal(syslog.statusCode, 201);
+  const syslogAudit = db.prepare("SELECT summary FROM audit_events WHERE type = 'webhook.created' ORDER BY id DESC LIMIT 1").get() as { summary: string };
+  assert.equal(syslogAudit.summary, "Created webhook → syslog+tcp://siem.example.com:6514");
+});
+
+test("certificate routes reject internal names and do not report deletion of untracked paths", async () => {
+  const editor = cookieFor(makeUser("editor"));
+  const reserved = await app.inject({
+    method: "DELETE",
+    url: "/api/certificates/acme-account.key",
+    headers: { cookie: editor },
+  });
+  assert.equal(reserved.statusCode, 400, "the ACME account-key filename is never a domain route target");
+
+  const missing = await app.inject({
+    method: "DELETE",
+    url: "/api/certificates/not-tracked.example.com",
+    headers: { cookie: editor },
+  });
+  assert.equal(missing.statusCode, 404, "only a tracked certificate may be deleted");
+});
+
+test("non-admin host reads redact custom nginx secrets and an empty PUT cannot erase them", async () => {
+  const marker = "upstream-admin-secret-DO-NOT-LEAK";
+  const host = createHost(makeHost({
+    id: `raw-secret-${Math.random().toString(36).slice(2, 8)}`,
+    domain: `raw-secret-${Math.random().toString(36).slice(2, 8)}.example.com`,
+    customNginx: `proxy_set_header Authorization "Bearer ${marker}";`,
+  }));
+  const readonly = cookieFor(makeUser("readonly"));
+  const detail = await app.inject({ method: "GET", url: `/api/hosts/${host.id}`, headers: { cookie: readonly } });
+  assert.equal(detail.statusCode, 200);
+  assert.equal(detail.json().customNginx, "");
+  assert.doesNotMatch(detail.payload, new RegExp(marker));
+
+  const config = await app.inject({ method: "GET", url: `/api/hosts/${host.id}/config`, headers: { cookie: readonly } });
+  assert.equal(config.statusCode, 200);
+  assert.doesNotMatch(config.payload, new RegExp(marker), "generated config for a non-admin must omit raw admin directives");
+
+  const editor = cookieFor(makeUser("editor"));
+  const update = await app.inject({
+    method: "PUT", url: `/api/hosts/${host.id}`, headers: { cookie: editor },
+    payload: { name: "safe rename", customNginx: "" },
+  });
+  assert.equal(update.statusCode, 200, "the redacted full-form placeholder is ignored rather than rejected");
+  assert.match(getHost(host.id)?.customNginx ?? "", new RegExp(marker), "an editor cannot erase an admin's directive with an empty value");
+});
+
+test("already-throttled login traffic is memory/audit bounded and not webhook-amplified", async () => {
+  const before = Number((db.prepare("SELECT COUNT(*) AS n FROM audit_events").get() as { n: number }).n);
+  for (let i = 0; i < 80; i++) {
+    const r = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      remoteAddress: "198.51.100.77",
+      payload: { username: `missing-throttle-user`, password: "wrong-password" },
+    });
+    assert.ok(r.statusCode === 401 || r.statusCode === 429);
+  }
+  const after = Number((db.prepare("SELECT COUNT(*) AS n FROM audit_events").get() as { n: number }).n);
+  assert.ok(after - before <= 12, `80 requests should create only initial failures + one throttled audit (created ${after - before})`);
+});
+
+test("sensitive mutation matrix rejects unauthenticated and readonly callers before parsing or side effects", async () => {
+  const readonly = cookieFor(makeUser("readonly"));
+  const cases: Array<[string, string]> = [
+    ["PUT", "/api/settings"],
+    ["POST", "/api/tokens"], ["DELETE", "/api/tokens/not-found"],
+    ["POST", "/api/webhooks"], ["DELETE", "/api/webhooks/not-found"],
+    ["POST", "/api/channels"], ["PUT", "/api/channels/not-found/enabled"],
+    ["PUT", "/api/channels/not-found/routing"], ["POST", "/api/channels/not-found/test"],
+    ["DELETE", "/api/channels/not-found"],
+    ["POST", "/api/agents/approvals/not-found/approve"], ["POST", "/api/agents/approvals/not-found/deny"],
+    ["POST", "/api/certificates/example.com/issue"], ["POST", "/api/certificates/example.com/renew"],
+    ["PUT", "/api/certificates/example.com/autorenew"], ["POST", "/api/certificates/import"],
+    ["DELETE", "/api/certificates/example.com"],
+    ["POST", "/api/bans"], ["DELETE", "/api/bans/203.0.113.10"],
+    ["POST", "/api/geoip/download"], ["DELETE", "/api/geoip"],
+    ["POST", "/api/security-profiles"], ["PUT", "/api/security-profiles/not-found"],
+    ["DELETE", "/api/security-profiles/not-found"], ["POST", "/api/security-profiles/not-found/apply"],
+    ["POST", "/api/update/check"], ["POST", "/api/update/apply"],
+    ["POST", "/api/config/restore"], ["POST", "/api/config/import"],
+  ];
+  for (const [method, url] of cases) {
+    const unauth = await app.inject({ method: method as never, url, payload: {} });
+    assert.equal(unauth.statusCode, 401, `${method} ${url} must reject unauthenticated callers before input parsing`);
+    const underprivileged = await app.inject({ method: method as never, url, headers: { cookie: readonly }, payload: {} });
+    assert.equal(underprivileged.statusCode, 403, `${method} ${url} must reject readonly callers before input parsing`);
   }
 });

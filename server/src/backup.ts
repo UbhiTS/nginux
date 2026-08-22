@@ -4,7 +4,7 @@ import { getSettings, redactSettings, saveSettings, SECRET_SETTING_KEYS } from "
 import { listHosts, replaceAllHosts } from "./repo.ts";
 import { listBans, replaceAllBans, type Ban } from "./bans.ts";
 import { listChannels, listChannelsRaw, replaceAllChannels, type Channel } from "./notify.ts";
-import { hostInput } from "./hostschema.ts";
+import { hostInput, normalizeProtocolFields, protocolCapabilityError } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
 import { isIpOrCidr, assertSafeOutboundUrl, isDangerousHost } from "./validate.ts";
 import type { ProxyHost, Settings } from "./types.ts";
@@ -55,10 +55,12 @@ const banSchema = z.object({
   expiresAt: z.string().nullable().default(null),
 });
 const channelSchema = z.object({
-  id: z.string(), type: z.string(), name: z.string(),
-  config: z.record(z.string(), z.string()).default({}),
-  events: z.array(z.string()).default(["*"]),
-  minSeverity: z.string().default("info"),
+  id: z.string().min(1).max(128),
+  type: z.enum(["ntfy", "gotify", "pushover", "discord", "slack", "telegram", "webhook", "email"]),
+  name: z.string().min(1).max(64),
+  config: z.record(z.string().max(128), z.string().max(2048)).default({}),
+  events: z.array(z.string().max(64)).max(50).default(["*"]),
+  minSeverity: z.enum(["info", "notice", "warn", "danger"]).default("info"),
   enabled: z.boolean().default(true),
   lastStatus: z.string().nullable().default(null),
   createdAt: z.string().default(() => new Date().toISOString()),
@@ -72,6 +74,9 @@ const bundleSchema = z.object({
   // Each host must be a valid host (same rules as a create) plus its DB-managed id.
   hosts: z.array(hostInput.extend({
     id: z.string().min(1),
+    // Bundles from before upstream verification existed preserve their prior
+    // self-signed-compatible behavior; new creates default this on.
+    upstreamTlsVerify: z.boolean().default(false),
     createdAt: z.string().optional(),
     updatedAt: z.string().optional(),
   })).default([]),
@@ -93,17 +98,28 @@ export function restoreBundle(raw: unknown): RestoreResult {
   const b = parsed.data;
   const now = new Date().toISOString();
 
-  // Hosts: fill DB-managed fields the schema doesn't require, then transactional swap.
-  const hosts = b.hosts.map((h) => ({
-    ...h,
-    health: "unknown",
-    certExpiresAt: null,
-    createdAt: h.createdAt ?? now,
-    updatedAt: now,
-  })) as unknown as ProxyHost[];
-  replaceAllHosts(hosts);
+  // Normalize and validate EVERY section before the first mutation. Previously
+  // hosts/bans were replaced before a bad channel URL or setting was detected,
+  // so a restore that returned 400 had already destroyed live configuration.
+  const hosts = b.hosts.map((h) => {
+    const capabilityError = protocolCapabilityError(h);
+    if (capabilityError) throw new Error(`Invalid backup bundle: ${h.domain} ${capabilityError}`);
+    return {
+      ...normalizeProtocolFields(h),
+      health: "unknown",
+      certExpiresAt: null,
+      createdAt: h.createdAt ?? now,
+      updatedAt: now,
+    };
+  }) as unknown as ProxyHost[];
 
-  const bans = replaceAllBans(b.bans as Ban[]);
+  const hostIds = new Set<string>();
+  const domains = new Set<string>();
+  for (const h of hosts) {
+    const domain = h.domain.toLowerCase();
+    if (hostIds.has(h.id) || domains.has(domain)) throw new Error("Invalid backup bundle: duplicate host id or domain.");
+    hostIds.add(h.id); domains.add(domain);
+  }
 
   // Channels reach outbound-connect sinks (webhook URL / syslog server / SMTP host).
   // The create path SSRF-guards these; a restored bundle must too, or a tampered
@@ -118,7 +134,9 @@ export function restoreBundle(raw: unknown): RestoreResult {
       throw new Error(`Backup bundle has an unsafe email host: ${host}`);
     }
   }
-  const channels = replaceAllChannels(b.channels as Channel[]);
+  if (new Set(b.channels.map((c) => c.id)).size !== b.channels.length) {
+    throw new Error("Invalid backup bundle: duplicate notification channel id.");
+  }
 
   // Settings: apply only real (non-masked) values, so a redacted bundle keeps the
   // current secrets. A masked secret is the "••••" placeholder from redactSettings.
@@ -136,6 +154,12 @@ export function restoreBundle(raw: unknown): RestoreResult {
   if (!s.success) {
     throw new Error("Invalid backup bundle: settings " + s.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).slice(0, 4).join("; "));
   }
+
+  // All untrusted input is now known-safe. Mutate only after that validation
+  // barrier; each replace helper is internally transactional for its table.
+  replaceAllHosts(hosts);
+  const bans = replaceAllBans(b.bans as Ban[]);
+  const channels = replaceAllChannels(b.channels as Channel[]);
   saveSettings(s.data as Partial<Settings>);
 
   return { hosts: hosts.length, bans, channels, settings: Object.keys(s.data).length };

@@ -15,6 +15,8 @@ export interface ProxyHost {
   /** Internal host/IP, e.g. "192.168.1.50" */
   forwardHost: string;
   forwardPort: number;
+  /** Verify an HTTPS/gRPC upstream certificate against the system trust store. */
+  upstreamTlsVerify: boolean;
   preset: string;
   websockets: boolean;
   http2: boolean;
@@ -87,7 +89,7 @@ type OptionalOnCreate =
   | "rateLimit" | "blockExploits" | "ipAllow" | "ipDeny" | "customHeaders" | "customNginx"
   | "upstreams" | "lbMethod" | "protocol" | "listenPort" | "pathRules" | "mtls"
   | "rateLimitKbps" | "maxConns" | "rateLimitRps" | "rateLimitBurst" | "iconUrl"
-  | "healthCheckType" | "healthCheckPath" | "healthCheckStatus";
+  | "healthCheckType" | "healthCheckPath" | "healthCheckStatus" | "upstreamTlsVerify";
 
 export type NewProxyHost = Omit<ProxyHost, ManagedFields | OptionalOnCreate> &
   Partial<Pick<ProxyHost, OptionalOnCreate>>;

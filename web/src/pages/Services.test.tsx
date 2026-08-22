@@ -33,6 +33,7 @@ function makeHost(over: Partial<ProxyHost> = {}): ProxyHost {
     forwardScheme: "http",
     forwardHost: "10.0.0.5",
     forwardPort: 8096,
+    upstreamTlsVerify: true,
     preset: "jellyfin",
     websockets: true,
     http2: true,

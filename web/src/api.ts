@@ -538,7 +538,10 @@ export interface Exposure {
   name: string;
   iconUrl: string;
   domain: string;
+  protocol: ProxyHost["protocol"];
+  httpProtectionSupported: boolean;
   https: boolean;
+  transportEncrypted: boolean;
   login: boolean;
   twofa: boolean;
   countryLock: boolean;

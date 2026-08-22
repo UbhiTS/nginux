@@ -177,7 +177,7 @@ export function SettingsPage({
           <div className="card card-pad">
             <Field
               label="Shared cookie domain"
-              hint="So one sign-in covers every subdomain. Leave blank to derive it from the NginUX public URL above."
+              hint="So one sign-in covers every subdomain. Every sibling subdomain is inside this bearer-cookie trust boundary: use only a dedicated domain whose DNS and backends you control, with no dangling/external hosts. Passthrough must use another base domain."
             >
               <input className="input" value={settings.ssoCookieDomain} onChange={(e) => update({ ssoCookieDomain: e.target.value })} placeholder={`.${base} (auto from the NginUX URL if blank)`} />
             </Field>

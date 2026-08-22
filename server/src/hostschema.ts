@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getSettings } from "./db.ts";
-import { parseRealms } from "./realms.ts";
+import { parseRealms, realmForHost } from "./realms.ts";
 import {
   hasNginxMetachars, isDangerousHost, isHeaderName, isHost, isHostname, isHostPort,
   isIpOrCidr, isLocationPath, splitEntries, splitLines,
@@ -19,12 +19,15 @@ import {
 
 // ---- per-line / per-field predicates (shared by the zod schema AND the agent path) ----
 
-/** One "Header-Name: value" line: a token name and a value with no CR/LF or `"`
- *  (either would let the value close the quoted add_header string / split the
- *  response and inject a directive). */
+/** One "Header-Name: value" line safe for an nginx double-quoted add_header.
+ *  CR/LF/quote/backslash can break the generated directive. `$` is equally
+ *  security-sensitive: nginx expands variables inside quotes, so an editor-set
+ *  value such as `$http_cookie` would reflect the HttpOnly NginUX session into a
+ *  browser-readable response header. Dynamic/raw directives belong in the
+ *  admin-only customNginx escape hatch, never this editor-writable field. */
 export function isCustomHeaderLine(line: string): boolean {
   const i = line.indexOf(":");
-  return i > 0 && isHeaderName(line.slice(0, i).trim()) && !/[\n\r"]/.test(line.slice(i + 1));
+  return i > 0 && isHeaderName(line.slice(0, i).trim()) && !/[\n\r"\\$]/.test(line.slice(i + 1));
 }
 export const validCustomHeaders = (s: string): boolean => splitLines(s).every(isCustomHeaderLine);
 
@@ -67,7 +70,7 @@ export const validIconUrl = (s: string): boolean =>
 // a cap a single write could be ~2 MB (the global bodyLimit), bloating the config on
 // every reload. (Security audit 2026-07-12.)
 const ipListField = z.string().max(4096).default("").refine(validIpList, "IP allow/deny entries must be valid IPv4/IPv6 addresses or CIDRs.");
-const customHeadersField = z.string().max(8192).default("").refine(validCustomHeaders, 'Custom headers must be "Header-Name: value" per line (no quotes).');
+const customHeadersField = z.string().max(8192).default("").refine(validCustomHeaders, 'Custom headers must be "Header-Name: value" per line (no quotes, backslashes, or nginx variables).');
 const pathRulesField = z.string().max(8192).default("").refine(validPathRules, 'Path rules must be "/path host:port" per line.');
 const upstreamsField = z.string().max(8192).default("").refine(validUpstreams, 'Upstream targets must be "host:port" per line.');
 const customNginxField = z.string().max(8192).default("").refine(validCustomNginx, "Custom nginx directives may not contain { or }.");
@@ -81,6 +84,7 @@ export const hostInput = z.object({
     .refine(isHost, "Invalid forward host (must be a hostname or IP).")
     .refine((s) => !isDangerousHost(s), "Cloud metadata, link-local, and unspecified proxy targets are not allowed."),
   forwardPort: z.number().int().min(1).max(65535),
+  upstreamTlsVerify: z.boolean().default(true),
   preset: z.string().max(64).default("custom"),
   websockets: z.boolean().default(false),
   http2: z.boolean().default(true),
@@ -120,6 +124,100 @@ export const hostInput = z.object({
 });
 
 export type HostInput = z.infer<typeof hostInput>;
+
+/** L7 HTTP/gRPC hosts can enforce auth_request, mTLS termination, headers,
+ * country policy, and request/connection limits. Raw TCP/UDP/SNI passthrough
+ * cannot; accepting those flags would make the API/UI claim protection that the
+ * generated stream config never applies. */
+export function protocolSupportsHttpControls(protocol: string): boolean {
+  return protocol === "http" || protocol === "grpc";
+}
+
+const STREAM_UNSUPPORTED: Array<[keyof HostInput, string, (h: HostInput) => boolean]> = [
+  ["websockets", "WebSockets", (h) => h.websockets],
+  ["requireLogin", "NginUX login", (h) => h.requireLogin],
+  ["require2fa", "two-factor login", (h) => h.require2fa],
+  ["countryLock", "country lock", (h) => h.countryLock],
+  ["maintenanceMode", "HTTP maintenance page", (h) => h.maintenanceMode],
+  ["hsts", "HSTS", (h) => h.hsts],
+  ["rateLimit", "HTTP request rate limit", (h) => h.rateLimit],
+  ["ipAllow", "per-service IP allow list", (h) => !!h.ipAllow.trim()],
+  ["ipDeny", "per-service IP deny list", (h) => !!h.ipDeny.trim()],
+  ["customHeaders", "custom response headers", (h) => !!h.customHeaders.trim()],
+  ["customNginx", "HTTP custom directives", (h) => !!h.customNginx?.trim()],
+  ["pathRules", "per-path routing", (h) => !!h.pathRules.trim()],
+  ["mtls", "mTLS termination", (h) => h.mtls],
+  ["rateLimitKbps", "HTTP bandwidth limit", (h) => h.rateLimitKbps > 0],
+  ["maxConns", "HTTP per-client connection limit", (h) => h.maxConns > 0],
+  ["certDomain", "managed certificate selection", (h) => !!h.certDomain.trim()],
+];
+
+/** Return a clear error when a stream service is carrying an active HTTP-only
+ * control. Default-on HTTP presentation fields are normalized separately, so a
+ * normal API create of a TCP service does not have to countermand HTTP defaults. */
+export function protocolCapabilityError(host: HostInput): string | null {
+  if (protocolSupportsHttpControls(host.protocol)) return null;
+  const active = STREAM_UNSUPPORTED.filter(([, , on]) => on(host)).map(([, label]) => label);
+  if (active.length) {
+    return `${host.protocol.toUpperCase()} passthrough cannot enforce ${active.join(", ")}. Clear those HTTP-only controls or use HTTP/gRPC so NginUX can enforce them.`;
+  }
+  if (streamSharesSessionCookie(host)) {
+    return `${host.protocol.toUpperCase()} passthrough cannot use a hostname inside the shared NginUX cookie domain: the browser would send the admin session directly to the passthrough backend. Use a separate base domain or HTTP/gRPC termination.`;
+  }
+  return null;
+}
+
+/** A Domain-scoped session cookie bypasses nginx's HTTP cookie stripping on raw
+ * passthrough: the browser sends it straight through to the backend that
+ * terminates/handles the connection. Fail closed for stream hostnames inside the
+ * effective global or per-realm cookie domain. */
+export function streamSharesSessionCookie(host: Pick<HostInput, "protocol" | "domain">): boolean {
+  if (protocolSupportsHttpControls(host.protocol)) return false;
+  const settings = getSettings();
+  const realm = realmForHost(host.domain, parseRealms(settings.ssoRealms));
+  let cookieDomain = realm?.cookieDomain ?? settings.ssoCookieDomain;
+  if (!cookieDomain && settings.ssoLoginUrl) {
+    try {
+      const parts = new URL(settings.ssoLoginUrl).hostname.split(".");
+      if (parts.length >= 2) cookieDomain = "." + parts.slice(parts.length > 2 ? 1 : 0).join(".");
+    } catch { /* invalid/empty setting has no shared cookie */ }
+  }
+  const base = (cookieDomain || "").replace(/^\./, "").toLowerCase();
+  const domain = host.domain.replace(/^\*\./, "").replace(/\.$/, "").toLowerCase();
+  return !!base && (domain === base || domain.endsWith(`.${base}`));
+}
+
+/** Persist stream hosts with an honest representation: fields ignored by the
+ * stream generator are cleared instead of remaining "true" in the API and UI.
+ * Call protocolCapabilityError first so explicitly requested access controls are
+ * rejected rather than silently weakened. */
+export function normalizeProtocolFields<T extends HostInput>(host: T): T {
+  if (protocolSupportsHttpControls(host.protocol)) return host;
+  return {
+    ...host,
+    websockets: false,
+    http2: false,
+    ssl: false,
+    upstreamTlsVerify: false,
+    requireLogin: false,
+    require2fa: false,
+    countryLock: false,
+    certDomain: "",
+    maintenanceMode: false,
+    securityHeaders: false,
+    hsts: false,
+    rateLimit: false,
+    blockExploits: false,
+    ipAllow: "",
+    ipDeny: "",
+    customHeaders: "",
+    customNginx: "",
+    pathRules: "",
+    mtls: false,
+    rateLimitKbps: 0,
+    maxConns: 0,
+  } as T;
+}
 
 function normalizedHost(host: string): string {
   return host.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();

@@ -47,6 +47,7 @@ db.exec(`
     forwardScheme TEXT NOT NULL DEFAULT 'http',
     forwardHost   TEXT NOT NULL,
     forwardPort   INTEGER NOT NULL,
+    upstreamTlsVerify INTEGER NOT NULL DEFAULT 1,
     preset        TEXT NOT NULL DEFAULT 'custom',
     websockets    INTEGER NOT NULL DEFAULT 0,
     http2         INTEGER NOT NULL DEFAULT 1,
@@ -270,8 +271,29 @@ function runMigrations(): void {
   addColumnIfMissing("hosts", "healthCheckType", "TEXT NOT NULL DEFAULT 'tcp'");     // 'tcp' | 'http'
   addColumnIfMissing("hosts", "healthCheckPath", "TEXT NOT NULL DEFAULT '/'");
   addColumnIfMissing("hosts", "healthCheckStatus", "INTEGER NOT NULL DEFAULT 0");    // 0 = any 2xx/3xx
+  // Existing homelab HTTPS backends may be self-signed, so preserve their prior
+  // behavior on upgrade; newly-created hosts default this field on at validation.
+  addColumnIfMissing("hosts", "upstreamTlsVerify", "INTEGER NOT NULL DEFAULT 0");
+  // Older releases stored HTTP-only controls on TCP/UDP/SNI rows even though the
+  // stream generator ignored them. Normalize that misleading legacy state once
+  // on every boot (idempotent) so the UI/API cannot keep claiming protection.
+  db.prepare(`
+    UPDATE hosts SET websockets=0, http2=0, ssl=0, upstreamTlsVerify=0,
+      requireLogin=0, require2fa=0, countryLock=0, certDomain='',
+      maintenanceMode=0, securityHeaders=0, hsts=0, rateLimit=0,
+      blockExploits=0, ipAllow='', ipDeny='', customHeaders='', customNginx='',
+      pathRules='', mtls=0, rateLimitKbps=0, maxConns=0
+    WHERE protocol IN ('tcp','udp','sni')
+  `).run();
   // Keep an existing 2FA binding active until its replacement has been proved.
   addColumnIfMissing("users", "twofaPendingSecret", "TEXT");
+  // Older webhook-created audit summaries stored the full URL, including path/
+  // query credentials. Redact those historical rows once; new events record only
+  // scheme + host/port at the route boundary.
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'webhookAuditUrlsRedacted'").get()) {
+    db.prepare("UPDATE audit_events SET summary = 'Created webhook → destination redacted (legacy event)' WHERE type = 'webhook.created'").run();
+    db.prepare("INSERT INTO settings (key, value) VALUES ('webhookAuditUrlsRedacted', 'true')").run();
+  }
 }
 runMigrations();
 
@@ -319,6 +341,7 @@ export function rowToHost(r: HostRow): ProxyHost {
     forwardScheme: r.forwardScheme === "https" ? "https" : "http",
     forwardHost: String(r.forwardHost),
     forwardPort: Number(r.forwardPort),
+    upstreamTlsVerify: !!r.upstreamTlsVerify,
     preset: String(r.preset),
     websockets: !!r.websockets,
     http2: !!r.http2,

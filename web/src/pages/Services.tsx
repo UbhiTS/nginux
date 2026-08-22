@@ -12,6 +12,10 @@ import { days, plural } from "../format.ts";
 
 const statusText = (h: ProxyHost) => {
   if (h.health === "down") return "Can't reach service";
+  if (h.protocol !== "http" && h.protocol !== "grpc") {
+    const label = h.protocol === "sni" ? "SNI/TLS passthrough" : `${h.protocol.toUpperCase()} stream`;
+    return `Online · ${label} · No NginUX HTTP gate`;
+  }
   const bits = ["Online"];
   if (h.ssl) bits.push("Secured");
   if (h.require2fa) bits.push("2FA");
@@ -23,6 +27,11 @@ const statusText = (h: ProxyHost) => {
 // The cert badge, read from the cert store (the source of truth) - not the stale
 // host.certExpiresAt - so it matches the host detail + Certificates page exactly.
 function certBadge(h: ProxyHost, certs: Certificate[]): { label: string; detail: string } {
+  if (h.protocol !== "http" && h.protocol !== "grpc") {
+    return h.protocol === "sni"
+      ? { label: "TLS passthrough", detail: "backend terminates" }
+      : { label: "L4 stream", detail: "no HTTP TLS" };
+  }
   if (!h.ssl) return { label: "No HTTPS", detail: "not encrypted" };
   const c = certForHost(h, certs);
   if (!c) return { label: "Self-signed", detail: "untrusted" };
@@ -42,6 +51,7 @@ function certBadge(h: ProxyHost, certs: Certificate[]): { label: string; detail:
 // Days-until-expiry for a host's cert, for the cert-expiry sort. null (no cert /
 // no HTTPS) sorts last; expired (negative) sorts first.
 function certDays(h: ProxyHost, certs: Certificate[]): number | null {
+  if (h.protocol !== "http" && h.protocol !== "grpc") return null;
   if (!h.ssl) return null;
   const c = certForHost(h, certs);
   return c?.daysRemaining ?? null;

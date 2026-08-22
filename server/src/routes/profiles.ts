@@ -7,6 +7,7 @@ import { applyConfig } from "../nginx.ts";
 import { snapshot } from "../versioning.ts";
 import { syncGitOps } from "../gitops.ts";
 import { logEvent } from "../auth.ts";
+import { protocolSupportsHttpControls } from "../hostschema.ts";
 
 // Security profiles: reusable named security bundles (admin/editor).
 export function registerProfileRoutes(app: FastifyInstance, ctx: RouteCtx): void {
@@ -44,6 +45,14 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: RouteCtx): void
     if (!profile) return reply.code(404).send({ error: "Profile not found" });
     const parsed = z.object({ ids: z.array(z.string().max(64)).min(1).max(500) }).safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+    const unsupported = parsed.data.ids
+      .map((hostId) => getHost(hostId))
+      .filter((h) => h && !protocolSupportsHttpControls(h.protocol));
+    if (unsupported.length) {
+      return reply.code(400).send({
+        error: `Security profiles use HTTP-only controls and cannot protect TCP/UDP/SNI passthrough (${unsupported.map((h) => h!.name).join(", ")}).`,
+      });
+    }
     const patch = profilePatch(profile);
     const actor = currentUser(req)?.username ?? "system";
     snapshot(`Before applying profile "${profile.name}"`, actor);

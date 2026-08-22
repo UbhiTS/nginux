@@ -96,15 +96,13 @@ const CLOUD_METADATA_V4 = new Set([
 
 export function isDangerousHost(host: string): boolean {
   let h = host.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
-  // Canonicalize IPv6 and legacy integer/hex IPv4 spellings before matching.
-  // URL follows the same host parser used by fetch(), closing validation/parser
-  // disagreement such as 2852039166 -> 169.254.169.254.
-  if (isIP(h) === 6 || /^(?:\d+|0x[0-9a-f]+)$/i.test(h)) {
-    try {
-      h = new URL(isIP(h) === 6 ? `http://[${h}]/` : `http://${h}/`)
-        .hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    } catch { /* leave it unchanged */ }
-  }
+  // Canonicalize EVERY host through the same WHATWG parser used by fetch(). This
+  // closes mixed/legacy IPv4 spellings such as 0xa9.0xfe.0xa9.0xfe and 127.1,
+  // not just the all-integer forms the old branch handled.
+  try {
+    const authority = isIP(h) === 6 ? `[${h}]` : h;
+    h = new URL(`http://${authority}/`).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  } catch { /* leave invalid input for the caller's syntax validator */ }
   if (h === "metadata.google.internal" || h === "metadata.goog") return true;
   // Normalise IPv4-mapped/-compatible IPv6 to the embedded IPv4 so the v4 rules
   // below still catch it - otherwise `::ffff:169.254.169.254` (or the hex form
@@ -117,7 +115,9 @@ export function isDangerousHost(host: string): boolean {
     h = `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`;
   }
   if (LINK_LOCAL_V4.test(h) || UNSPEC_V4.test(h) || CLOUD_METADATA_V4.has(h)) return true;
-  if (h === "fe80::" || h.startsWith("fe80:") || h === "::") return true; // IPv6 link-local / unspecified
+  // IPv6 link-local is fe80::/10 (fe80 through febf), not only the fe80: prefix.
+  const firstV6 = isIP(h) === 6 ? parseInt(h.split(":")[0] || "0", 16) : -1;
+  if ((firstV6 & 0xffc0) === 0xfe80 || h === "::") return true;
   if (h === "fd00:ec2::254") return true; // AWS IMDS IPv6 endpoint
   if (h === "[::]" || h === "0.0.0.0") return true;
   return false;

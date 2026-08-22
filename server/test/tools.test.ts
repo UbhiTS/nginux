@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { setupTestEnv } from "./helpers.ts";
 
 setupTestEnv();
-const { sanitizeHostPatch, canCallTool, scopesForRole, needsApproval } = await import("../src/tools.ts");
+const { sanitizeHostPatch, canCallTool, callTool, scopesForRole, needsApproval } = await import("../src/tools.ts");
 const { saveSettings } = await import("../src/db.ts");
 
 // ---- principal builders (match the real Principal shape from tools.ts) ----
@@ -159,4 +159,19 @@ test("needsApproval: with auto-approve ON, only a TRUSTED agent skips low/medium
   assert.equal(needsApproval("medium", tokenPrincipal(["control"], "trusted")), false, "trusted + policy on -> auto-run medium");
   assert.equal(needsApproval("low", tokenPrincipal(["control"], "untrusted")), true, "untrusted always needs approval");
   saveSettings({ agentAutoApprove: false }); // restore default for any later test
+});
+
+test("approval queue bounds argument size and pending requests per agent", async () => {
+  const agent = { kind: "agent", id: "bounded-agent", name: "bounded-agent", scopes: ["read", "control", "security"], trust: "untrusted" } as const;
+  const oversized = await callTool(agent, "disable_login", { id: "x".repeat(70 * 1024) });
+  assert.equal(oversized.status, "error");
+  assert.match(oversized.message ?? "", /too large/i);
+
+  for (let i = 0; i < 25; i++) {
+    const queued = await callTool(agent, "disable_login", { id: `missing-${i}` });
+    assert.equal(queued.status, "pending_approval");
+  }
+  const capped = await callTool(agent, "disable_login", { id: "one-too-many" });
+  assert.equal(capped.status, "error");
+  assert.match(capped.message ?? "", /queue limit/i);
 });

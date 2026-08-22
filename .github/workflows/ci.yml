@@ -26,6 +26,9 @@ jobs:
       - name: Typecheck server
         run: npm run typecheck --workspace server
 
+      - name: Test server
+        run: npm run test --workspace server
+
       # Real-nginx data-plane test: feed the app's generated config to actual nginx and
       # assert no under-authenticated request reaches a backend (the app's core promise).
       - name: Install nginx
@@ -38,8 +41,11 @@ jobs:
         run: npm run test:integration --workspace server
 
       - name: Typecheck web
-        run: npx tsc --noEmit
+        run: npx tsc --noEmit --types vite/client,vitest/globals,@testing-library/jest-dom,node
         working-directory: web
+
+      - name: Test web
+        run: npm run test --workspace web
 
       - name: Build web
         run: npm run build --workspace web

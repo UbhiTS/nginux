@@ -31,7 +31,7 @@ function makeOverview(over: Partial<SecurityOverview> = {}): SecurityOverview {
   return { score: 90, rating: "Strong", exposed: 3, unprotected: 0, failedLogins24h: 0, activeSessions: 2, ...over };
 }
 function makeExposure(over: Partial<Exposure> = {}): Exposure {
-  return { id: "h1", name: "Jellyfin", iconUrl: "", domain: "media.example.com", https: true, login: true, twofa: false, countryLock: false, wellProtected: true, ...over };
+  return { id: "h1", name: "Jellyfin", iconUrl: "", domain: "media.example.com", protocol: "http", httpProtectionSupported: true, https: true, transportEncrypted: true, login: true, twofa: false, countryLock: false, wellProtected: true, ...over };
 }
 function makeEvent(over: Partial<AuditEvent> = {}): AuditEvent {
   return { id: 1, ts: "2026-07-01T10:00:00Z", type: "login.success", severity: "info", actor: "admin", summary: "signed in", ip: "1.2.3.4", meta: {}, ...over };

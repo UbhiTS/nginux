@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import nodemailer from "nodemailer";
 import { db } from "./db.ts";
 import { matchesEvent, subscribe } from "./events.ts";
 import { meetsSeverity } from "./severity.ts";
+import { resolveSafeOutboundHost, safeOutboundRequest, type SafeOutboundResponse } from "./outbound.ts";
 
 export type ChannelType = "ntfy" | "gotify" | "pushover" | "discord" | "slack" | "telegram" | "webhook" | "email";
 
@@ -117,52 +119,53 @@ export function setChannelRouting(id: string, patch: { events?: string[]; minSev
 async function deliver(ch: Channel, title: string, message: string): Promise<{ ok: boolean; status: string }> {
   const c = ch.config;
   try {
-    let res: Response;
+    let res: SafeOutboundResponse;
     switch (ch.type) {
       case "ntfy":
-        res = await fetch(`${c.server || "https://ntfy.sh"}/${c.topic}`, {
-          method: "POST", body: message, headers: { Title: title }, redirect: "manual", signal: AbortSignal.timeout(5000),
+        res = await safeOutboundRequest(`${c.server || "https://ntfy.sh"}/${c.topic}`, {
+          method: "POST", body: message, headers: { Title: title }, timeoutMs: 5000,
         });
         break;
       case "gotify":
-        res = await fetch(`${c.server}/message?token=${c.token}`, {
+        res = await safeOutboundRequest(`${c.server}/message?token=${c.token}`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, message, priority: 5 }), redirect: "manual", signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ title, message, priority: 5 }), timeoutMs: 5000,
         });
         break;
       case "pushover":
-        res = await fetch("https://api.pushover.net/1/messages.json", {
+        res = await safeOutboundRequest("https://api.pushover.net/1/messages.json", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: c.token, user: c.user, title, message }), redirect: "manual", signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ token: c.token, user: c.user, title, message }), timeoutMs: 5000,
         });
         break;
       case "discord":
-        res = await fetch(c.url, {
+        res = await safeOutboundRequest(c.url, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: `**${title}**\n${message}` }), redirect: "manual", signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ content: `**${title}**\n${message}` }), timeoutMs: 5000,
         });
         break;
       case "slack":
-        res = await fetch(c.url, {
+        res = await safeOutboundRequest(c.url, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: `*${title}*\n${message}` }), redirect: "manual", signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ text: `*${title}*\n${message}` }), timeoutMs: 5000,
         });
         break;
       case "telegram":
-        res = await fetch(`https://api.telegram.org/bot${c.token}/sendMessage`, {
+        res = await safeOutboundRequest(`https://api.telegram.org/bot${c.token}/sendMessage`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: c.chatId, text: `${title}\n${message}` }), redirect: "manual", signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ chat_id: c.chatId, text: `${title}\n${message}` }), timeoutMs: 5000,
         });
         break;
       case "webhook":
-        res = await fetch(c.url, {
+        res = await safeOutboundRequest(c.url, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, message }), redirect: "manual", signal: AbortSignal.timeout(5000),
+          body: JSON.stringify({ title, message }), timeoutMs: 5000,
         });
         break;
       case "email": {
+        const smtpHost = await resolveSafeOutboundHost(c.host);
         const transport = nodemailer.createTransport({
-          host: c.host,
+          host: smtpHost,
           port: Number(c.port || 587),
           secure: c.port === "465",
           auth: c.user ? { user: c.user, pass: c.pass } : undefined,
@@ -171,6 +174,7 @@ async function deliver(ch: Channel, title: string, message: string): Promise<{ o
           connectionTimeout: 5000,
           greetingTimeout: 5000,
           socketTimeout: 8000,
+          tls: { servername: isIP(c.host) ? undefined : c.host, rejectUnauthorized: true },
         });
         await transport.sendMail({ from: c.from || c.user, to: c.to, subject: title, text: message });
         const status = "ok";

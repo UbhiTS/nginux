@@ -77,6 +77,23 @@ test("restoreBundle rejects an invalid bundle", () => {
   assert.throws(() => restoreBundle({ magic: "nginux-backup", schema: 1, hosts: [{ name: "x;{}", domain: "bad" }] }), /Invalid backup bundle/i);
 });
 
+test("restore validates every section before mutating live hosts or bans", () => {
+  const beforeHosts = listHosts().map((h) => h.domain).sort();
+  const beforeBans = listBans().map((b) => b.ip).sort();
+  const bundle = buildBundle(new Date().toISOString(), true);
+  bundle.hosts = [makeHost({ id: "would-replace", domain: "would-replace.example.com" })];
+  bundle.bans = [{ ip: "203.0.113.199", reason: "would replace", source: "manual", createdAt: new Date().toISOString(), expiresAt: null }];
+  bundle.channels = [{
+    id: "unsafe", type: "webhook", name: "unsafe",
+    config: { url: "http://169.254.169.254/latest/meta-data" }, events: ["*"], minSeverity: "info",
+    enabled: true, lastStatus: null, createdAt: new Date().toISOString(),
+  }];
+
+  assert.throws(() => restoreBundle(bundle), /not allowed|unsafe|destination/i);
+  assert.deepEqual(listHosts().map((h) => h.domain).sort(), beforeHosts, "invalid later sections must not replace hosts first");
+  assert.deepEqual(listBans().map((b) => b.ip).sort(), beforeBans, "invalid later sections must not replace bans first");
+});
+
 test("restoreBundle from a redacted bundle does NOT clobber a real secret with a placeholder", () => {
   saveSettings({ godaddyApiKey: "STILL-REAL" });
   const redacted = buildBundle(new Date().toISOString(), false); // godaddyApiKey masked to ••••

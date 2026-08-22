@@ -63,8 +63,8 @@ export function createHost(input: NewProxyHost): ProxyHost {
       enabled, health, certExpiresAt, certDomain, maintenanceMode, securityHeaders, hsts, rateLimit,
       blockExploits, ipAllow, ipDeny, customHeaders, customNginx, upstreams, lbMethod,
       protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, rateLimitRps, rateLimitBurst,
-      healthCheckType, healthCheckPath, healthCheckStatus, createdAt, updatedAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      healthCheckType, healthCheckPath, healthCheckStatus, upstreamTlsVerify, createdAt, updatedAt)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     id, input.name, input.iconUrl ?? "", input.domain, input.forwardScheme, input.forwardHost,
     input.forwardPort, input.preset, b(input.websockets), b(input.http2), b(input.ssl),
@@ -77,7 +77,8 @@ export function createHost(input: NewProxyHost): ProxyHost {
     input.upstreams ?? "", input.lbMethod ?? "round_robin",
     input.protocol ?? "http", input.listenPort ?? 0, input.pathRules ?? "", b(input.mtls ?? false),
     input.rateLimitKbps ?? 0, input.maxConns ?? 0, input.rateLimitRps ?? 10, input.rateLimitBurst ?? 20,
-    input.healthCheckType ?? "tcp", input.healthCheckPath ?? "/", input.healthCheckStatus ?? 0, now, now,
+    input.healthCheckType ?? "tcp", input.healthCheckPath ?? "/", input.healthCheckStatus ?? 0,
+    b(input.upstreamTlsVerify ?? true), now, now,
   );
   invalidateHostCache();
   return getHost(id)!;
@@ -94,7 +95,7 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
       maintenanceMode=?, securityHeaders=?, hsts=?, rateLimit=?, blockExploits=?,
       ipAllow=?, ipDeny=?, customHeaders=?, customNginx=?, upstreams=?, lbMethod=?,
       protocol=?, listenPort=?, pathRules=?, mtls=?, rateLimitKbps=?, maxConns=?, rateLimitRps=?, rateLimitBurst=?,
-      healthCheckType=?, healthCheckPath=?, healthCheckStatus=?, updatedAt=?
+      healthCheckType=?, healthCheckPath=?, healthCheckStatus=?, upstreamTlsVerify=?, updatedAt=?
     WHERE id=?
   `).run(
     merged.name, merged.iconUrl ?? "", merged.domain, merged.forwardScheme, merged.forwardHost,
@@ -106,7 +107,8 @@ export function updateHost(id: string, patch: Partial<NewProxyHost>): ProxyHost 
     merged.upstreams ?? "", merged.lbMethod ?? "round_robin",
     merged.protocol ?? "http", merged.listenPort ?? 0, merged.pathRules ?? "", b(merged.mtls),
     merged.rateLimitKbps ?? 0, merged.maxConns ?? 0, merged.rateLimitRps ?? 10, merged.rateLimitBurst ?? 20,
-    merged.healthCheckType ?? "tcp", merged.healthCheckPath ?? "/", merged.healthCheckStatus ?? 0, merged.updatedAt, id,
+    merged.healthCheckType ?? "tcp", merged.healthCheckPath ?? "/", merged.healthCheckStatus ?? 0,
+    b(merged.upstreamTlsVerify), merged.updatedAt, id,
   );
   invalidateHostCache();
   return getHost(id);
@@ -130,8 +132,8 @@ export function replaceAllHosts(hosts: ProxyHost[]): void {
       enabled, health, certExpiresAt, certDomain, maintenanceMode, securityHeaders, hsts, rateLimit,
       blockExploits, ipAllow, ipDeny, customHeaders, customNginx, upstreams, lbMethod,
       protocol, listenPort, pathRules, mtls, rateLimitKbps, maxConns, rateLimitRps, rateLimitBurst,
-      healthCheckType, healthCheckPath, healthCheckStatus, createdAt, updatedAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      healthCheckType, healthCheckPath, healthCheckStatus, upstreamTlsVerify, createdAt, updatedAt)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   db.exec("BEGIN");
   try {
@@ -146,7 +148,8 @@ export function replaceAllHosts(hosts: ProxyHost[]): void {
         h.upstreams ?? "", h.lbMethod ?? "round_robin", h.protocol ?? "http", h.listenPort ?? 0,
         h.pathRules ?? "", b(h.mtls), h.rateLimitKbps ?? 0, h.maxConns ?? 0,
         h.rateLimitRps ?? 10, h.rateLimitBurst ?? 20,
-        h.healthCheckType ?? "tcp", h.healthCheckPath ?? "/", h.healthCheckStatus ?? 0, h.createdAt, h.updatedAt,
+        h.healthCheckType ?? "tcp", h.healthCheckPath ?? "/", h.healthCheckStatus ?? 0,
+        b(h.upstreamTlsVerify), h.createdAt, h.updatedAt,
       );
     }
     db.exec("COMMIT");

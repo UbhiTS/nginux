@@ -2,6 +2,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { db } from "./db.ts";
 import { isDangerousHost } from "./validate.ts";
 import { isSyslogUrl, parseSyslogUrl, sendSyslog } from "./syslog.ts";
+import { safeOutboundRequest } from "./outbound.ts";
 
 export interface NgxEvent {
   id: string;
@@ -93,14 +94,11 @@ async function deliverWebhooks(e: NgxEvent): Promise<void> {
       const body = JSON.stringify(e);
       const signature = createHmac("sha256", String(r.secret)).update(body).digest("hex");
       try {
-        const res = await fetch(wh.url, {
+        const res = await safeOutboundRequest(wh.url, {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-NginUX-Signature": `sha256=${signature}`, "X-NginUX-Event": e.type },
           body,
-          // Don't follow a 3xx to a link-local/metadata target (the isDangerousHost
-          // guard only checks the initial hostname). (Security audit 2026-07-12.)
-          redirect: "manual",
-          signal: AbortSignal.timeout(5000),
+          timeoutMs: 5000,
         });
         status = res.ok ? `${res.status}` : `error ${res.status}`;
       } catch (err) {

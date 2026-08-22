@@ -105,7 +105,13 @@ import {
   isHost,
   isHostname,
 } from "./validate.ts";
-import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
+import {
+  hostInput,
+  isControlPlaneDomain,
+  normalizeProtocolFields,
+  protocolCapabilityError,
+  protocolSupportsHttpControls,
+} from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
 import { realmForHost } from "./realms.ts";
 import { type RouteCtx, clampLimit } from "./routes/context.ts";
@@ -120,10 +126,13 @@ import { registerAgentRoutes } from "./routes/agents.ts";
 import { registerCertRoutes } from "./routes/certs.ts";
 import { initAlertEngine } from "./notify.ts";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { resolveSafeOutboundHost } from "./outbound.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 6767);
-const HOST = process.env.HOST ?? "0.0.0.0";
+// Local/source starts are loopback-only unless the operator explicitly opts in.
+// The container sets HOST=0.0.0.0 itself, behind Compose's loopback port bind.
+const HOST = process.env.HOST ?? "127.0.0.1";
 
 seedIfEmpty();
 // The forward-auth shared secret is managed entirely in the DB now (no env var).
@@ -353,11 +362,11 @@ const SCOPED_FORBIDDEN_FIELDS = [
   // Repointing to a DIFFERENT machine, hijacking the domain, or flipping TLS is
   // routing/posture - not "managing" the service - and would let a scoped user turn
   // NginUX into an SSRF pivot to any internal target or shadow another host's domain.
-  // `upstreams` is already forbidden; the primary forward HOST/scheme and the domain
-  // must be too, or the rule is trivially bypassed. `forwardPort` is deliberately NOT
-  // here: moving your own app to a new port on the same box is legitimate management
-  // (they still can't point at a different host), so the SSRF-pivot door stays shut.
-  "forwardHost", "forwardScheme", "domain", "ssl",
+  // `upstreams` is already forbidden; the primary forward host/scheme/PORT and
+  // domain must be too. A port-only change is still an SSRF pivot: a scoped user
+  // could repoint their benign app hostname at Docker (2375), Portainer, or another
+  // admin daemon on the same machine and reach it through their allowed service.
+  "forwardHost", "forwardPort", "forwardScheme", "upstreamTlsVerify", "domain", "ssl",
   // Mirror the agent path's FORBIDDEN_TOOL_FIELDS: `protocol`/`listenPort` could turn a
   // login-gated HTTP host into an un-gated TCP/UDP/SNI stream (no auth_request), and
   // `preset` can disable exploit-path blocking — posture, not management.
@@ -367,9 +376,15 @@ const SCOPED_FORBIDDEN_FIELDS = [
 function rejectPrivilegedFields(req: FastifyRequest, reply: FastifyReply, body: Record<string, unknown>): boolean {
   const role = currentUser(req)?.role;
   // Raw nginx directives are an admin-only escape hatch.
-  if (body.customNginx !== undefined && body.customNginx !== "" && role !== "admin") {
-    reply.code(403).send({ error: "Only an admin may set custom nginx directives." });
-    return false;
+  if (body.customNginx !== undefined && role !== "admin") {
+    if (body.customNginx !== "") {
+      reply.code(403).send({ error: "Only an admin may set custom nginx directives." });
+      return false;
+    }
+    // Non-admin host DTOs deliberately redact this field to an empty string. A
+    // full-form PUT must not turn that redaction into deletion of an admin's
+    // existing directives, so ignore the empty placeholder rather than writing it.
+    delete body.customNginx;
   }
   // Scoped users can't touch security/routing fields (e.g. can't strip requireLogin).
   if (role === "scoped") {
@@ -387,6 +402,13 @@ function canReadHost(req: FastifyRequest, host: Pick<ProxyHost, "id" | "name" | 
   const u = currentUser(req);
   if (!u) return false;
   return u.role !== "scoped" || scopedAllows(u, host);
+}
+
+/** Raw custom nginx commonly contains upstream Authorization/API credentials.
+ * Only admins may read it; every other role receives an empty, non-replayable
+ * placeholder and the PUT boundary above preserves the stored value. */
+function hostForCaller(req: FastifyRequest, host: ProxyHost): ProxyHost {
+  return currentUser(req)?.role === "admin" ? host : { ...host, customNginx: "" };
 }
 
 /** For routes reachable by agent tokens OR users: token principals pass (their
@@ -518,14 +540,15 @@ app.get("/api/hosts", async (req) => {
   const u = currentUser(req);
   const hosts = listHosts();
   // Scoped users only see hosts in their scope.
-  return u?.role === "scoped" ? hosts.filter((h) => scopedAllows(u, h)) : hosts;
+  const visible = u?.role === "scoped" ? hosts.filter((h) => scopedAllows(u, h)) : hosts;
+  return visible.map((h) => hostForCaller(req, h));
 });
 
 app.get("/api/hosts/:id", async (req, reply) => {
   const { id } = req.params as { id: string };
   const host = getHost(id);
   if (!host || !canReadHost(req, host)) return reply.code(404).send({ error: "Service not found" });
-  return host;
+  return hostForCaller(req, host);
 });
 
 app.post("/api/hosts", async (req, reply) => {
@@ -533,16 +556,19 @@ app.post("/api/hosts", async (req, reply) => {
   const parsed = hostInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
-  if (getHostByDomain(parsed.data.domain)) {
-    return reply.code(409).send({ error: `${parsed.data.domain} is already in use.` });
+  const capabilityError = protocolCapabilityError(parsed.data);
+  if (capabilityError) return reply.code(400).send({ error: capabilityError });
+  const input = normalizeProtocolFields(parsed.data);
+  if (getHostByDomain(input.domain)) {
+    return reply.code(409).send({ error: `${input.domain} is already in use.` });
   }
-  if (isControlPlaneDomain(parsed.data.domain, parsed.data.forwardHost, parsed.data.forwardPort, parsed.data.forwardScheme)) {
+  if (isControlPlaneDomain(input.domain, input.forwardHost, input.forwardPort, input.forwardScheme)) {
     return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 6767; otherwise pick another domain so you don't lose access to NginUX." });
   }
-  const spErr = streamPortError(parsed.data);
+  const spErr = streamPortError(input);
   if (spErr) return reply.code(400).send({ error: spErr });
-  snapshot(`Before exposing ${parsed.data.name}`, currentUser(req)?.username ?? "system");
-  const host = createHost(parsed.data);
+  snapshot(`Before exposing ${input.name}`, currentUser(req)?.username ?? "system");
+  const host = createHost(input);
   // Ensure the host has a cert (self-signed now; upgrade to Let's Encrypt later)
   // so nginx serves it immediately over HTTPS.
   if (host.ssl) {
@@ -561,7 +587,7 @@ app.post("/api/hosts", async (req, reply) => {
   }
   void syncGitOps(`Expose ${host.name} (${host.domain})`);
   logEvent({ type: "host.created", severity: "notice", actor: currentUser(req)?.username ?? "system", summary: `Exposed ${host.name} at ${host.domain}`, ip: clientIp(req), meta: { id: host.id } });
-  return reply.code(201).send({ host, apply });
+  return reply.code(201).send({ host: hostForCaller(req, host), apply });
 });
 
 app.put("/api/hosts/:id", async (req, reply) => {
@@ -574,22 +600,25 @@ app.put("/api/hosts/:id", async (req, reply) => {
   if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
   // Validate the *resulting* host (existing merged with the patch) before writing.
   const merged = { ...existing, ...parsed.data };
+  const capabilityError = protocolCapabilityError(merged);
+  if (capabilityError) return reply.code(400).send({ error: capabilityError });
+  const normalized = normalizeProtocolFields(merged);
   // Guard the control-plane-domain hijack against the MERGED result, not just a
   // domain change: a host already sitting on the portal domain can be broken by a
   // port-only edit (6767 -> 8080), repointing the sign-in server block and locking
   // everyone out. Fire whenever the result is a hijack AND domain or port actually
   // moved (a no-op re-PUT of an unrelated field must not be punished).
-  const routingChanged = merged.domain !== existing.domain
-    || merged.forwardScheme !== existing.forwardScheme
-    || merged.forwardHost !== existing.forwardHost
-    || merged.forwardPort !== existing.forwardPort;
-  if (routingChanged && isControlPlaneDomain(merged.domain, merged.forwardHost, merged.forwardPort, merged.forwardScheme)) {
+  const routingChanged = normalized.domain !== existing.domain
+    || normalized.forwardScheme !== existing.forwardScheme
+    || normalized.forwardHost !== existing.forwardHost
+    || normalized.forwardPort !== existing.forwardPort;
+  if (routingChanged && isControlPlaneDomain(normalized.domain, normalized.forwardHost, normalized.forwardPort, normalized.forwardScheme)) {
     return reply.code(409).send({ error: "That's the domain NginUX itself runs on (Settings → public URL). To use it as your sign-in portal, forward it to the control plane on port 6767; otherwise pick another domain so you don't lose access to NginUX." });
   }
-  const spErr = streamPortError(merged, id);
+  const spErr = streamPortError(normalized, id);
   if (spErr) return reply.code(400).send({ error: spErr });
   snapshot(`Before updating a service`, currentUser(req)?.username ?? "system");
-  const host = updateHost(id, parsed.data);
+  const host = updateHost(id, normalized);
   if (!host) return reply.code(404).send({ error: "Service not found" });
   if (host.mtls) { try { await ensureClientCA(host.domain); } catch { /* non-fatal */ } }
   const apply = await applyConfig();
@@ -603,7 +632,7 @@ app.put("/api/hosts/:id", async (req, reply) => {
   }
   void syncGitOps(`Update ${host.name} (${host.domain})`);
   logEvent({ type: "host.updated", severity: "notice", actor: currentUser(req)?.username ?? "system", summary: `Updated ${host.name} (${host.domain})`, ip: clientIp(req), meta: { id: host.id } });
-  return { host, apply };
+  return { host: hostForCaller(req, host), apply };
 });
 
 app.delete("/api/hosts/:id", async (req, reply) => {
@@ -633,6 +662,10 @@ app.post("/api/hosts/batch", async (req, reply) => {
   }).safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   const { ids, action } = parsed.data;
+  if ((action === "maintenance-on" || action === "maintenance-off")
+    && ids.some((id) => { const h = getHost(id); return h && !protocolSupportsHttpControls(h.protocol); })) {
+    return reply.code(400).send({ error: "Maintenance pages are HTTP/gRPC-only. Pause a TCP/UDP/SNI service instead." });
+  }
   const actor = currentUser(req)?.username ?? "system";
   snapshot(`Bulk ${action} on ${ids.length} service(s)`, actor);
 
@@ -678,26 +711,41 @@ app.post("/api/config/preview", async (req, reply) => {
   let candidateHosts: ProxyHost[];
 
   if (mode === "delete") {
-    if (!id || !getHost(id)) return reply.code(404).send({ error: "Service not found" });
+    const existing = id ? getHost(id) : null;
+    if (!existing) return reply.code(404).send({ error: "Service not found" });
+    if (currentUser(req)?.role !== "admin" && existing.customNginx) {
+      return reply.code(403).send({ error: "Only an admin may preview a service containing custom nginx directives." });
+    }
     candidateHosts = hosts.filter((h) => h.id !== id);
   } else if (mode === "update") {
     if (!id) return reply.code(400).send({ error: "id is required to preview an update." });
     const existing = getHost(id);
     if (!existing) return reply.code(404).send({ error: "Service not found" });
+    if (currentUser(req)?.role !== "admin" && existing.customNginx) {
+      return reply.code(403).send({ error: "Only an admin may preview a service containing custom nginx directives." });
+    }
     const parsed = hostInput.partial().safeParse(host ?? {});
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+    if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
     const merged = { ...existing, ...parsed.data } as ProxyHost;
-    if (isControlPlaneDomain(merged.domain, merged.forwardHost, merged.forwardPort, merged.forwardScheme)) {
+    const capabilityError = protocolCapabilityError(merged);
+    if (capabilityError) return reply.code(400).send({ error: capabilityError });
+    const normalized = normalizeProtocolFields(merged);
+    if (isControlPlaneDomain(normalized.domain, normalized.forwardHost, normalized.forwardPort, normalized.forwardScheme)) {
       return reply.code(409).send({ error: "The public NginUX portal must forward to the exact configured control plane." });
     }
-    candidateHosts = hosts.map((h) => (h.id === id ? merged : h));
+    candidateHosts = hosts.map((h) => (h.id === id ? normalized : h));
   } else { // create
     const parsed = hostInput.safeParse(host ?? {});
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
-    if (isControlPlaneDomain(parsed.data.domain, parsed.data.forwardHost, parsed.data.forwardPort, parsed.data.forwardScheme)) {
+    if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
+    const capabilityError = protocolCapabilityError(parsed.data);
+    if (capabilityError) return reply.code(400).send({ error: capabilityError });
+    const normalized = normalizeProtocolFields(parsed.data);
+    if (isControlPlaneDomain(normalized.domain, normalized.forwardHost, normalized.forwardPort, normalized.forwardScheme)) {
       return reply.code(409).send({ error: "The public NginUX portal must forward to the exact configured control plane." });
     }
-    const candidate = { ...parsed.data, id: "__preview__", health: "unknown", certExpiresAt: null, createdAt: "", updatedAt: "" } as ProxyHost;
+    const candidate = { ...normalized, id: "__preview__", health: "unknown", certExpiresAt: null, createdAt: "", updatedAt: "" } as ProxyHost;
     candidateHosts = [...hosts, candidate];
   }
   return previewConfigForHosts(candidateHosts);
@@ -715,6 +763,9 @@ app.post("/api/hosts/:id/client-certs", async (req, reply) => {
   const host = getHost(id);
   if (!host) return reply.code(404).send({ error: "Service not found" });
   if (!requireHostAccess(req, reply, host, { allowScoped: true })) return;
+  if (!protocolSupportsHttpControls(host.protocol)) {
+    return reply.code(400).send({ error: "mTLS client certificates require HTTP/gRPC TLS termination; they cannot protect TCP/UDP/SNI passthrough." });
+  }
   const parsed = z.object({ name: z.string().min(1).max(64) }).safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   const issued = await issueClientCert(id, host.domain, parsed.data.name);
@@ -758,9 +809,12 @@ app.get("/api/hosts/:id/config", async (req, reply) => {
   const host = getHost(id);
   if (!host || !canReadHost(req, host)) return reply.code(404).send({ error: "Service not found" });
   let conf: string;
-  if (host.protocol === "sni") conf = generateSniPassthrough([host]);
-  else if (host.protocol === "tcp" || host.protocol === "udp") conf = generateStreamConfig(host);
-  else conf = generateHostConfig(host);
+  // Omit admin-only custom directives for every non-admin before generation;
+  // redactConfig alone only masks the managed forward-auth secret.
+  const readable = currentUser(req)?.role === "admin" ? host : { ...host, customNginx: "" };
+  if (readable.protocol === "sni") conf = generateSniPassthrough([readable]);
+  else if (readable.protocol === "tcp" || readable.protocol === "udp") conf = generateStreamConfig(readable);
+  else conf = generateHostConfig(readable);
   return reply.type("text/plain").send(redactConfig(conf)); // never expose the forward-auth secret in the config preview
 });
 
@@ -773,7 +827,10 @@ app.post("/api/test-connection", async (req, reply) => {
   const { host, port } = parsed.data;
   // Private LAN targets are legitimate for a homelab, but link-local/metadata is not.
   if (isDangerousHost(host)) return reply.code(400).send({ error: "That destination host is not allowed." });
-  const reachable = await tcpProbe(host, port, 2500);
+  let address: string;
+  try { address = await resolveSafeOutboundHost(host); }
+  catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "That destination host is not allowed." }); }
+  const reachable = await tcpProbe(address, port, 2500);
   return {
     reachable,
     message: reachable
@@ -1055,7 +1112,7 @@ app.get("/api/logs/recent", async (req, reply) => {
   return filter ? await searchLog(filter, clampLimit(limit)) : recentLogs(undefined, clampLimit(limit));
 });
 let sseClients = 0;
-const SSE_MAX = Number(process.env.NGINUX_SSE_MAX ?? 200);
+const SSE_MAX = Math.min(1000, Math.max(1, Number(process.env.NGINUX_SSE_MAX) || 200));
 
 app.get("/api/logs/stream", (req, reply) => {
   if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return; // live access logs carry client IPs; token needs 'report'
@@ -1074,8 +1131,10 @@ app.get("/api/logs/stream", (req, reply) => {
 // throttled even when requests bypass nginx and hit port 6767 directly.
 const LOGIN_MAX = 10;          // attempts per minute, per (ip + username)
 const LOGIN_IP_MAX = 30;       // attempts per minute, per IP across all usernames
+const LOGIN_GLOBAL_MAX = 300;  // process-wide ceiling against distributed scrypt/log floods
 const LOGIN_WINDOW_MS = 60_000; // window
 const loginHits = new Map<string, number[]>();
+const loginThrottleAuditAt = new Map<string, number>();
 // Per-account 2FA brute-force lockout + TOTP replay guard (in-memory; the window
 // is short so a restart clearing them is harmless).
 const TWOFA_MAX_FAILS = 5;
@@ -1085,6 +1144,10 @@ function rateLimited(key: string, max: number, windowMs: number): boolean {
   const now = Date.now();
   const hits = (loginHits.get(key) ?? []).filter((t) => now - t < windowMs);
   hits.push(now);
+  // Keep the newest max+1 samples. Previously a client that was already blocked
+  // could keep appending timestamps without bound and exhaust memory without
+  // paying the scrypt cost.
+  if (hits.length > max + 1) hits.splice(0, hits.length - (max + 1));
   loginHits.set(key, hits);
   if (loginHits.size > 5000) { // cap so the map can't grow unbounded
     for (const [k, v] of loginHits) { if (v.every((t) => now - t >= windowMs)) loginHits.delete(k); }
@@ -1093,6 +1156,24 @@ function rateLimited(key: string, max: number, windowMs: number): boolean {
     while (loginHits.size > 5000) { const k = loginHits.keys().next().value; if (k === undefined) break; loginHits.delete(k); }
   }
   return hits.length > max;
+}
+
+/** Preserve one audit signal per source/window without turning the 429 path into
+ * an unauthenticated SQLite/webhook amplification primitive. */
+function logLoginThrottleOnce(ip: string, username: string, summary: string, auditKey = ip): void {
+  const now = Date.now();
+  const last = loginThrottleAuditAt.get(auditKey) ?? 0;
+  if (now - last < LOGIN_WINDOW_MS) return;
+  loginThrottleAuditAt.set(auditKey, now);
+  if (loginThrottleAuditAt.size > 5000) {
+    for (const [key, ts] of loginThrottleAuditAt) if (now - ts >= LOGIN_WINDOW_MS) loginThrottleAuditAt.delete(key);
+    while (loginThrottleAuditAt.size > 5000) {
+      const oldest = loginThrottleAuditAt.keys().next().value;
+      if (oldest === undefined) break;
+      loginThrottleAuditAt.delete(oldest);
+    }
+  }
+  logEvent({ type: "login.failed", severity: "warn", actor: username, summary, ip, meta: { throttled: true } });
 }
 
 /** Cookie Domain for the session cookie - the configured ssoCookieDomain, or
@@ -1151,16 +1232,21 @@ app.post("/api/auth/login", async (req, reply) => {
   const { username, password, token, returnUrl } = parsed.data;
   const ip = clientIp(req);
 
+  if (rateLimited("login:global", LOGIN_GLOBAL_MAX, LOGIN_WINDOW_MS)) {
+    logLoginThrottleOnce(ip, username, "Global login-attempt budget reached - throttled", "login:global");
+    return reply.code(429).send({ error: "The sign-in service is temporarily busy. Wait a minute and try again." });
+  }
+
   // Per-IP budget, independent of username: the username is attacker-controlled, so
   // keying the limiter only on ip+username would let one IP get a fresh allowance
   // per guessed username and force unbounded scrypt work. This caps total attempts
   // (hence scrypt calls) from a single source regardless of the usernames tried.
   if (rateLimited(`ipall:${ip}`, LOGIN_IP_MAX, LOGIN_WINDOW_MS)) {
-    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts from this IP - throttled", ip, meta: { throttled: true } });
+    logLoginThrottleOnce(ip, username, "Too many login attempts from this IP - throttled");
     return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
   }
   if (rateLimited(`${ip}:${username}`.toLowerCase(), LOGIN_MAX, LOGIN_WINDOW_MS)) {
-    logEvent({ type: "login.failed", severity: "warn", actor: username, summary: "Too many login attempts - throttled", ip, meta: { throttled: true } });
+    logLoginThrottleOnce(ip, username, "Too many login attempts - throttled");
     return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
   }
 
@@ -1271,7 +1357,7 @@ app.post("/api/auth/change-password", async (req, reply) => {
   // with 2fa/setup so attempts across both count together. (Security audit 2026-07-12.)
   if (rateLimited(`reauth:${u.id}`, 10, LOGIN_WINDOW_MS)) return reply.code(429).send({ error: "Too many attempts — wait a minute and try again." });
   const parsed = z.object({
-    currentPassword: z.string().min(1),
+    currentPassword: z.string().min(1).max(200),
     newPassword: z.string().min(8, "Use at least 8 characters.").max(200),
   }).safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
@@ -1295,7 +1381,7 @@ app.post("/api/auth/2fa/setup", async (req, reply) => {
   if (rateLimited(`reauth:${u.id}`, 10, LOGIN_WINDOW_MS)) return reply.code(429).send({ error: "Too many attempts — wait a minute and try again." });
   // Require the password to (re)bind 2FA so a hijacked session can't silently
   // rebind the authenticator to the attacker's device.
-  const { password } = z.object({ password: z.string().min(1) }).parse(req.body ?? {});
+  const { password } = z.object({ password: z.string().min(1).max(200) }).parse(req.body ?? {});
   if (!(await checkCredentials(u.username, password))) {
     return reply.code(403).send({ error: "Confirm your password to set up two-factor authentication." });
   }
@@ -1305,7 +1391,10 @@ app.post("/api/auth/2fa/setup", async (req, reply) => {
 
 app.post("/api/auth/2fa/verify", async (req, reply) => {
   const u = currentUser(req)!;
-  const { token } = z.object({ token: z.string() }).parse(req.body);
+  if (rateLimited(`2fa-enroll:${u.id}`, 10, LOGIN_WINDOW_MS)) {
+    return reply.code(429).send({ error: "Too many verification attempts — wait a minute and try again." });
+  }
+  const { token } = z.object({ token: z.string().min(1).max(64) }).parse(req.body);
   const secret = getPendingTwofaSecret(u.id);
   if (!secret || !verifyTotp(token, secret)) {
     return reply.code(400).send({ error: "That code didn't match - try the current one." });
@@ -1468,7 +1557,14 @@ app.post("/api/mcp", async (req, reply) => {
       return reply.send({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid JSON-RPC request." } });
     }
     if (body.length > 50) return reply.code(413).send({ error: "Batch too large (max 50)." });
-    const out = (await Promise.all(body.map(handle))).filter(Boolean);
+    // Mutating tools can rewrite the whole nginx config and have per-operation
+    // rollback. Execute a batch in order so two writes cannot race each other's
+    // DB snapshot/revert even though applyConfig itself serializes file writes.
+    const out: object[] = [];
+    for (const message of body) {
+      const result = await handle(message);
+      if (result) out.push(result);
+    }
     return reply.send(out);
   }
   const res = await handle(body);
