@@ -3,10 +3,10 @@ import { VERSION } from "./version.ts";
 import { getSettings, redactSettings, saveSettings, SECRET_SETTING_KEYS } from "./db.ts";
 import { listHosts, replaceAllHosts } from "./repo.ts";
 import { listBans, replaceAllBans, type Ban } from "./bans.ts";
-import { listChannels, listChannelsRaw, replaceAllChannels, type Channel } from "./notify.ts";
-import { hostInput, normalizeProtocolFields, protocolCapabilityError } from "./hostschema.ts";
+import { listChannels, listChannelsRaw, replaceAllChannels, validateChannelConfig, type Channel, type ChannelType } from "./notify.ts";
+import { hostInput, isControlPlaneDomain, normalizeProtocolFields, protocolCapabilityError, streamPortConflictError } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
-import { isIpOrCidr, assertSafeOutboundUrl, isDangerousHost } from "./validate.ts";
+import { isIpOrCidr } from "./validate.ts";
 import type { ProxyHost, Settings } from "./types.ts";
 
 // A portable, self-describing backup bundle: everything needed to stand up an
@@ -98,14 +98,32 @@ export function restoreBundle(raw: unknown): RestoreResult {
   const b = parsed.data;
   const now = new Date().toISOString();
 
-  // Normalize and validate EVERY section before the first mutation. Previously
-  // hosts/bans were replaced before a bad channel URL or setting was detected,
-  // so a restore that returned 400 had already destroyed live configuration.
+  // Settings: apply only real (non-masked) values, so a redacted bundle keeps the
+  // current secrets. A masked secret is the "••••" placeholder from redactSettings.
+  const settingsPatch: Record<string, unknown> = {};
+  const masked = new Set<string>(SECRET_SETTING_KEYS);
+  for (const [k, v] of Object.entries(b.settings)) {
+    if (masked.has(k) && typeof v === "string" && v.includes("••")) continue;
+    settingsPatch[k] = v;
+  }
+  // Validate through the SAME schema PUT /api/settings uses BEFORE validating hosts,
+  // so host portal/cookie-domain checks evaluate against the post-restore settings.
+  const s = settingsInput.safeParse(settingsPatch);
+  if (!s.success) {
+    throw new Error("Invalid backup bundle: settings " + s.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).slice(0, 4).join("; "));
+  }
+  const effectiveSettings: Settings = { ...getSettings(), ...(s.data as Partial<Settings>) };
+
+  // Normalize and validate EVERY section before the first mutation.
   const hosts = b.hosts.map((h) => {
-    const capabilityError = protocolCapabilityError(h);
+    const capabilityError = protocolCapabilityError(h, effectiveSettings);
     if (capabilityError) throw new Error(`Invalid backup bundle: ${h.domain} ${capabilityError}`);
+    const normalized = normalizeProtocolFields(h);
+    if (isControlPlaneDomain(normalized.domain, normalized.forwardHost, normalized.forwardPort, normalized.forwardScheme, effectiveSettings)) {
+      throw new Error(`Invalid backup bundle: ${normalized.domain} conflicts with the NginUX sign-in portal domain.`);
+    }
     return {
-      ...normalizeProtocolFields(h),
+      ...normalized,
       health: "unknown",
       certExpiresAt: null,
       createdAt: h.createdAt ?? now,
@@ -119,40 +137,21 @@ export function restoreBundle(raw: unknown): RestoreResult {
     const domain = h.domain.toLowerCase();
     if (hostIds.has(h.id) || domains.has(domain)) throw new Error("Invalid backup bundle: duplicate host id or domain.");
     hostIds.add(h.id); domains.add(domain);
+    const spErr = streamPortConflictError(h, hosts, h.id);
+    if (spErr) throw new Error(`Invalid backup bundle: ${h.domain} ${spErr}`);
   }
 
   // Channels reach outbound-connect sinks (webhook URL / syslog server / SMTP host).
-  // The create path SSRF-guards these; a restored bundle must too, or a tampered
-  // portable bundle installs an attacker-chosen destination. (Security audit 2026-07-12.)
+  // Validate every non-masked channel config before any DB mutation.
   for (const c of b.channels) {
-    for (const key of ["url", "server"]) {
-      const v = (c.config as Record<string, string> | undefined)?.[key];
-      if (v) assertSafeOutboundUrl(v); // throws on a link-local/metadata target
-    }
-    const host = (c.config as Record<string, string> | undefined)?.host;
-    if (c.type === "email" && host && isDangerousHost(host)) {
-      throw new Error(`Backup bundle has an unsafe email host: ${host}`);
-    }
+    const cfg = (c.config ?? {}) as Record<string, string>;
+    const isRedacted = Object.values(cfg).some((v) => typeof v === "string" && v.includes("••"));
+    if (isRedacted) continue;
+    const cfgErr = validateChannelConfig(c.type as ChannelType, cfg);
+    if (cfgErr) throw new Error(`Invalid backup bundle channel "${c.name}": ${cfgErr}`);
   }
   if (new Set(b.channels.map((c) => c.id)).size !== b.channels.length) {
     throw new Error("Invalid backup bundle: duplicate notification channel id.");
-  }
-
-  // Settings: apply only real (non-masked) values, so a redacted bundle keeps the
-  // current secrets. A masked secret is the "••••" placeholder from redactSettings.
-  const settingsPatch: Record<string, unknown> = {};
-  const masked = new Set<string>(SECRET_SETTING_KEYS);
-  for (const [k, v] of Object.entries(b.settings)) {
-    if (masked.has(k) && typeof v === "string" && v.includes("••")) continue;
-    settingsPatch[k] = v;
-  }
-  // Validate through the SAME schema PUT /api/settings uses, so a restored bundle can't
-  // inject values (e.g. an ssoForwardSecret / ssoLoginUrl that breaks out of an nginx
-  // directive) that the REST boundary would reject. Unknown keys are stripped by zod.
-  // (Security audit 2026-07-12.)
-  const s = settingsInput.safeParse(settingsPatch);
-  if (!s.success) {
-    throw new Error("Invalid backup bundle: settings " + s.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).slice(0, 4).join("; "));
   }
 
   // All untrusted input is now known-safe. Mutate only after that validation

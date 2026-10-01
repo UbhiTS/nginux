@@ -308,11 +308,16 @@ for (const path of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) {
 /** Trim the audit log so it can't grow without bound. Keeps recent rows by time
  *  and an absolute cap by count; returns how many rows were removed. */
 export function pruneAuditLog(retainDays = Number(process.env.NGINUX_AUDIT_RETAIN_DAYS ?? 90), hardCap = 50_000): number {
+  const nowIso = new Date().toISOString();
   const cutoff = new Date(Date.now() - retainDays * 86400_000).toISOString();
   let removed = Number(db.prepare("DELETE FROM audit_events WHERE ts < ?").run(cutoff).changes);
   removed += Number(db.prepare(
     "DELETE FROM audit_events WHERE id NOT IN (SELECT id FROM audit_events ORDER BY id DESC LIMIT ?)",
   ).run(hardCap).changes);
+  // Opportunistically reap expired browser sessions and old decided agent approvals
+  // so neither table grows without bound over months of uptime.
+  db.prepare("DELETE FROM sessions WHERE expiresAt <= ?").run(nowIso);
+  db.prepare("DELETE FROM approvals WHERE status IN ('executed', 'denied') AND ts < ?").run(cutoff);
   return removed;
 }
 

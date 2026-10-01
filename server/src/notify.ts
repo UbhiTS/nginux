@@ -115,23 +115,57 @@ export function setChannelRouting(id: string, patch: { events?: string[]; minSev
   return { ...updated, config: maskConfig(updated.config) };
 }
 
+import { assertSafeOutboundUrl, isDangerousHost } from "./validate.ts";
+
+/** Validate channel config fields against SSRF, URL path traversal, and query/userinfo injection. */
+export function validateChannelConfig(type: ChannelType, config: Record<string, string>): string | null {
+  for (const key of ["url", "server"]) {
+    const v = config[key];
+    if (v) {
+      try { assertSafeOutboundUrl(v); } catch (e) { return e instanceof Error ? e.message : "Invalid URL."; }
+    }
+  }
+  if (type === "email" && config.host && isDangerousHost(config.host)) {
+    return "That SMTP host is not allowed.";
+  }
+  if (type === "ntfy" && config.topic !== undefined) {
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(config.topic) || config.topic === "." || config.topic === "..") {
+      return "Invalid ntfy topic name.";
+    }
+  }
+  if (type === "telegram" && config.token !== undefined) {
+    if (!/^[A-Za-z0-9:_-]{1,256}$/.test(config.token)) {
+      return "Invalid Telegram bot token.";
+    }
+  }
+  return null;
+}
+
 // ---------- delivery ----------
 async function deliver(ch: Channel, title: string, message: string): Promise<{ ok: boolean; status: string }> {
   const c = ch.config;
   try {
+    const cfgErr = validateChannelConfig(ch.type, c);
+    if (cfgErr) throw new Error(cfgErr);
     let res: SafeOutboundResponse;
     switch (ch.type) {
-      case "ntfy":
-        res = await safeOutboundRequest(`${c.server || "https://ntfy.sh"}/${c.topic}`, {
+      case "ntfy": {
+        const base = (c.server || "https://ntfy.sh").replace(/\/+$/, "");
+        if (!c.topic) throw new Error("ntfy topic is required.");
+        res = await safeOutboundRequest(`${base}/${encodeURIComponent(c.topic)}`, {
           method: "POST", body: message, headers: { Title: title }, timeoutMs: 5000,
         });
         break;
-      case "gotify":
-        res = await safeOutboundRequest(`${c.server}/message?token=${c.token}`, {
+      }
+      case "gotify": {
+        const base = (c.server || "").replace(/\/+$/, "");
+        if (!base || !c.token) throw new Error("gotify server and token are required.");
+        res = await safeOutboundRequest(`${base}/message?token=${encodeURIComponent(c.token)}`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title, message, priority: 5 }), timeoutMs: 5000,
         });
         break;
+      }
       case "pushover":
         res = await safeOutboundRequest("https://api.pushover.net/1/messages.json", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -151,6 +185,7 @@ async function deliver(ch: Channel, title: string, message: string): Promise<{ o
         });
         break;
       case "telegram":
+        if (!c.token) throw new Error("Telegram bot token is required.");
         res = await safeOutboundRequest(`https://api.telegram.org/bot${c.token}/sendMessage`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ chat_id: c.chatId, text: `${title}\n${message}` }), timeoutMs: 5000,

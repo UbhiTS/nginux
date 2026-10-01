@@ -152,16 +152,41 @@ const STREAM_UNSUPPORTED: Array<[keyof HostInput, string, (h: HostInput) => bool
   ["certDomain", "managed certificate selection", (h) => !!h.certDomain.trim()],
 ];
 
+import type { Settings } from "./types.ts";
+
+export type PortalSettingsView = Pick<Settings, "ssoLoginUrl" | "ssoCookieDomain" | "ssoRealms">;
+
+const STREAM_PROTOS = new Set(["tcp", "udp", "sni"]);
+
+/** Stream/SNI hosts need a real listen port (1-65535), and tcp/udp ports must be unique.
+ *  SNI hosts may share a port (multiplexed by server name). Returns an error string or null. */
+export function streamPortConflictError(
+  h: { protocol: string; listenPort: number; name?: string },
+  peers: Array<{ id?: string; protocol: string; listenPort: number; name: string }>,
+  excludeId?: string,
+): string | null {
+  if (!STREAM_PROTOS.has(h.protocol)) return null;
+  if (!Number.isInteger(h.listenPort) || h.listenPort < 1 || h.listenPort > 65535) {
+    return "TCP / UDP / SNI services need a listen port between 1 and 65535.";
+  }
+  for (const o of peers) {
+    if ((excludeId && o.id === excludeId) || !STREAM_PROTOS.has(o.protocol) || o.listenPort !== h.listenPort) continue;
+    if (h.protocol === "sni" && o.protocol === "sni") continue; // SNI passthrough multiplexes by host
+    return `Listen port ${h.listenPort} is already used by "${o.name}". Pick a different port.`;
+  }
+  return null;
+}
+
 /** Return a clear error when a stream service is carrying an active HTTP-only
  * control. Default-on HTTP presentation fields are normalized separately, so a
  * normal API create of a TCP service does not have to countermand HTTP defaults. */
-export function protocolCapabilityError(host: HostInput): string | null {
+export function protocolCapabilityError(host: HostInput, settingsOverride?: PortalSettingsView): string | null {
   if (protocolSupportsHttpControls(host.protocol)) return null;
   const active = STREAM_UNSUPPORTED.filter(([, , on]) => on(host)).map(([, label]) => label);
   if (active.length) {
     return `${host.protocol.toUpperCase()} passthrough cannot enforce ${active.join(", ")}. Clear those HTTP-only controls or use HTTP/gRPC so NginUX can enforce them.`;
   }
-  if (streamSharesSessionCookie(host)) {
+  if (streamSharesSessionCookie(host, settingsOverride)) {
     return `${host.protocol.toUpperCase()} passthrough cannot use a hostname inside the shared NginUX cookie domain: the browser would send the admin session directly to the passthrough backend. Use a separate base domain or HTTP/gRPC termination.`;
   }
   return null;
@@ -171,9 +196,12 @@ export function protocolCapabilityError(host: HostInput): string | null {
  * passthrough: the browser sends it straight through to the backend that
  * terminates/handles the connection. Fail closed for stream hostnames inside the
  * effective global or per-realm cookie domain. */
-export function streamSharesSessionCookie(host: Pick<HostInput, "protocol" | "domain">): boolean {
+export function streamSharesSessionCookie(
+  host: Pick<HostInput, "protocol" | "domain">,
+  settingsOverride?: PortalSettingsView,
+): boolean {
   if (protocolSupportsHttpControls(host.protocol)) return false;
-  const settings = getSettings();
+  const settings = settingsOverride ?? getSettings();
   const realm = realmForHost(host.domain, parseRealms(settings.ssoRealms));
   let cookieDomain = realm?.cookieDomain ?? settings.ssoCookieDomain;
   if (!cookieDomain && settings.ssoLoginUrl) {
@@ -230,8 +258,11 @@ function normalizedHost(host: string): string {
  * container. The generator uses this public-domain identity to route that
  * service directly to NGINUX_CONTROL_URL, so it can keep the session cookie
  * without ever trusting or leaking it to the user-entered upstream. */
-export function isControlPlanePortalDomain(domain: string): boolean {
-  const settings = getSettings();
+export function isControlPlanePortalDomain(
+  domain: string,
+  settingsOverride?: Pick<Settings, "ssoLoginUrl" | "ssoRealms">,
+): boolean {
+  const settings = settingsOverride ?? getSettings();
   const urls = [
     settings.ssoLoginUrl,
     ...parseRealms(settings.ssoRealms).map((realm) => realm.loginUrl),
@@ -272,7 +303,8 @@ export function isControlPlaneDomain(
   forwardHost: string,
   forwardPort: number,
   forwardScheme: "http" | "https" = "http",
+  settingsOverride?: Pick<Settings, "ssoLoginUrl" | "ssoRealms">,
 ): boolean {
-  if (!isControlPlanePortalDomain(domain)) return false;
+  if (!isControlPlanePortalDomain(domain, settingsOverride)) return false;
   return !isControlPlaneTarget(forwardHost, forwardPort, forwardScheme);
 }

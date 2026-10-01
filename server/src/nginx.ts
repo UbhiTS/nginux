@@ -25,7 +25,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Where generated per-host config lands. Mounted into the nginx container.
 const CONF_DIR = process.env.NGINX_CONF_DIR ?? join(__dirname, "..", "..", "nginx", "conf.d");
 const STREAM_DIR = process.env.NGINX_STREAM_DIR ?? join(__dirname, "..", "..", "nginx", "stream.d");
-const NGINX_BIN = process.env.NGINX_BIN ?? "nginx";
+const nginxBin = () => process.env.NGINX_BIN ?? "nginx";
 // Where nginx reaches the control plane for forward-auth (same container).
 const CONTROL_URL = process.env.NGINUX_CONTROL_URL ?? "http://127.0.0.1:6767";
 // Where the control plane drops ACME HTTP-01 challenge tokens (must match
@@ -611,7 +611,7 @@ export function previewConfigForHosts(hosts: ProxyHost[]): ConfigPreview {
 
 async function nginxInstalled(): Promise<boolean> {
   try {
-    await execFileAsync(NGINX_BIN, ["-v"], NGINX_EXEC_OPTS);
+    await execFileAsync(nginxBin(), ["-v"], NGINX_EXEC_OPTS);
     return true;
   } catch {
     return false;
@@ -657,7 +657,7 @@ async function applyConfigInner(): Promise<ApplyResult> {
   }
 
   try {
-    await execFileAsync(NGINX_BIN, ["-t"], NGINX_EXEC_OPTS);
+    await execFileAsync(nginxBin(), ["-t"], NGINX_EXEC_OPTS);
   } catch (err) {
     // Validation failed: nginx was never reloaded (live traffic is safe), but the
     // invalid files are on disk. Restore the prior valid set so a later restart or
@@ -672,7 +672,7 @@ async function applyConfigInner(): Promise<ApplyResult> {
   }
 
   try {
-    await execFileAsync(NGINX_BIN, ["-s", "reload"], NGINX_EXEC_OPTS);
+    await execFileAsync(nginxBin(), ["-s", "reload"], NGINX_EXEC_OPTS);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { ok: false, nginxAvailable: true, message: `Nginx reload failed: ${detail}` };

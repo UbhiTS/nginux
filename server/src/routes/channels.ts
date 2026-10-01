@@ -3,9 +3,8 @@ import { z } from "zod";
 import type { RouteCtx } from "./context.ts";
 import {
   createChannel, deleteChannel, listChannels, setChannelEnabled,
-  setChannelRouting, testChannel, type ChannelType,
+  setChannelRouting, testChannel, validateChannelConfig, type ChannelType,
 } from "../notify.ts";
-import { assertSafeOutboundUrl, isDangerousHost } from "../validate.ts";
 import { logEvent } from "../auth.ts";
 
 // Notification channels (admin only) + per-channel severity routing.
@@ -26,16 +25,8 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: RouteCtx): void
       .safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
     const body = parsed.data;
-    // SSRF guard: any user-supplied destination URL must be a safe http(s) target.
-    for (const key of ["url", "server"]) {
-      const v = body.config[key];
-      if (v) { try { assertSafeOutboundUrl(v); } catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid URL." }); } }
-    }
-    // The email channel connects to config.host:port directly (nodemailer), so it needs
-    // the same link-local/metadata guard as the URL channels. (Security audit 2026-07-12.)
-    if (body.type === "email" && body.config.host && isDangerousHost(body.config.host)) {
-      return reply.code(400).send({ error: "That SMTP host is not allowed." });
-    }
+    const cfgErr = validateChannelConfig(body.type as ChannelType, body.config);
+    if (cfgErr) return reply.code(400).send({ error: cfgErr });
     const ch = createChannel({ type: body.type as ChannelType, name: body.name, config: body.config, events: body.events, minSeverity: body.minSeverity });
     logEvent({ type: "alert.channel_added", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Added ${body.type} notification channel "${body.name}"`, ip: clientIp(req), meta: {} });
     return reply.code(201).send(ch);

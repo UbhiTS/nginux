@@ -334,12 +334,15 @@ export function sessionSid(token: string): string {
 }
 
 export function listSessions(): Array<{ token: string; sid: string; userId: string; username: string; device: string; ip: string; lastActive: string }> {
+  const nowIso = new Date().toISOString();
   const rows = db
     .prepare(
       `SELECT s.token, s.userId, s.device, s.ip, s.createdAt, u.username
-       FROM sessions s JOIN users u ON u.id = s.userId ORDER BY s.createdAt DESC`,
+       FROM sessions s JOIN users u ON u.id = s.userId
+       WHERE s.expiresAt > ?
+       ORDER BY s.createdAt DESC`,
     )
-    .all() as Row[];
+    .all(nowIso) as Row[];
   return rows.map((r) => ({
     token: String(r.token),
     sid: String(r.token).slice(0, 16),
@@ -515,7 +518,7 @@ export function securityOverview() {
     exposed,
     unprotected,
     failedLogins24h: failed24h,
-    activeSessions: (db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as Row).n as number,
+    activeSessions: (db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE expiresAt > ?").get(new Date().toISOString()) as Row).n as number,
   };
 }
 

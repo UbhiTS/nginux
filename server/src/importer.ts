@@ -1,7 +1,7 @@
 import { createHost, getHostByDomain } from "./repo.ts";
 import type { NewProxyHost } from "./types.ts";
-import { isHost, isHostname } from "./validate.ts";
-import { hostInput } from "./hostschema.ts";
+import { isDangerousHost, isHost, isHostname } from "./validate.ts";
+import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
 
 interface Parsed {
   domain: string;
@@ -73,17 +73,21 @@ export function previewNginxConf(text: string): ImportPreview {
   const skipped: { domain: string; reason: string }[] = [];
   for (const p of parseNginxConf(text)) {
     if (!isHostname(p.domain)) { skipped.push({ domain: p.domain, reason: "invalid hostname" }); continue; }
-    if (!isHost(p.forwardHost)) { skipped.push({ domain: p.domain, reason: "invalid forward host" }); continue; }
+    if (!isHost(p.forwardHost) || isDangerousHost(p.forwardHost)) { skipped.push({ domain: p.domain, reason: "invalid forward host" }); continue; }
+    if (isControlPlaneDomain(p.domain, p.forwardHost, p.forwardPort, p.forwardScheme)) {
+      skipped.push({ domain: p.domain, reason: "conflicts with NginUX portal" }); continue;
+    }
     if (getHostByDomain(p.domain)) { skipped.push({ domain: p.domain, reason: "already exists" }); continue; }
-    if (toImport.some((d) => d.domain === p.domain)) { skipped.push({ domain: p.domain, reason: "duplicate in file" }); continue; }
+    if (toImport.some((d) => d.domain.toLowerCase() === p.domain.toLowerCase())) { skipped.push({ domain: p.domain, reason: "duplicate in file" }); continue; }
     toImport.push({ ...p, name: draftName(p.domain) });
   }
   return { toImport, skipped };
 }
 
-export function importNginxConf(text: string): { imported: string[]; skipped: string[] } {
+export function importNginxConf(text: string): { imported: string[]; skipped: string[]; createdIds: string[] } {
   const preview = previewNginxConf(text);
   const imported: string[] = [];
+  const createdIds: string[] = [];
   const skipped = preview.skipped.map((s) => s.domain);
   for (const d of preview.toImport) {
     const host: NewProxyHost = {
@@ -96,9 +100,13 @@ export function importNginxConf(text: string): { imported: string[]; skipped: st
     // parsed out of an untrusted nginx.conf (e.g. an out-of-range forwardPort) can't create
     // an invalid host that then breaks every config apply. (Security audit follow-up.)
     const parsed = hostInput.safeParse(host);
-    if (!parsed.success) { skipped.push(d.domain); continue; }
-    createHost(parsed.data);
+    if (!parsed.success || isControlPlaneDomain(parsed.data.domain, parsed.data.forwardHost, parsed.data.forwardPort, parsed.data.forwardScheme)) {
+      skipped.push(d.domain);
+      continue;
+    }
+    const created = createHost(parsed.data);
+    createdIds.push(created.id);
     imported.push(d.domain);
   }
-  return { imported, skipped };
+  return { imported, skipped, createdIds };
 }

@@ -104,15 +104,20 @@ export function isDangerousHost(host: string): boolean {
     h = new URL(`http://${authority}/`).hostname.replace(/^\[|\]$/g, "").toLowerCase();
   } catch { /* leave invalid input for the caller's syntax validator */ }
   if (h === "metadata.google.internal" || h === "metadata.goog") return true;
-  // Normalise IPv4-mapped/-compatible IPv6 to the embedded IPv4 so the v4 rules
-  // below still catch it - otherwise `::ffff:169.254.169.254` (or the hex form
-  // `::ffff:a9fe:a9fe`) reaches cloud metadata past the /^169\.254\./ check.
-  const dotted = h.match(/^::(?:ffff:)?((?:\d{1,3}\.){3}\d{1,3})$/);
+  // Normalise IPv4-mapped/-compatible/SIIT/NAT64 IPv6 to the embedded IPv4 so the v4
+  // rules below still catch it - otherwise `::ffff:169.254.169.254`, `::ffff:a9fe:a9fe`,
+  // SIIT `::ffff:0:a9fe:a9fe`, or NAT64 `64:ff9b::a9fe:a9fe` reaches cloud metadata.
+  const dotted = h.match(/^(?:::(?:ffff:(?:0:(?:0:)?)?)?|64:ff9b::)((?:\d{1,3}\.){3}\d{1,3})$/);
   if (dotted) h = dotted[1];
-  const hex = h.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  const hex = h.match(/^(?:::(?:ffff:(?:0:(?:0:)?)?)?|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (hex) {
     const a = parseInt(hex[1], 16), b = parseInt(hex[2], 16);
     h = `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`;
+  }
+  const nat64Zero = h.match(/^64:ff9b::([0-9a-f]{1,4})?$/);
+  if (nat64Zero) {
+    const b = parseInt(nat64Zero[1] || "0", 16);
+    h = `0.0.${b >> 8}.${b & 255}`;
   }
   if (LINK_LOCAL_V4.test(h) || UNSPEC_V4.test(h) || CLOUD_METADATA_V4.has(h)) return true;
   // IPv6 link-local is fe80::/10 (fe80 through febf), not only the fe80: prefix.

@@ -56,9 +56,22 @@ export function registerProfileRoutes(app: FastifyInstance, ctx: RouteCtx): void
     const patch = profilePatch(profile);
     const actor = currentUser(req)?.username ?? "system";
     snapshot(`Before applying profile "${profile.name}"`, actor);
+    const previous = new Map<string, NonNullable<ReturnType<typeof getHost>>>();
     let affected = 0;
-    for (const hostId of parsed.data.ids) { if (getHost(hostId) && updateHost(hostId, patch)) affected++; }
+    for (const hostId of parsed.data.ids) {
+      const cur = getHost(hostId);
+      if (cur && updateHost(hostId, patch)) {
+        previous.set(hostId, cur);
+        affected++;
+      }
+    }
     const apply = await applyConfig();
+    if (!apply.ok && apply.nginxAvailable) {
+      for (const [hostId, prev] of previous) updateHost(hostId, prev);
+      await applyConfig();
+      logEvent({ type: "host.update_failed", severity: "warn", actor, summary: `Reverted security profile "${profile.name}" - config rejected`, ip: clientIp(req), meta: { profile: profile.id, error: apply.message } });
+      return reply.code(422).send({ error: apply.message, apply });
+    }
     void syncGitOps(`Apply profile "${profile.name}" to ${affected} service(s)`);
     logEvent({ type: "host.updated", severity: "notice", actor, summary: `Applied profile "${profile.name}" to ${affected} service${affected === 1 ? "" : "s"}`, ip: clientIp(req), meta: { profile: profile.id, affected } });
     return { affected, apply };

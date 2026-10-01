@@ -35,8 +35,13 @@ export async function safeOutboundRequest(
   const timeoutMs = options.timeoutMs ?? 5000;
   const address = await resolveSafeOutboundHost(url.hostname, timeoutMs);
   const body = options.body;
+  const sanitizedHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(options.headers ?? {})) {
+    if (/[\r\n\0]/.test(k)) throw new Error("Invalid outbound header name.");
+    sanitizedHeaders[k] = String(v).replace(/[\r\n\0]+/g, " ");
+  }
   const headers: Record<string, string | number> = {
-    ...(options.headers ?? {}),
+    ...sanitizedHeaders,
     Host: url.host,
     ...(body !== undefined ? { "Content-Length": Buffer.byteLength(body) } : {}),
   };

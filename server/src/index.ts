@@ -16,6 +16,7 @@ import {
   getHostByDomainCached,
   getTopology,
   listHosts,
+  replaceAllHosts,
   updateHost,
 } from "./repo.ts";
 import { applyConfig, generateHostConfig, generateStreamConfig, previewConfigForHosts, redactConfig } from "./nginx.ts";
@@ -98,8 +99,8 @@ import { diffVersion, listVersions, restoreVersion, snapshot } from "./versionin
 import { gitLog, syncGitOps } from "./gitops.ts";
 import { importNginxConf, previewNginxConf } from "./importer.ts";
 import { buildBundle, restoreBundle } from "./backup.ts";
-import { encryptJson, decryptJson, isEncryptedEnvelope } from "./cryptobox.ts";
-import { startBanEngine, writeBannedConf } from "./bans.ts";
+import { encryptJsonAsync, decryptJsonAsync, isEncryptedEnvelope } from "./cryptobox.ts";
+import { listBans, replaceAllBans, startBanEngine, writeBannedConf } from "./bans.ts";
 import { ensureClientCA, issueClientCert, listClientCerts, revokeClientCert, writeClientCrl } from "./clientcerts.ts";
 import { generateSniPassthrough } from "./nginx.ts";
 import {
@@ -113,6 +114,7 @@ import {
   normalizeProtocolFields,
   protocolCapabilityError,
   protocolSupportsHttpControls,
+  streamPortConflictError,
 } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
 import { realmForHost } from "./realms.ts";
@@ -126,7 +128,7 @@ import { registerChannelRoutes } from "./routes/channels.ts";
 import { registerSecurityRoutes } from "./routes/security.ts";
 import { registerAgentRoutes } from "./routes/agents.ts";
 import { registerCertRoutes } from "./routes/certs.ts";
-import { initAlertEngine } from "./notify.ts";
+import { initAlertEngine, listChannelsRaw, replaceAllChannels } from "./notify.ts";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { resolveSafeOutboundHost } from "./outbound.ts";
 
@@ -262,6 +264,22 @@ function crossOriginBlocked(req: FastifyRequest): boolean {
   try { return new URL(origin).host !== host; } catch { return true; }
 }
 
+const BEARER_FAIL_MAX = 30;
+const BEARER_FAIL_WINDOW_MS = 60_000;
+const bearerFailHits = new Map<string, number[]>();
+function bearerRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const hits = (bearerFailHits.get(ip) ?? []).filter((t) => now - t < BEARER_FAIL_WINDOW_MS);
+  hits.push(now);
+  if (hits.length > BEARER_FAIL_MAX + 1) hits.splice(0, hits.length - (BEARER_FAIL_MAX + 1));
+  bearerFailHits.set(ip, hits);
+  if (bearerFailHits.size > 5000) {
+    for (const [k, v] of bearerFailHits) { if (v.every((t) => now - t >= BEARER_FAIL_WINDOW_MS)) bearerFailHits.delete(k); }
+    while (bearerFailHits.size > 5000) { const k = bearerFailHits.keys().next().value; if (k === undefined) break; bearerFailHits.delete(k); }
+  }
+  return hits.length > BEARER_FAIL_MAX;
+}
+
 app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   if (!req.url.startsWith("/api")) return;
   const path = req.url.split("?")[0];
@@ -275,7 +293,12 @@ app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
   if (OPEN_PATHS.has(path)) return;
   const isAgentPath = path === "/api/mcp" || path.startsWith("/api/events") || path.startsWith("/api/logs") || path === "/api/metrics/prometheus";
   if (isAgentPath) {
-    if (!principal(req)) return reply.code(401).send({ error: "Valid session or API token required" });
+    if (!principal(req)) {
+      if (bearerFrom(req.headers.authorization) && bearerRateLimited(clientIp(req))) {
+        return reply.code(429).send({ error: "Too many invalid API token attempts. Wait a minute and try again." });
+      }
+      return reply.code(401).send({ error: "Valid session or API token required" });
+    }
     // A cookie user with a temporary password is still confined, even via MCP.
     const cu = currentUser(req);
     if (cu?.mustChangePassword) {
@@ -503,13 +526,8 @@ app.put("/api/settings", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const parsed = settingsInput.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const prevSettings = getSettings();
   const saved = saveSettings(parsed.data);
-  // Audit which settings changed (keys only - values may be secrets). Security-
-  // relevant toggles like agentAutoApprove / ssoForwardSecret must leave a trail.
-  const changedKeys = Object.keys(parsed.data);
-  if (changedKeys.length) {
-    logEvent({ type: "settings.updated", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Updated settings: ${changedKeys.join(", ")}`, ip: clientIp(req), meta: { keys: changedKeys } });
-  }
   // Changing the allowed countries (home or travel allowlist) re-derives the geo config.
   const geoChanged = parsed.data.homeCountry !== undefined || parsed.data.allowedCountries !== undefined;
   if (geoChanged) writeGeoipConf();
@@ -521,28 +539,27 @@ app.put("/api/settings", async (req, reply) => {
   // login-gate 401→login redirect, and the forward-auth secret header) - re-apply
   // so a change here takes effect immediately instead of on the next host edit.
   if (geoChanged || parsed.data.ssoLoginUrl !== undefined || parsed.data.ssoForwardSecret !== undefined || parsed.data.ssoRealms !== undefined) {
-    await applyConfig();
+    const apply = await applyConfig();
+    if (!apply.ok && apply.nginxAvailable) {
+      saveSettings(prevSettings);
+      if (geoChanged) writeGeoipConf();
+      await applyConfig();
+      logEvent({ type: "settings.update_failed", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: "Reverted settings - nginx rejected config", ip: clientIp(req), meta: { error: apply.message } });
+      return reply.code(422).send({ error: apply.message, apply });
+    }
+  }
+  // Audit which settings changed (keys only - values may be secrets). Security-
+  // relevant toggles like agentAutoApprove / ssoForwardSecret must leave a trail.
+  const changedKeys = Object.keys(parsed.data);
+  if (changedKeys.length) {
+    logEvent({ type: "settings.updated", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Updated settings: ${changedKeys.join(", ")}`, ip: clientIp(req), meta: { keys: changedKeys } });
   }
   return saved;
 });
 
 // ---------- hosts ----------
-const STREAM_PROTOS = new Set(["tcp", "udp", "sni"]);
-/** Stream/SNI hosts need a real listen port, and tcp/udp ports must be unique -
- *  a `listen 0;` or a duplicate listen breaks the whole `stream {}` block (and
- *  can wedge nginx on the next restart, where there's no rollback). SNI hosts may
- *  share a port (they're multiplexed by server name). Returns an error or null. */
 function streamPortError(h: { protocol: string; listenPort: number; name?: string }, excludeId?: string): string | null {
-  if (!STREAM_PROTOS.has(h.protocol)) return null;
-  if (!Number.isInteger(h.listenPort) || h.listenPort < 1 || h.listenPort > 65535) {
-    return "TCP / UDP / SNI services need a listen port between 1 and 65535.";
-  }
-  for (const o of listHosts()) {
-    if (o.id === excludeId || !STREAM_PROTOS.has(o.protocol) || o.listenPort !== h.listenPort) continue;
-    if (h.protocol === "sni" && o.protocol === "sni") continue; // SNI passthrough multiplexes by host
-    return `Listen port ${h.listenPort} is already used by "${o.name}". Pick a different port.`;
-  }
-  return null;
+  return streamPortConflictError(h, listHosts(), excludeId);
 }
 /** A host must not claim the control plane's own public hostname (self-hijack). */
 // isControlPlaneDomain (the SSO-portal hijack guard) is shared with the agent
@@ -680,6 +697,7 @@ app.post("/api/hosts/batch", async (req, reply) => {
   }
   const actor = currentUser(req)?.username ?? "system";
   snapshot(`Bulk ${action} on ${ids.length} service(s)`, actor);
+  const previousHosts = listHosts();
 
   let affected = 0;
   for (const id of ids) {
@@ -696,6 +714,12 @@ app.post("/api/hosts/batch", async (req, reply) => {
     }
   }
   const apply = await applyConfig();
+  if (!apply.ok && apply.nginxAvailable) {
+    replaceAllHosts(previousHosts);
+    await applyConfig();
+    logEvent({ type: "host.update_failed", severity: "warn", actor, summary: `Reverted bulk ${action} - config rejected`, ip: clientIp(req), meta: { action, error: apply.message } });
+    return reply.code(422).send({ error: apply.message, apply });
+  }
   void syncGitOps(`Bulk ${action} (${affected} service${affected === 1 ? "" : "s"})`);
   logEvent({
     type: action === "delete" ? "host.deleted" : "host.updated",
@@ -746,6 +770,8 @@ app.post("/api/config/preview", async (req, reply) => {
     if (isControlPlaneDomain(normalized.domain, normalized.forwardHost, normalized.forwardPort, normalized.forwardScheme)) {
       return reply.code(409).send({ error: "The public NginUX portal must forward to the exact configured control plane." });
     }
+    const spErr = streamPortError(normalized, id);
+    if (spErr) return reply.code(400).send({ error: spErr });
     candidateHosts = hosts.map((h) => (h.id === id ? normalized : h));
   } else { // create
     const parsed = hostInput.safeParse(host ?? {});
@@ -757,6 +783,8 @@ app.post("/api/config/preview", async (req, reply) => {
     if (isControlPlaneDomain(normalized.domain, normalized.forwardHost, normalized.forwardPort, normalized.forwardScheme)) {
       return reply.code(409).send({ error: "The public NginUX portal must forward to the exact configured control plane." });
     }
+    const spErr = streamPortError(normalized);
+    if (spErr) return reply.code(400).send({ error: spErr });
     const candidate = { ...normalized, id: "__preview__", health: "unknown", certExpiresAt: null, createdAt: "", updatedAt: "" } as ProxyHost;
     candidateHosts = [...hosts, candidate];
   }
@@ -778,7 +806,9 @@ app.post("/api/hosts/:id/client-certs", async (req, reply) => {
   if (!protocolSupportsHttpControls(host.protocol)) {
     return reply.code(400).send({ error: "mTLS client certificates require HTTP/gRPC TLS termination; they cannot protect TCP/UDP/SNI passthrough." });
   }
-  const parsed = z.object({ name: z.string().min(1).max(64) }).safeParse(req.body);
+  const parsed = z.object({
+    name: z.string().min(1).max(64).refine((s) => !/[\r\n\0]/.test(s), "Certificate name may not contain control characters."),
+  }).safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   const issued = await issueClientCert(id, host.domain, parsed.data.name);
   logEvent({ type: "cert.client_issued", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Issued client cert "${parsed.data.name}" for ${host.domain}`, ip: clientIp(req), meta: {} });
@@ -871,10 +901,20 @@ app.get("/api/config/versions/:id/diff", async (req, reply) => {
 app.post("/api/config/versions/:id/restore", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   const { id } = req.params as { id: string };
+  const prevHosts = listHosts();
+  const prevSettings = getSettings();
   snapshot("Before restore", currentUser(req)?.username ?? "admin");
   const r = restoreVersion(id);
   if (!r) return reply.code(404).send({ error: "Version not found" });
   const apply = await applyConfig();
+  if (!apply.ok && apply.nginxAvailable) {
+    replaceAllHosts(prevHosts);
+    saveSettings(prevSettings);
+    writeGeoipConf();
+    await applyConfig();
+    logEvent({ type: "config.restore_failed", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: `Reverted restore ${id} - config rejected`, ip: clientIp(req), meta: { id, error: apply.message } });
+    return reply.code(422).send({ error: apply.message, apply });
+  }
   void syncGitOps("Restore previous config");
   logEvent({ type: "config.restored", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: `Restored config (${r.restored} services)`, ip: clientIp(req), meta: { id } });
   return { ...r, apply };
@@ -894,7 +934,7 @@ app.post("/api/config/backup", async (req, reply) => {
   const withSecrets = includeSecrets && !!passphrase;
   const bundle = buildBundle(new Date().toISOString(), withSecrets);
   logEvent({ type: "config.exported", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Exported a backup bundle${passphrase ? " (encrypted)" : ""}`, ip: clientIp(req), meta: { encrypted: !!passphrase, includeSecrets: withSecrets } });
-  return passphrase ? { encrypted: true, blob: encryptJson(bundle, passphrase) } : { encrypted: false, bundle };
+  return passphrase ? { encrypted: true, blob: await encryptJsonAsync(bundle, passphrase) } : { encrypted: false, bundle };
 });
 
 // Restore a bundle (plaintext object or an encrypted blob + passphrase). Replaces
@@ -909,16 +949,30 @@ app.post("/api/config/restore", async (req, reply) => {
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   let data: unknown = parsed.data.bundle;
   if (parsed.data.blob && isEncryptedEnvelope(parsed.data.blob)) {
-    try { data = decryptJson(parsed.data.blob, parsed.data.passphrase ?? ""); }
+    try { data = await decryptJsonAsync(parsed.data.blob, parsed.data.passphrase ?? ""); }
     catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Couldn't decrypt the backup." }); }
   }
   if (!data) return reply.code(400).send({ error: "Provide a bundle or an encrypted blob + passphrase." });
+  const prevHosts = listHosts();
+  const prevBans = listBans();
+  const prevChannels = listChannelsRaw();
+  const prevSettings = getSettings();
   snapshot("Before restoring a backup", currentUser(req)?.username ?? "admin");
   let result;
   try { result = restoreBundle(data); }
   catch (e) { return reply.code(400).send({ error: e instanceof Error ? e.message : "Invalid backup bundle." }); }
   writeGeoipConf();
   const apply = await applyConfig();
+  if (!apply.ok && apply.nginxAvailable) {
+    replaceAllHosts(prevHosts);
+    replaceAllBans(prevBans);
+    replaceAllChannels(prevChannels);
+    saveSettings(prevSettings);
+    writeGeoipConf();
+    await applyConfig();
+    logEvent({ type: "config.restore_failed", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: "Reverted backup restore - config rejected", ip: clientIp(req), meta: { error: apply.message } });
+    return reply.code(422).send({ error: apply.message, apply });
+  }
   void syncGitOps(`Restore backup (${result.hosts} services)`);
   logEvent({ type: "config.restored", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: `Restored a backup: ${result.hosts} services, ${result.bans} bans, ${result.channels} channels`, ip: clientIp(req), meta: { ...result } });
   return { ...result, apply };
@@ -947,9 +1001,15 @@ app.post("/api/config/import", async (req, reply) => {
   snapshot("Before import", currentUser(req)?.username ?? "admin");
   const result = importNginxConf(conf);
   const apply = await applyConfig();
+  if (!apply.ok && apply.nginxAvailable) {
+    for (const id of result.createdIds) deleteHost(id);
+    await applyConfig();
+    logEvent({ type: "config.import_failed", severity: "warn", actor: currentUser(req)?.username ?? "admin", summary: "Reverted nginx.conf import - config rejected", ip: clientIp(req), meta: { error: apply.message } });
+    return reply.code(422).send({ error: apply.message, apply });
+  }
   void syncGitOps(`Import ${result.imported.length} host(s)`);
   logEvent({ type: "config.imported", severity: "notice", actor: currentUser(req)?.username ?? "admin", summary: `Imported ${result.imported.length} host(s) from nginx.conf`, ip: clientIp(req), meta: result });
-  return { ...result, apply };
+  return { imported: result.imported, skipped: result.skipped, apply };
 });
 app.get("/api/gitops/log", async (req, reply) => {
   if (!requireRole(req, reply, "admin", "editor")) return;

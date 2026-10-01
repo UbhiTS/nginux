@@ -490,9 +490,16 @@ export const TOOLS: Record<string, Tool> = {
       // the agent path can safely accept the full settings surface without drift.
       const parsed = settingsInput.safeParse(raw);
       if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") || "Invalid settings patch.");
+      const prev = getSettings();
       saveSettings(parsed.data);
       writeGeoipConf();
-      await applyConfig();
+      const apply = await applyConfig();
+      if (!apply.ok && apply.nginxAvailable) {
+        saveSettings(prev);
+        writeGeoipConf();
+        await applyConfig();
+        throw new Error(apply.message || "nginx rejected the generated config.");
+      }
       return redactSettings(getSettings());
     },
   },

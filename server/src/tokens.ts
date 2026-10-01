@@ -61,7 +61,10 @@ export function resolveToken(raw: string | undefined): AgentPrincipal | null {
   if (!raw) return null;
   const row = db.prepare("SELECT * FROM api_tokens WHERE tokenHash = ? AND revoked = 0").get(sha(raw)) as Row | undefined;
   if (!row) return null;
-  db.prepare("UPDATE api_tokens SET lastUsedAt = ? WHERE id = ?").run(new Date().toISOString(), String(row.id));
+  const lastMs = row.lastUsedAt ? Date.parse(String(row.lastUsedAt)) : 0;
+  if (!lastMs || Date.now() - lastMs >= 60_000) {
+    db.prepare("UPDATE api_tokens SET lastUsedAt = ? WHERE id = ?").run(new Date().toISOString(), String(row.id));
+  }
   const t = toToken(row);
   return { kind: "agent", id: t.id, name: t.name, scopes: t.scopes, trust: t.trust };
 }
