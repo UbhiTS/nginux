@@ -21,7 +21,9 @@ jobs:
       - name: Install
         run: npm ci
       - name: Dependency audit
-        run: npm audit --audit-level=high
+        # npm audit at the "high" gate, with the explicit, expiring allowlist in
+        # audit-allowlist.json (advisories with no fixed release and no reachable path).
+        run: node scripts/audit-gate.mjs --audit-level high
 
       - name: Typecheck server
         run: npm run typecheck --workspace server

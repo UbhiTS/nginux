@@ -26,6 +26,10 @@ Full adversarial security review (eleven independent audit passes across auth/se
 - **Notifications**: Discord payloads send `allowed_mentions: { parse: [] }`, Slack text escapes `&<>`, Telegram/Slack `topic`/`chat` ids are masked like other credentials, and delivery failures are reported as a category (`timeout`, `unreachable`, `tls error`, `rejected (authentication)`, `rejected`) instead of echoing the remote error body.
 - **Misc**: `releaseUrl` from GitHub metadata must match `https://github.com/<owner>/<repo>/releases/tag/<tag>`; `isDangerousHost` also blocks the RFC 8215 local NAT64 prefix `64:ff9b:1::/48`; syslog URLs require port 1–65535; the CLI's command table is looked up with `Object.hasOwn`.
 
+### Supply chain
+- **Dependency audit gate with an explicit, expiring allowlist**: CI and the release pipeline now run `scripts/audit-gate.mjs` (also `npm run audit`) instead of a bare `npm audit --audit-level=high`. It still fails on any high/critical advisory, but exceptions live in `audit-allowlist.json` with the package, a written justification and an expiry date; expired entries fail the build so each exception is re-evaluated against new upstream releases. The first entry is GHSA-86w9-cpqp-85rv (`node-forge` RSA PKCS#1 v1.5 *verification*, no fixed release, pulled in transitively by `acme-client`): NginUX only uses node-forge to generate keys and create/sign its own certificates and CRLs and never verifies a signature with it, so the vulnerable path is unreachable.
+- `server/src/version.ts` now documents that the release workflow creates the `v<VERSION>` tag itself; pushing the tag by hand makes the release job refuse to run.
+
 ## Performance & Robustness
 
 - **Metrics pipeline bounds**: request-derived keys are clipped before they become map keys (host 253 / path 256 / user-agent 256 / ip 64 / country 8 / method 16) and per-host buckets are capped at 200 hosts, so an internet client spraying unique values can no longer grow the control plane's memory without limit.

@@ -27,3 +27,5 @@ NginUX is built defense-in-depth, but a few operator choices matter - especially
 ## What's already hardened
 
 Server-side RBAC on every mutating route (admin/editor/scoped/readonly + scoped agent tokens), CSRF (SameSite + Origin check, including the MCP endpoint), injection-safe nginx config generation, path-traversal-contained cert handling, parameterized SQL, scrypt password hashing + TOTP 2FA with replay/lockout protection, mTLS with CRL-based revocation, secret redaction for non-admins, brute-force throttling + fail2ban-style auto-bans, security headers/CSP on the UI, and a container that drops all Linux capabilities except those needed to bind low ports (`no-new-privileges`).
+
+Dependencies are audited on every CI run and release (`npm run audit`, high/critical gate). Advisories with no fixed upstream release may only be allowlisted in `audit-allowlist.json` with a written justification that the vulnerable code path is unreachable and an expiry date; expired entries fail the build.

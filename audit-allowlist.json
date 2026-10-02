@@ -1,0 +1,12 @@
+{
+  "comment": "Advisories that scripts/audit-gate.mjs may let through. Every entry must name the package, explain why the vulnerable code path is unreachable in NginUX, and carry an expiry so it is re-evaluated against new upstream releases. Prefer upgrading; allowlisting is only for advisories with no fixed release.",
+  "allow": [
+    {
+      "id": "GHSA-86w9-cpqp-85rv",
+      "package": "node-forge",
+      "added": "2026-10-02",
+      "expires": "2027-01-02",
+      "reason": "RSA PKCS#1 v1.5 signature VERIFICATION accepts extra nested DigestAlgorithm elements. No fixed node-forge release exists (every version <= 1.4.0 is affected) and acme-client 5.x depends on it transitively, so it cannot be removed from the tree. NginUX never verifies a signature with node-forge: it is used only to generate RSA keys and to create and sign its own self-signed server certificate, per-host mTLS client CAs, client certificates and CRLs (server/src/certs.ts, server/src/clientcerts.ts); the only PEM it parses with forge is the CA material it wrote itself. Certificate inspection and imports use node:crypto, and ACME uses acme.crypto (native/@peculiar), not the legacy forge shim. Re-check for a patched node-forge or an acme-client without it before this expires."
+    }
+  ]
+}

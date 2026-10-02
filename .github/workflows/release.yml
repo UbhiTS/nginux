@@ -37,7 +37,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm audit --audit-level=high
+      - run: node scripts/audit-gate.mjs --audit-level high
       - run: npm run typecheck --workspace server
       - run: npm run test --workspace server
       # Prove the data-plane boundary end-to-end: real nginx, fed the app's own generated
