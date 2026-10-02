@@ -12,11 +12,11 @@ import { setupTestEnv, makeHost } from "./helpers.ts";
 setupTestEnv();
 const { app } = await import("../src/index.ts");
 const { db, saveSettings, redactSettings, maskSecretSettings } = await import("../src/db.ts");
-const { beginTwofaSetup, createSession, createUser, logEvent, parseCookieAll } = await import("../src/auth.ts");
+const { beginTwofaSetup, createSession, createUser, logEvent, parseCookieAll, MAX_SESSION_COOKIES } = await import("../src/auth.ts");
 const { createHost, deleteHost, getHostByDomain, updateHost, getServingHttpHostByDomainCached } = await import("../src/repo.ts");
 const { createToken, resolveToken } = await import("../src/tokens.ts");
 const { callTool, decideApproval, sanitizeHostPatch, TOOLS } = await import("../src/tools.ts");
-const { generateHostConfig } = await import("../src/nginx.ts");
+const { generateHostConfig, COOKIE_STRIP_PASSES } = await import("../src/nginx.ts");
 const { hostInput, controlPlaneTargetError, streamPortConflictError, targetIsThisControlPlane, frontsControlPlane } = await import("../src/hostschema.ts");
 const { INSTANCE_ID } = await import("../src/instance.ts");
 const { isIpOrCidr, isLocationPath, hasNginxMetachars, isDangerousHost } = await import("../src/validate.ts");
@@ -323,6 +323,16 @@ test("session cookie: the first LIVE nginux_session value wins (a sibling app's 
   assert.equal(shadowFirst.statusCode, 200, "stale cookie listed first must not hide the live one");
   const shadowLast = await inject({ method: "GET", url: "/api/auth/me", headers: { cookie: `nginux_session=${live}; nginux_session=stale-garbage` } });
   assert.equal(shadowLast.statusCode, 200, "stale cookie listed last must not hide the live one");
+  // nginx drops the whole Cookie header for the UPSTREAM beyond COOKIE_STRIP_PASSES
+  // duplicates (fail closed) but still forwards it on the auth subrequest, so the
+  // control plane must keep looking past that budget (real-nginx itest A1).
+  assert.ok(MAX_SESSION_COOKIES > COOKIE_STRIP_PASSES + 1, "session-candidate bound must exceed nginx's strip budget");
+  const decoys = Array.from({ length: COOKIE_STRIP_PASSES + 1 }, (_, i) => `nginux_session=decoy${i}`).join("; ");
+  const overBudget = await inject({ method: "GET", url: "/api/auth/me", headers: { cookie: `${decoys}; nginux_session=${live}` } });
+  assert.equal(overBudget.statusCode, 200, "a valid session after more decoys than the strip budget still authenticates");
+  const flood = Array.from({ length: MAX_SESSION_COOKIES }, (_, i) => `nginux_session=decoy${i}`).join("; ");
+  const beyondBound = await inject({ method: "GET", url: "/api/auth/me", headers: { cookie: `${flood}; nginux_session=${live}` } });
+  assert.equal(beyondBound.statusCode, 401, "candidates past the bound are never looked up (cost cap)");
 });
 
 test("session cookie Domain is only emitted when the request host sits under the base domain", async () => {

@@ -4,11 +4,15 @@ name: Release
 # main. Updating version.ts triggers the gated multi-arch image build, tag, and
 # GitHub Release. Ordinary main pushes are covered by ci.yml and cannot silently
 # manufacture a new version with stale application metadata or release notes.
+# Manual dispatch exists only to RE-RUN the same gated pipeline for the current
+# source version (e.g. after a transient gate failure); the version guards below
+# still refuse to publish a version whose tag already exists or is not newer.
 on:
   push:
     branches: [main]
     paths:
       - "server/src/version.ts"
+  workflow_dispatch:
 
 # Avoid two releases racing if pushes land back-to-back.
 concurrency:

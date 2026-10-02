@@ -457,7 +457,7 @@ export interface WriteResult {
  * attributes. A one-pass map can therefore leave a second session token for an
  * upstream. Nginx map has no global replacement, so chain bounded passes while
  * preserving every unrelated application cookie. */
-const COOKIE_STRIP_PASSES = 8;
+export const COOKIE_STRIP_PASSES = 8;
 const cookieStripMaps: string[] = [
   "# Managed by NginUX - strip nginux_session before proxying upstream (see nginx.ts).",
 ];

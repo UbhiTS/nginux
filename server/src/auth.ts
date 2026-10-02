@@ -422,8 +422,14 @@ export function parseCookie(header: string | undefined): Record<string, string> 
 /** Every value sent for `name`, in header order. A browser sends ALL cookies whose
  *  Domain/Path match, so a sibling app behind the proxy (or a stale host-only cookie)
  *  can add a second `nginux_session`; callers try each until one resolves to a live
- *  session instead of trusting whichever happened to be last. Bounded to 8 values so a
- *  hostile header cannot turn one request into many session lookups. */
+ *  session instead of trusting whichever happened to be last. Bounded so a hostile
+ *  header cannot turn one request into many session lookups - but the bound must sit
+ *  well ABOVE nginx's 8-pass cookie-strip budget (`COOKIE_STRIP_PASSES`): when a
+ *  header carries more duplicates than that, nginx drops the whole Cookie header for
+ *  the upstream (fail closed) yet still forwards it unchanged on the auth subrequest,
+ *  and a valid session listed after the decoys must keep authenticating. Each extra
+ *  candidate costs one hashed, indexed lookup, so 32 is cheap and generous. */
+export const MAX_SESSION_COOKIES = 32;
 export function parseCookieAll(header: string | undefined, name: string): string[] {
   const out: string[] = [];
   if (!header) return out;
@@ -432,7 +438,7 @@ export function parseCookieAll(header: string | undefined, name: string): string
     if (k !== name) continue;
     const raw = v.join("=");
     try { out.push(decodeURIComponent(raw)); } catch { out.push(raw); }
-    if (out.length >= 8) break;
+    if (out.length >= MAX_SESSION_COOKIES) break;
   }
   return out;
 }
