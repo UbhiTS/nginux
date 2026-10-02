@@ -50,7 +50,6 @@ const INVALID_PATCHES: Record<string, unknown>[] = [
   { customHeaders: "X-Leak: $http_cookie" }, // nginx variable expansion leaks HttpOnly session
   { customHeaders: "X-Escape: trailing\\" }, // escapes generated closing quote
   { pathRules: "/a 1.2.3.4:80 extra" },     // trailing junk after host:port
-  { certDomain: "../etc" },                 // traversal into the cert dir
   { upstreams: "not-a-hostport" },          // not a host:port
   { forwardHost: "169.254.169.254" },       // cloud metadata proxy exposure
   { upstreams: "100.100.100.200:80" },      // Alibaba metadata
@@ -73,6 +72,15 @@ test("REST and agent paths REJECT the same invalid patches (no drift)", () => {
     // The invariant that matters: the two paths reach the SAME verdict.
     assert.equal(restAccepts(p), agentAccepts(p), `paths disagree on ${JSON.stringify(p)}`);
   }
+});
+
+test("certDomain: REST rejects traversal; the agent path may not set it at all (stripped, v0.1.22)", () => {
+  assert.equal(restAccepts({ certDomain: "../etc" }), false, "REST must reject traversal into the cert dir");
+  // Selecting which certificate a host serves is a security-posture decision, so
+  // agents can no longer set it (FORBIDDEN_TOOL_FIELDS) - the key is dropped, never
+  // forwarded to the validator or the DB.
+  assert.deepEqual(sanitizeHostPatch({ certDomain: "../etc" }), {});
+  assert.deepEqual(sanitizeHostPatch({ certDomain: "other.example.com" }), {});
 });
 
 // -------------------------------------------------------------------------

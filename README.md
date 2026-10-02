@@ -320,6 +320,8 @@ Set via environment variables (the Docker image ships sensible defaults):
 | `NGINUX_CONTROL_URL` | Where nginx reaches the control plane for forward-auth. | `http://127.0.0.1:6767` |
 | `NGINUX_AUDIT_RETAIN_DAYS` | Audit-log retention before pruning. | `90` |
 | `NGINUX_SSE_MAX` | Max concurrent SSE connections. | `200` |
+| `NGINUX_SSE_PER_PRINCIPAL` | Max concurrent SSE streams per user session / API token, so one client cannot hoard every slot. | `5` |
+| `NGINUX_SELF_PROBE` | Set `0` to skip the live probe that detects a service whose upstream is *this* NginUX instance behind a LAN IP or remapped port. The static loopback / `NGINUX_CONTROL_URL` checks always apply. | (on) |
 | `NGINUX_DEMO_TRAFFIC` | Set `1` to feed synthetic traffic (never auto-on in prod). | - |
 
 Credentials (GoDaddy, Cloudflare, Let's Encrypt email, notification tokens) are

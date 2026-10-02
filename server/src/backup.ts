@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { VERSION } from "./version.ts";
-import { getSettings, redactSettings, saveSettings, SECRET_SETTING_KEYS } from "./db.ts";
+import { getSettings, maskSecretSettings, saveSettings, SECRET_SETTING_KEYS } from "./db.ts";
 import { listHosts, replaceAllHosts } from "./repo.ts";
 import { listBans, replaceAllBans, type Ban } from "./bans.ts";
 import { listChannels, listChannelsRaw, replaceAllChannels, validateChannelConfig, type Channel, type ChannelType } from "./notify.ts";
-import { hostInput, isControlPlaneDomain, normalizeProtocolFields, protocolCapabilityError, streamPortConflictError } from "./hostschema.ts";
+import { controlPlaneTargetError, hostInput, isControlPlaneDomain, normalizeProtocolFields, protocolCapabilityError, streamPortConflictError } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
 import { isIpOrCidr } from "./validate.ts";
 import type { ProxyHost, Settings } from "./types.ts";
@@ -39,7 +39,7 @@ export function buildBundle(createdAt: string, includeSecrets: boolean): Bundle 
     createdAt,
     includesSecrets: includeSecrets,
     hosts: listHosts(),
-    settings: includeSecrets ? getSettings() : redactSettings(getSettings()),
+    settings: includeSecrets ? getSettings() : maskSecretSettings(getSettings()),
     bans: listBans(),
     channels: includeSecrets ? listChannelsRaw() : listChannels(),
   };
@@ -99,7 +99,7 @@ export function restoreBundle(raw: unknown): RestoreResult {
   const now = new Date().toISOString();
 
   // Settings: apply only real (non-masked) values, so a redacted bundle keeps the
-  // current secrets. A masked secret is the "••••" placeholder from redactSettings.
+  // current secrets. A masked secret is the "••••" placeholder from maskSecretSettings.
   const settingsPatch: Record<string, unknown> = {};
   const masked = new Set<string>(SECRET_SETTING_KEYS);
   for (const [k, v] of Object.entries(b.settings)) {
@@ -122,6 +122,10 @@ export function restoreBundle(raw: unknown): RestoreResult {
     if (isControlPlaneDomain(normalized.domain, normalized.forwardHost, normalized.forwardPort, normalized.forwardScheme, effectiveSettings)) {
       throw new Error(`Invalid backup bundle: ${normalized.domain} conflicts with the NginUX sign-in portal domain.`);
     }
+    // Restore runs as admin, so an HTTP portal forward to the control plane is fine -
+    // but a bundle may never plant a stream / pool / path-rule route to it.
+    const cpErr = controlPlaneTargetError(normalized, { admin: true });
+    if (cpErr) throw new Error(`Invalid backup bundle: ${normalized.domain} ${cpErr}`);
     return {
       ...normalized,
       health: "unknown",

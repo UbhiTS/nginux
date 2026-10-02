@@ -22,9 +22,11 @@ export interface SyslogTarget { proto: "udp" | "tcp"; host: string; port: number
 
 /** Parse syslog://host[:port] | syslog+udp://... | syslog+tcp://... (default 514/udp). */
 export function parseSyslogUrl(url: string): SyslogTarget | null {
-  const m = /^syslog(?:\+(udp|tcp))?:\/\/([^:/\s]+)(?::(\d+))?\/?$/i.exec(url.trim());
+  const m = /^syslog(?:\+(udp|tcp))?:\/\/([^:/\s]+)(?::(\d{1,5}))?\/?$/i.exec(url.trim());
   if (!m) return null;
-  return { proto: (m[1]?.toLowerCase() as "udp" | "tcp") ?? "udp", host: m[2], port: m[3] ? Number(m[3]) : 514 };
+  const port = m[3] ? Number(m[3]) : 514;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return { proto: (m[1]?.toLowerCase() as "udp" | "tcp") ?? "udp", host: m[2], port };
 }
 
 export function isSyslogUrl(url: string): boolean {

@@ -154,7 +154,31 @@ function capStatMap(map: Map<string, Stat>) {
   for (const [k, v] of keep) map.set(k, v);
 }
 
+// Per-time-bucket host maps (hostSecond/hostMinute/hostStatHour) are each bounded, but
+// a flood of distinct Host headers touches EVERY live bucket at once, so their cap must be
+// far tighter than the global one: 150 buckets×5000 hosts would still be a large heap.
+// A homelab serves tens of hosts, not hundreds; the cold half is evicted past the cap.
+const PER_BUCKET_HOSTS = 200;
+function capBucketHosts(map: Map<string, Stat>) {
+  if (map.size <= PER_BUCKET_HOSTS) return;
+  const keep = [...map.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, PER_BUCKET_HOSTS >> 1);
+  map.clear();
+  for (const [k, v] of keep) map.set(k, v);
+}
+// Request-derived strings become Map keys in many places; bound their LENGTH too, so a
+// unique 8 KB path/UA per request can't make each key cost kilobytes. (Security audit
+// 2026-10-01.)
+const MAX_KEY_CHARS = 256;
+const MAX_HOST_CHARS = 253;
+const clip = (s: unknown, max: number): string => { const v = typeof s === "string" ? s : String(s ?? ""); return v.length > max ? v.slice(0, max) : v; };
+
 export function ingest(e: LogEntry): void {
+  e.host = clip(e.host, MAX_HOST_CHARS).toLowerCase();
+  e.path = clip(e.path, MAX_KEY_CHARS);
+  e.ua = clip(e.ua, MAX_KEY_CHARS);
+  e.ip = clip(e.ip, 64);
+  e.country = clip(e.country, 8);
+  e.method = clip(e.method, 16);
   ring.push(e);
   if (ring.length > RING_MAX) ring.shift();
 
@@ -178,13 +202,13 @@ export function ingest(e: LogEntry): void {
   let hsec = hostSecond.get(second);
   if (!hsec) { hsec = new Map(); hostSecond.set(second, hsec); }
   const hsv = hsec.get(e.host) ?? emptyStat();
-  bumpStat(hsv, e); hsec.set(e.host, hsv); capStatMap(hsec);
+  bumpStat(hsv, e); hsec.set(e.host, hsv); capBucketHosts(hsec);
   if (hostSecond.size > 150) hostSecond.delete(hostSecond.keys().next().value as number);
 
   let hm = hostMinute.get(minute);
   if (!hm) { hm = new Map(); hostMinute.set(minute, hm); }
   const hmv = hm.get(e.host) ?? emptyStat();
-  bumpStat(hmv, e); hm.set(e.host, hmv); capStatMap(hm);
+  bumpStat(hmv, e); hm.set(e.host, hmv); capBucketHosts(hm);
   if (hostMinute.size > 1500) hostMinute.delete(hostMinute.keys().next().value as number);
 
   // Hour rollups (global + per-host) for the long-range traffic graph.
@@ -195,7 +219,7 @@ export function ingest(e: LogEntry): void {
   let hmh = hostStatHour.get(hour);
   if (!hmh) { hmh = new Map(); hostStatHour.set(hour, hmh); }
   const hmhv = hmh.get(e.host) ?? emptyStat();
-  bumpStat(hmhv, e); hmh.set(e.host, hmhv); capStatMap(hmh);
+  bumpStat(hmhv, e); hmh.set(e.host, hmhv); capBucketHosts(hmh);
   if (hostStatHour.size > HOUR_CAP) hostStatHour.delete(hostStatHour.keys().next().value as number);
 
   const bh = byHostStat.get(e.host) ?? emptyStat();
@@ -345,7 +369,7 @@ const MAP_COUNTRIES = 50;
  *  buckets. Long-range top lists are approximate (top-K-per-minute merged) and
  *  p50/p95 are histogram-based. Unknown / "live" -> cumulative snapshot. */
 export function rangeSummary(range: string) {
-  const minutes = range === "live" ? 5 : RANGE_MINUTES[range];
+  const minutes = range === "live" ? 5 : (Object.hasOwn(RANGE_MINUTES, range) ? RANGE_MINUTES[range] : 0);
   if (!minutes) return summary();
   // Short ranges read per-minute buckets (finer, ~25h retained); ranges past a day
   // read the hour rollups so 7d/30d actually cover their whole window.
@@ -391,7 +415,7 @@ export function rangeSummary(range: string) {
  *  scan stops as soon as it passes the window's start. */
 export async function hostSummary(domain: string, range: string) {
   const dom = domain.toLowerCase();
-  const minutes = range === "live" ? 5 : (RANGE_MINUTES[range] ?? 1440);
+  const minutes = range === "live" ? 5 : (Object.hasOwn(RANGE_MINUTES, range) ? RANGE_MINUTES[range] : 1440);
   const cutoff = Date.now() - minutes * 60_000;
   let count = 0, out = 0;
   const status = [0, 0, 0, 0];

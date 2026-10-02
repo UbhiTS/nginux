@@ -6,6 +6,7 @@ import { db } from "./db.ts";
 import { logEvent } from "./auth.ts";
 import { subscribe } from "./events.ts";
 import { applyConfig } from "./nginx.ts";
+import { isIpOrCidr } from "./validate.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BANNED_FILE = process.env.NGINX_BANNED_FILE ?? join(__dirname, "..", "..", "nginx", "banned.conf");
@@ -60,12 +61,24 @@ export function listBans(): Ban[] {
     .all(new Date().toISOString()) as Row[]).map(toBan);
 }
 
+/** The ban `ip` column is emitted verbatim into nginx `geo`/`deny` directives, so the
+ *  SINK validates it — not only the routes/tools that happen to call it. Anything that is
+ *  not a plain IPv4/IPv6 address or CIDR (no zone ids, no `;`/newlines/braces, no names)
+ *  is refused here, independent of which caller (REST, MCP tool, backup restore, the
+ *  auto-ban subscriber) produced it. (Security audit 2026-10-01.) */
+export function assertBanTarget(ip: string): string {
+  const v = String(ip ?? "").trim();
+  if (!isIpOrCidr(v)) throw new Error("Ban target must be a valid IP address or CIDR range.");
+  return v;
+}
+
 export function addBan(ip: string, reason: string, source: Ban["source"] = "manual", ttlMs = BAN_MS): Ban {
+  ip = assertBanTarget(ip);
   const now = Date.now();
   db.prepare(
     "INSERT INTO bans (ip, reason, source, createdAt, expiresAt) VALUES (?,?,?,?,?) " +
     "ON CONFLICT(ip) DO UPDATE SET reason=excluded.reason, source=excluded.source, expiresAt=excluded.expiresAt",
-  ).run(ip, reason, source, new Date(now).toISOString(), ttlMs ? new Date(now + ttlMs).toISOString() : null);
+  ).run(ip, String(reason ?? "").slice(0, 200), source, new Date(now).toISOString(), ttlMs ? new Date(now + ttlMs).toISOString() : null);
   writeBannedConf();
   scheduleBannedApply();
   return toBan(db.prepare("SELECT * FROM bans WHERE ip = ?").get(ip) as Row);
@@ -78,16 +91,19 @@ export function removeBan(ip: string): boolean {
 }
 
 /** Replace the whole ban list (backup restore), in one transaction, then rewrite
- *  the nginx deny-list. Returns how many bans were restored. */
+ *  the nginx deny-list. Entries that are not a valid IP/CIDR are skipped rather than
+ *  written (a tampered bundle must not become config injection). Returns how many
+ *  bans were restored. */
 export function replaceAllBans(bans: Ban[]): number {
   const insert = db.prepare(
     "INSERT OR REPLACE INTO bans (ip, reason, source, createdAt, expiresAt) VALUES (?,?,?,?,?)",
   );
+  const valid = bans.filter((b) => isIpOrCidr(String(b?.ip ?? "").trim()));
   db.exec("BEGIN");
   try {
     db.prepare("DELETE FROM bans").run();
-    for (const b of bans) {
-      insert.run(b.ip, b.reason ?? "", b.source ?? "manual", b.createdAt ?? new Date().toISOString(), b.expiresAt ?? null);
+    for (const b of valid) {
+      insert.run(String(b.ip).trim(), String(b.reason ?? "").slice(0, 200), b.source ?? "manual", b.createdAt ?? new Date().toISOString(), b.expiresAt ?? null);
     }
     db.exec("COMMIT");
   } catch (err) {
@@ -96,7 +112,7 @@ export function replaceAllBans(bans: Ban[]): number {
   }
   writeBannedConf();
   scheduleBannedApply();
-  return bans.length;
+  return valid.length;
 }
 
 /** Write the deny-list snippet included by the base nginx http block. */
@@ -114,7 +130,9 @@ export function writeBannedConf(): void {
   // ipAllow/ipDeny) — a variable check applies unconditionally, so bans are no longer
   // silently bypassed on the exact hosts an admin bothered to lock down. Mirrors how the
   // country-lock ($nginux_allowed_country) already works. (Security audit 2026-07-12.)
-  const bans = listBans();
+  // Last line of defence: a row that is somehow not an IP/CIDR (older DB, direct SQL
+  // edit) is dropped from the generated files instead of being emitted as a directive.
+  const bans = listBans().filter((b) => isIpOrCidr(b.ip));
   const entries = bans.map((b) => `    ${b.ip} 1;`).join("\n");
   writeFileSync(
     BANNED_FILE,
@@ -209,7 +227,9 @@ export function startBanEngine(): void {
   subscribe((e) => {
     if (e.type !== "login.failed") return;
     const ip = String(e.data?.ip ?? "").trim();
-    if (!ip || isLocalIp(ip)) return; // never auto-ban loopback/LAN (internet brute-force only)
+    // Only a syntactically valid single address is ever auto-banned: the value is written
+    // into nginx config, so a malformed/forged source string must be ignored, not stored.
+    if (!ip || isIP(ip) === 0 || isLocalIp(ip)) return; // never auto-ban loopback/LAN (internet brute-force only)
     const now = Date.now();
     const hitCount = noteLoginFailure(ip, now);
     if (hitCount >= THRESHOLD) {

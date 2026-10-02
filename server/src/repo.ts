@@ -50,8 +50,33 @@ export function getHostByDomainCached(domain: string): ProxyHost | null {
   hostByDomainCache.set(domain, h);
   return h;
 }
+
+/** Served-row variant for the forward-auth gate: resolve `domain` the way nginx
+ *  does. nginx only emits an HTTP server block for ENABLED http/grpc rows, so a
+ *  disabled row or a tcp/udp/sni row with the same name is NOT what is serving the
+ *  request - the covering `*.wildcard` block is, and ITS policy (require2fa, scope)
+ *  must apply. Resolving the shadow row instead let a scoped user flip their own
+ *  host to disabled and pass the gate on the wildcard's upstream, and admitted
+ *  non-2FA users to a require2fa wildcard through a stream row (security audit
+ *  2026-10-01). Exact served row first, then the served `*.parent` row. */
+const servingHostCache = new Map<string, ProxyHost | null>();
+export function getServingHttpHostByDomainCached(domain: string): ProxyHost | null {
+  const hit = servingHostCache.get(domain);
+  if (hit !== undefined) return hit;
+  if (servingHostCache.size > 1000) servingHostCache.clear();
+  const served = (h: ProxyHost | null): ProxyHost | null =>
+    h && h.enabled && (h.protocol === "http" || h.protocol === "grpc") ? h : null;
+  let h = served(getHostByDomain(domain));
+  if (!h) {
+    const dot = domain.indexOf(".");
+    if (dot > 0) h = served(getHostByDomain("*." + domain.slice(dot + 1)));
+  }
+  servingHostCache.set(domain, h);
+  return h;
+}
 function invalidateHostCache(): void {
   hostByDomainCache.clear();
+  servingHostCache.clear();
 }
 
 export function createHost(input: NewProxyHost): ProxyHost {

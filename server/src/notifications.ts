@@ -41,11 +41,14 @@ const list = (names: string[]) => names.join(", ");
 /**
  * Compute the current actionable notifications. `isManager` (admin/editor) unlocks
  * the operational/security notices that only they can act on; everyone sees
- * service-reachability problems.
+ * service-reachability problems — but only for hosts `canSee` admits, so a scoped
+ * user is never told the names/ids of services outside their scope. (Security audit
+ * 2026-10-01.)
  */
-export async function buildNotifications(opts: { isManager: boolean }): Promise<AppNotification[]> {
+export async function buildNotifications(opts: { isManager: boolean; canSee?: (h: { id: string; name: string; domain: string }) => boolean }): Promise<AppNotification[]> {
   const out: AppNotification[] = [];
-  const enabled = listHosts().filter((h) => h.enabled);
+  const canSee = opts.canSee ?? (() => true);
+  const enabled = listHosts().filter((h) => h.enabled && canSee(h));
 
   // 1. Is the data plane actually listening? (prod only - dev has no bundled nginx)
   if (IS_PROD) {

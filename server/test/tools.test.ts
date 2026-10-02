@@ -102,12 +102,13 @@ test("sanitizeHostPatch throws on nginx-directive / traversal injection", () => 
     { forwardScheme: "ftp" },                    // off-enum scheme
     { customHeaders: "X-Foo: a\nb" },            // newline breaks out of the header
     { pathRules: "/a 1.2.3.4:80 extra" },        // trailing junk after host:port
-    { certDomain: "../etc" },                    // path traversal into cert dir
     { upstreams: "not-a-hostport" },             // not a host:port
   ];
   for (const patch of bad) {
     assert.throws(() => sanitizeHostPatch(patch), Error, JSON.stringify(patch));
   }
+  // certDomain is forbidden for agents outright (v0.1.22): stripped, not validated.
+  assert.deepEqual(sanitizeHostPatch({ certDomain: "../etc" }), {});
 });
 
 // -------------------------------------------------------------------------

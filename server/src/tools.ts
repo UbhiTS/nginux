@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { db, getSettings, redactSettings, saveSettings } from "./db.ts";
+import { db, getSettings, maskSecretSettings, redactSettings, saveSettings } from "./db.ts";
 import { listEvents, listUsers, logEvent, scopedAllows, securityExposure, securityOverview, type User } from "./auth.ts";
 import { createHost, deleteHost, getHost, getHostByDomain, getTopology, listHosts, updateHost } from "./repo.ts";
 import { deleteCert, ensureCert, getCert, getCertDetails, issue, listCerts, setAutoRenew } from "./certs.ts";
@@ -13,11 +13,14 @@ import { PRESETS } from "./presets.ts";
 import type { AgentPrincipal, Scope } from "./tokens.ts";
 import { isHostname, isIpOrCidr } from "./validate.ts";
 import {
+  controlPlaneTargetError,
+  frontsControlPlane,
   hostInput,
   isControlPlaneDomain,
   normalizeProtocolFields,
   protocolCapabilityError,
   protocolSupportsHttpControls,
+  publishesThisControlPlane,
 } from "./hostschema.ts";
 import { settingsInput } from "./settingsschema.ts";
 import type { ProxyHost } from "./types.ts";
@@ -39,7 +42,39 @@ const FORBIDDEN_TOOL_FIELDS = new Set([
   // `ssl:false` downgrades HTTPS→plaintext; `preset` can disable exploit-path blocking.
   // None may be changed via the low-trust agent path (security audit 2026-07-12).
   "protocol", "listenPort", "ssl", "upstreamTlsVerify", "preset",
+  // `certDomain` selects WHICH private key nginx loads for the host (another host's
+  // wildcard) - TLS posture, not management. (Security audit 2026-10-01.)
+  "certDomain",
 ]);
+
+/** Admin-level trust for the control-plane rules: an admin user, or a token holding
+ *  the top-trust `security` scope. Approval-executed handlers receive NO principal
+ *  and are therefore treated as non-admin (the approver's role is not inherited). */
+function isAdminPrincipal(p: Principal | undefined): boolean {
+  return p?.kind === "user" ? p.user.role === "admin" : !!p?.scopes.includes("security");
+}
+
+/** Throw when a proposed host would publish the control plane (static rule for
+ *  everyone, live self-probe for non-admins). Mirrors rejectControlPlaneTarget in index.ts. */
+async function assertNotControlPlaneTarget(
+  h: Parameters<typeof controlPlaneTargetError>[0] & { forwardScheme: "http" | "https" },
+  p: Principal | undefined,
+  probe: boolean,
+): Promise<void> {
+  const admin = isAdminPrincipal(p);
+  const err = controlPlaneTargetError(h, { admin });
+  if (err) throw new Error(err);
+  if (!admin && probe && await publishesThisControlPlane(h)) {
+    throw new Error("That upstream is this NginUX instance (reached through its LAN address or a remapped port). Only an admin may publish the control plane.");
+  }
+}
+
+/** The portal / control-plane-fronting host is admin territory on the agent path too. */
+function assertMayTouchControlPlaneHost(h: Pick<ProxyHost, "domain" | "forwardHost" | "forwardPort">, p: Principal | undefined): void {
+  if (frontsControlPlane(h) && !isAdminPrincipal(p)) {
+    throw new Error("Only an admin may change, pause, or remove the service that fronts the NginUX control plane (the sign-in portal).");
+  }
+}
 
 /** Strip forbidden fields, then validate the rest through the SAME schema the
  *  REST boundary uses (`hostInput`, partial). This is the agent-path security
@@ -50,9 +85,10 @@ export function sanitizeHostPatch(raw: Record<string, unknown>): Partial<ProxyHo
   // 1. Drop fields an agent may never set: DB-managed / raw-config / security
   //    posture. Stripping BEFORE validation matters - these fields exist in the
   //    schema and would otherwise pass as "valid" (e.g. requireLogin:false).
-  const candidate: Record<string, unknown> = {};
+  const candidate: Record<string, unknown> = Object.create(null);
   for (const [k, v] of Object.entries(raw)) {
     if (FORBIDDEN_TOOL_FIELDS.has(k)) continue;
+    if (k === "__proto__" || k === "constructor" || k === "prototype") continue; // never merge prototype keys
     candidate[k] = v;
   }
   // 2. Validate the remainder with the shared schema (partial: only-present fields).
@@ -279,8 +315,8 @@ export const TOOLS: Record<string, Tool> = {
       preset: { type: "string" }, ssl: { type: "boolean" }, websockets: { type: "boolean" },
       http2: { type: "boolean" }, requireLogin: { type: "boolean" }, require2fa: { type: "boolean" },
     }, ["name", "domain", "forwardHost", "forwardPort"]),
-    summarize: (a) => `expose ${a.name} at ${a.domain}`,
-    handler: async (a) => {
+    summarize: (a) => `expose ${a.name} at ${a.domain} → ${a.forwardScheme ?? "http"}://${a.forwardHost}:${a.forwardPort}${a.requireLogin === false ? " (NO login gate)" : ""}`,
+    handler: async (a, p) => {
       const candidate = {
         ...a,
         requireLogin: a.requireLogin !== false,
@@ -300,6 +336,7 @@ export const TOOLS: Record<string, Tool> = {
       if (isControlPlaneDomain(domain, forwardHost, port, forwardScheme)) {
         throw new Error("That domain is where NginUX itself runs; forward it to the exact control plane target or pick another.");
       }
+      await assertNotControlPlaneTarget(normalized, p, true);
       const host = createHost(normalized);
       if (host.ssl) { try { await ensureCert(host.domain); } catch { /* non-fatal */ } }
       await applyOrRevert(() => deleteHost(host.id));
@@ -313,11 +350,18 @@ export const TOOLS: Record<string, Tool> = {
     // every FORBIDDEN_TOOL_FIELD before the patch is applied, so flexible args are safe here.
     flexibleArgs: true,
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
-    summarize: (a) => `update service ${a.id}`,
-    handler: async (a) => {
+    // The approver must see WHAT changes, not just which host: list the patch (values
+    // are host fields, never secrets; capped so a huge patch can't flood the queue UI).
+    summarize: (a) => {
+      const { id, ...patch } = a;
+      const body = JSON.stringify(patch);
+      return `update service ${id}: ${body.length > 200 ? body.slice(0, 200) + "…" : body}`;
+    },
+    handler: async (a, p) => {
       const { id, ...patch } = a;
       const prev = getHost(String(id));
       if (!prev) throw new Error("Service not found.");
+      assertMayTouchControlPlaneHost(prev, p);
       const safePatch = sanitizeHostPatch(patch);
       const merged = { ...prev, ...safePatch };
       const capabilityError = protocolCapabilityError(merged);
@@ -326,6 +370,9 @@ export const TOOLS: Record<string, Tool> = {
       if (isControlPlaneDomain(merged.domain, merged.forwardHost, merged.forwardPort, merged.forwardScheme)) {
         throw new Error("The public NginUX portal must forward to the exact configured control plane.");
       }
+      const targetsChanged = normalized.forwardHost !== prev.forwardHost || normalized.forwardPort !== prev.forwardPort
+        || normalized.forwardScheme !== prev.forwardScheme || normalized.upstreams !== prev.upstreams || normalized.pathRules !== prev.pathRules;
+      await assertNotControlPlaneTarget(normalized, p, targetsChanged);
       const h = updateHost(String(id), normalized);
       await applyOrRevert(() => updateHost(String(id), prev));
       return h;
@@ -336,7 +383,13 @@ export const TOOLS: Record<string, Tool> = {
     description: "Serve (enabled=true) or pause (enabled=false) a host without deleting it.",
     inputSchema: obj({ id: { type: "string" }, enabled: { type: "boolean" } }, ["id", "enabled"]),
     summarize: (a) => `${a.enabled === false ? "pause" : "serve"} service ${a.id}`,
-    handler: async (a) => { const prev = getHost(String(a.id)); const h = updateHost(String(a.id), { enabled: a.enabled !== false }); await applyOrRevert(() => { if (prev) updateHost(String(a.id), prev); }); return h; },
+    handler: async (a, p) => {
+      const prev = getHost(String(a.id));
+      if (prev) assertMayTouchControlPlaneHost(prev, p);
+      const h = updateHost(String(a.id), { enabled: a.enabled !== false });
+      await applyOrRevert(() => { if (prev) updateHost(String(a.id), prev); });
+      return h;
+    },
   },
   enable_login: {
     name: "enable_login", title: "Require login on a host", scope: "control", tier: "low",
@@ -406,7 +459,8 @@ export const TOOLS: Record<string, Tool> = {
     summarize: (a) => `issue client cert "${a.name}" for ${a.id}`,
     handler: async (a) => {
       const name = String(a.name);
-      if (name.length < 1 || name.length > 64 || /[\r\n]/.test(name)) throw new Error("Client certificate name must be 1-64 characters.");
+      // eslint-disable-next-line no-control-regex
+      if (name.length < 1 || name.length > 64 || /[\r\n\0]/.test(name)) throw new Error("Client certificate name must be 1-64 characters without control characters.");
       const h = getHost(String(a.id));
       if (!h) throw new Error("Service not found.");
       if (!protocolSupportsHttpControls(h.protocol)) throw new Error("mTLS issuance requires HTTP/gRPC TLS termination.");
@@ -447,7 +501,13 @@ export const TOOLS: Record<string, Tool> = {
     description: "Remove a host entirely (takes it offline).",
     inputSchema: obj({ id: { type: "string" } }, ["id"]),
     summarize: (a) => `delete service ${a.id}`,
-    handler: async (a) => { const ok = deleteHost(String(a.id)); await applyConfig(); return { ok }; },
+    handler: async (a, p) => {
+      const prev = getHost(String(a.id));
+      if (prev) assertMayTouchControlPlaneHost(prev, p);
+      const ok = deleteHost(String(a.id));
+      await applyConfig();
+      return { ok };
+    },
   },
   revoke_client_cert: {
     name: "revoke_client_cert", title: "Revoke mTLS client cert", scope: "security", tier: "high",
@@ -482,7 +542,12 @@ export const TOOLS: Record<string, Tool> = {
     name: "update_settings", title: "Update settings", scope: "security", tier: "high", adminOnly: true,
     description: "Change instance settings (e.g. homeCountry, dnsProvider, letsEncryptEmail). Provider credentials can be set but never read back.",
     inputSchema: obj({ patch: { type: "object" } }, ["patch"]),
-    summarize: () => "update settings",
+    // Keys only - values may be secrets. Approvers must still see e.g. that
+    // `ssoForwardSecret` / `agentAutoApprove` is what's being changed.
+    summarize: (a) => {
+      const keys = a.patch && typeof a.patch === "object" ? Object.keys(a.patch as Record<string, unknown>).slice(0, 20) : [];
+      return `update settings: ${keys.join(", ") || "(empty patch)"}`;
+    },
     handler: async (a) => {
       const raw = (a.patch as Record<string, unknown>) ?? {};
       // Validate through the SAME schema as REST (settingsschema.ts): unknown keys
@@ -500,7 +565,11 @@ export const TOOLS: Record<string, Tool> = {
         await applyConfig();
         throw new Error(apply.message || "nginx rejected the generated config.");
       }
-      return redactSettings(getSettings());
+      const changedKeys = Object.keys(parsed.data);
+      if (changedKeys.length) {
+        logEvent({ type: "settings.updated", severity: "notice", actor: "agent", summary: `Updated settings via agent tool: ${changedKeys.join(", ")}`, ip: "", meta: { keys: changedKeys } });
+      }
+      return maskSecretSettings(getSettings()); // security scope == admin-equivalent: full view, credentials masked
     },
   },
 };
@@ -615,7 +684,8 @@ function validateToolArgs(tool: Tool, args: Record<string, unknown>): string | n
 }
 
 export async function callTool(principal: Principal, name: string, rawArgs: Record<string, unknown>): Promise<ToolResult> {
-  const tool = TOOLS[name];
+  // Own-key lookup: `TOOLS["constructor"]` / `"__proto__"` are inherited values, not tools.
+  const tool = Object.hasOwn(TOOLS, name) ? TOOLS[name] : undefined;
   if (!tool) return { status: "error", tool: name, message: `Unknown tool: ${name}` };
   if (!principal.scopes.includes(tool.scope)) {
     return { status: "error", tool: name, message: `This caller lacks the "${tool.scope}" scope needed for ${name}.` };
@@ -654,7 +724,12 @@ export async function callTool(principal: Principal, name: string, rawArgs: Reco
 
   try {
     const result = await tool.handler(args, principal);
-    logEvent({ type: "agent.tool_called", severity: "info", actor: principal.name, summary: tool.summarize(args), ip: "", meta: { tool: name, tier: tool.tier } });
+    // Read-tier tools change nothing and are not audited per call: a `read`-scope
+    // token could otherwise insert tens of thousands of `agent.tool_called` rows and
+    // have pruneAuditLog's hard cap evict the real security trail (audit 2026-10-01).
+    if (tool.tier !== "read") {
+      logEvent({ type: "agent.tool_called", severity: "info", actor: principal.name, summary: tool.summarize(args), ip: "", meta: { tool: name, tier: tool.tier } });
+    }
     return { status: "ok", tool: name, tier: tool.tier, result };
   } catch (err) {
     return { status: "error", tool: name, message: err instanceof Error ? err.message : "Tool failed." };
@@ -683,7 +758,7 @@ export async function decideApproval(id: string, approve: boolean, decidedBy: st
   ).run(decidedBy, new Date().toISOString(), id);
   if (!claimed.changes) return toApproval(db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as Row);
 
-  const tool = TOOLS[ap.tool];
+  const tool = Object.hasOwn(TOOLS, ap.tool) ? TOOLS[ap.tool] : undefined;
   let result: unknown = null;
   try {
     result = tool ? await tool.handler(ap.args) : { error: "tool no longer exists" };

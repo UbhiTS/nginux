@@ -82,7 +82,9 @@ function maskConfig(config: Record<string, string>): Record<string, string> {
     // Secret-bearing keys are always masked (even short ones); semi-sensitive
     // identifiers (user/url) are partially shown for readability.
     const secret = /token|secret|key|pass|pwd|auth/i.test(k);
-    const semi = /user|url/i.test(k);
+    // ntfy topics / Telegram chat ids are capabilities too (knowing them lets anyone
+    // read or post), so they get the same partial masking as user/url.
+    const semi = /user|url|topic|chat/i.test(k);
     if (secret && v) out[k] = v.length > 6 ? v.slice(0, 4) + "••••" : "••••";
     else if (semi && v.length > 6) out[k] = v.slice(0, 4) + "••••";
     else out[k] = v;
@@ -175,13 +177,17 @@ async function deliver(ch: Channel, title: string, message: string): Promise<{ o
       case "discord":
         res = await safeOutboundRequest(c.url, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: `**${title}**\n${message}` }), timeoutMs: 5000,
+          // Low-privilege users control host names that end up in alert text; never let
+          // such text ping @everyone/@here/roles. (Security audit 2026-10-01.)
+          body: JSON.stringify({ content: `**${title}**\n${message}`, allowed_mentions: { parse: [] } }), timeoutMs: 5000,
         });
         break;
       case "slack":
         res = await safeOutboundRequest(c.url, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: `*${title}*\n${message}` }), timeoutMs: 5000,
+          // Slack mrkdwn: `&`, `<`, `>` are control characters (links, mentions, channel
+          // refs); escape them so alert text stays literal.
+          body: JSON.stringify({ text: `*${slackEscape(title)}*\n${slackEscape(message)}` }), timeoutMs: 5000,
         });
         break;
       case "telegram":
@@ -223,10 +229,37 @@ async function deliver(ch: Channel, title: string, message: string): Promise<{ o
     db.prepare("UPDATE channels SET lastStatus = ? WHERE id = ?").run(status, ch.id);
     return { ok: res.ok, status };
   } catch (err) {
-    const status = `failed: ${err instanceof Error ? err.message : "unreachable"}`;
+    // Store/return a fixed failure category, never the raw error text: the message can
+    // carry a remote service's greeting banner or stack detail (a read primitive against
+    // whatever the channel points at). Full detail stays in the server log.
+    const status = `failed: ${failureCategory(err)}`;
+    console.warn(`[notify] channel ${ch.id} (${ch.type}) delivery failed: ${err instanceof Error ? err.message : String(err)}`);
     db.prepare("UPDATE channels SET lastStatus = ? WHERE id = ?").run(status, ch.id);
     return { ok: false, status };
   }
+}
+
+/** Escape Slack mrkdwn control characters (per Slack's formatting rules). */
+function slackEscape(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Collapse an arbitrary delivery error into one of a few neutral categories. Only
+ *  NginUX's own validation messages (thrown before any network I/O) surface verbatim. */
+const OWN_VALIDATION_MESSAGES = new Set([
+  "That destination host is not allowed.", "That destination resolves to a blocked metadata/link-local address.",
+  "Invalid URL.", "Only http(s) URLs are allowed.", "That SMTP host is not allowed.", "Invalid ntfy topic name.",
+  "Invalid Telegram bot token.", "ntfy topic is required.", "gotify server and token are required.",
+  "Telegram bot token is required.", "Invalid outbound header name.",
+]);
+function failureCategory(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  if (OWN_VALIDATION_MESSAGES.has(msg)) return msg;
+  if (/abort|timed? ?out|ETIMEDOUT/i.test(msg)) return "timeout";
+  if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET|EHOSTUNREACH|ENETUNREACH|getaddrinfo|socket hang up|fetch failed/i.test(msg)) return "unreachable";
+  if (/certificate|TLS|SSL|self[- ]signed|handshake/i.test(msg)) return "tls error";
+  if (/auth|credential|login|535|534|530/i.test(msg)) return "rejected (authentication)";
+  return "rejected";
 }
 
 export async function testChannel(id: string): Promise<{ ok: boolean; status: string }> {

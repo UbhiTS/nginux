@@ -41,6 +41,11 @@ export function setupTestEnv(): { dir: string; cleanup: () => void } {
     NGINX_BIN: "nginux-tests-no-nginx-binary",
     NODE_ENV: "test",
     LOG_LEVEL: "silent", // keep Fastify's request logs out of the test output
+    // The control-plane self-exposure guard also PROBES a new host's upstream
+    // (fetch /api/health, compare instance id) for non-admins. Test upstreams are
+    // unroutable, so every probe would wait for its timeout - skip it; the static
+    // rule (loopback/LAN:control-port) is what the tests pin down.
+    NGINUX_SELF_PROBE: "0",
   });
   return { dir, cleanup: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } } };
 }

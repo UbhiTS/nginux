@@ -1,4 +1,4 @@
-import { connect } from "node:net";
+import { connect, isIP } from "node:net";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,13 +13,13 @@ import {
   deleteHost,
   getHost,
   getHostByDomain,
-  getHostByDomainCached,
+  getServingHttpHostByDomainCached,
   getTopology,
   listHosts,
   replaceAllHosts,
   updateHost,
 } from "./repo.ts";
-import { applyConfig, generateHostConfig, generateStreamConfig, previewConfigForHosts, redactConfig } from "./nginx.ts";
+import { applyConfig, buildDesiredConfigs, generateHostConfig, generateStreamConfig, previewConfigForHosts, redactConfig } from "./nginx.ts";
 import { buildNotifications } from "./notifications.ts";
 import { writeGeoipConf } from "./geoip.ts";
 import {
@@ -34,7 +34,9 @@ import {
   deleteUser,
   destroySession,
   destroyUserSessions,
+  dismissNotificationsForUser,
   enableTwofa,
+  getDismissedNotifications,
   getLastTotpCounter,
   getPendingTwofaSecret,
   getTwofaSecret,
@@ -48,6 +50,7 @@ import {
   updateUserRole,
   logEvent,
   parseCookie,
+  parseCookieAll,
   scopedAllows,
   seedAuthIfEmpty,
   setLastTotpCounter,
@@ -109,13 +112,18 @@ import {
   isHostname,
 } from "./validate.ts";
 import {
+  type HostInput,
+  controlPlaneTargetError,
+  frontsControlPlane,
   hostInput,
   isControlPlaneDomain,
   normalizeProtocolFields,
   protocolCapabilityError,
   protocolSupportsHttpControls,
+  publishesThisControlPlane,
   streamPortConflictError,
 } from "./hostschema.ts";
+import { INSTANCE_ID } from "./instance.ts";
 import { settingsInput } from "./settingsschema.ts";
 import { realmForHost } from "./realms.ts";
 import { type RouteCtx, clampLimit } from "./routes/context.ts";
@@ -184,10 +192,24 @@ function sniffImageType(buf: Buffer): string | null {
 // WeakMap entry is collected with the request. This also speeds the nginx
 // forward-auth subrequest, which is on the per-request hot path of every gated host.
 const userCache = new WeakMap<FastifyRequest, User | null>();
+const sessionTokenCache = new WeakMap<FastifyRequest, string>();
+/** The session token this request authenticated with (first `nginux_session` cookie
+ *  value that resolves to a live session), or "" when none did. */
+const sessionTokenOf = (req: FastifyRequest): string => {
+  currentUser(req);
+  return sessionTokenCache.get(req) ?? "";
+};
 const currentUser = (req: FastifyRequest): User | null => {
   const cached = userCache.get(req);
   if (cached !== undefined) return cached;
-  const u = userForSession(parseCookie(req.headers.cookie)[SESSION_COOKIE]);
+  // A sibling app served through the proxy (or a stale host-only cookie) can add a
+  // second `nginux_session` cookie to the same request; try each value in order and
+  // keep the first that resolves, instead of letting the last one shadow a valid login.
+  let u: User | null = null;
+  for (const tok of parseCookieAll(req.headers.cookie, SESSION_COOKIE)) {
+    u = userForSession(tok);
+    if (u) { sessionTokenCache.set(req, tok); break; }
+  }
   userCache.set(req, u);
   return u;
 };
@@ -209,7 +231,16 @@ const TRUST_PROXY: boolean | string | ((addr: string, hop: number) => boolean) =
   process.env.NGINUX_TRUST_PROXY === "1" || process.env.NGINUX_TRUST_PROXY === "true"
     ? (addr: string) => addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1"
     : (process.env.NGINUX_TRUST_PROXY || false);
-const clientIp = (req: FastifyRequest) => req.ip; // resolved by Fastify per trustProxy
+// The client IP feeds audit rows, login rate-limit keys and the auto-ban engine (which
+// writes it into nginx config). Fastify derives req.ip from X-Forwarded-For when the
+// peer is trusted, and that header is free text — so accept it only when it parses as
+// an IP address and otherwise fall back to the socket peer. (Security audit 2026-10-01.)
+const clientIp = (req: FastifyRequest): string => {
+  const ip = String(req.ip ?? "").trim();
+  if (isIP(ip)) return ip;
+  const peer = String(req.socket?.remoteAddress ?? "").trim();
+  return isIP(peer) ? peer : "";
+};
 const device = (req: FastifyRequest) => (req.headers["user-agent"] as string)?.slice(0, 120) || "unknown";
 
 const app = Fastify({
@@ -217,6 +248,10 @@ const app = Fastify({
   trustProxy: TRUST_PROXY,
   bodyLimit: 2 * 1024 * 1024, // 2 MB - generous for config import, bounded for safety
   requestTimeout: 30_000,
+  // Reject JSON bodies carrying `__proto__` / `constructor` keys at the parser instead of
+  // relying on every downstream merge to be prototype-safe. (Security audit 2026-10-01.)
+  onProtoPoisoning: "error",
+  onConstructorPoisoning: "error",
 });
 
 // Central error handler: bad input → 400 with field detail; everything else is
@@ -280,9 +315,25 @@ function bearerRateLimited(ip: string): boolean {
   return hits.length > BEARER_FAIL_MAX;
 }
 
+/** The request path the GUARD must reason about. find-my-way routes on the
+ *  percent-DECODED path, so `GET /%61pi/hosts` is dispatched to the `/api/hosts`
+ *  handler - but `req.url` still reads `/%61pi/hosts`. Keying the auth guard on the
+ *  raw prefix let that spelling skip authentication, CSRF and onboarding
+ *  confinement entirely (security audit 2026-10-01). Use the matched route pattern
+ *  (`/api/hosts/:id`), and fall back to the decoded raw path when no route matched
+ *  (404s), so an unauthenticated probe of a non-existent API path gets 401 rather
+ *  than a route-enumeration oracle. */
+function guardPath(req: FastifyRequest): string {
+  const routed = req.routeOptions?.url;
+  if (routed && routed !== "/*" && routed !== "*") return routed;
+  const raw = req.url.split("?")[0];
+  try { return decodeURIComponent(raw); } catch { return raw; }
+}
+const isApiRequest = (req: FastifyRequest): boolean => guardPath(req).startsWith("/api");
+
 app.addHook("preHandler", async (req: FastifyRequest, reply: FastifyReply) => {
-  if (!req.url.startsWith("/api")) return;
-  const path = req.url.split("?")[0];
+  if (!isApiRequest(req)) return;
+  const path = guardPath(req);
   // CSRF applies to EVERY mutating cookie request, including /api/mcp - a malicious
   // page must not be able to drive state-changing MCP tools as the logged-in user.
   // Bearer-token agents send no Origin, so they're unaffected. This runs BEFORE the
@@ -341,7 +392,8 @@ app.addHook("onSend", async (req, reply, payload) => {
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
   reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  if (req.url.startsWith("/api")) reply.header("Cache-Control", "no-store");
+  // Keyed on the DECODED/routed path (see guardPath): `/%61pi/...` is an API response too.
+  if (isApiRequest(req)) reply.header("Cache-Control", "no-store");
   reply.header(
     "Content-Security-Policy",
     // jsdelivr serves the dashboard-icons logo set used for service icons (images only).
@@ -447,11 +499,18 @@ function hostForCaller(req: FastifyRequest, host: ProxyHost): ProxyHost {
 }
 
 /** For routes reachable by agent tokens OR users: token principals pass (their
- *  scope is enforced separately); a user session must hold one of `roles`. */
+ *  scope is enforced separately); a user session must hold one of `roles`.
+ *  Fails CLOSED when the request carries neither identity: the preHandler is
+ *  expected to have rejected such a request already, but a route-level helper must
+ *  not silently become "allow" if the guard is ever bypassed or re-keyed. */
 function userRoleAtLeast(req: FastifyRequest, reply: FastifyReply, ...roles: Role[]): boolean {
   const u = currentUser(req);
   if (u && !roles.includes(u.role)) {
     reply.code(403).send({ error: `This action requires one of: ${roles.join(", ")}.` });
+    return false;
+  }
+  if (!u && !principal(req)) {
+    reply.code(401).send({ error: "Authentication required" });
     return false;
   }
   return true;
@@ -499,6 +558,11 @@ app.get("/api/health", async (_req, reply) => {
     version: VERSION,
     db,
     time: new Date().toISOString(),
+    // Random per-boot id: lets the control-plane self-probe (hostschema.ts
+    // targetIsThisControlPlane) recognise THIS instance when a proposed upstream is
+    // the Docker host's LAN address or a remapped published port. Not a secret and
+    // not stable across restarts, so it identifies nothing about the deployment.
+    instance: INSTANCE_ID,
   });
 });
 
@@ -507,7 +571,30 @@ app.get("/api/notifications", async (req, reply) => {
   const u = currentUser(req);
   if (!u) return reply.code(401).send({ error: "Not signed in" });
   const isManager = u.role === "admin" || u.role === "editor";
-  return buildNotifications({ isManager });
+  const canSee = u.role === "scoped" ? (h: { id: string; name: string; domain: string }) => scopedAllows(u, h) : undefined;
+  const all = await buildNotifications({ isManager, canSee });
+  const dismissed = new Set(getDismissedNotifications(u.id));
+  return all.filter((n) => !(n.dismissible && dismissed.has(n.id)));
+});
+
+const dismissNotificationInput = z.object({
+  id: z.string().trim().min(1).max(256).optional(),
+  ids: z.array(z.string().trim().min(1).max(256)).max(200).optional(),
+}).refine((d) => Boolean(d.id || (d.ids && d.ids.length > 0)), {
+  message: "Provide 'id' or non-empty 'ids'",
+});
+
+app.post("/api/notifications/dismiss", async (req, reply) => {
+  const u = currentUser(req);
+  if (!u) return reply.code(401).send({ error: "Not signed in" });
+  const parsed = dismissNotificationInput.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
+  const toDismiss = [
+    ...(parsed.data.id ? [parsed.data.id] : []),
+    ...(parsed.data.ids ?? []),
+  ];
+  const dismissed = dismissNotificationsForUser(u.id, toDismiss);
+  return { ok: true, dismissed };
 });
 
 // ---------- presets ----------
@@ -565,6 +652,36 @@ function streamPortError(h: { protocol: string; listenPort: number; name?: strin
 // isControlPlaneDomain (the SSO-portal hijack guard) is shared with the agent
 // path from hostschema.ts - imported above, defined once.
 
+/** Refuse a host write that would publish the NginUX control plane on the data
+ *  plane (security audit 2026-10-01). The static rule (loopback / local addresses on
+ *  a control-plane port, for the primary target and every upstream / path-rule
+ *  target) applies to everyone - streams always, HTTP/gRPC for non-admins. For
+ *  non-admins whose routing changed we then run the live self-probe, which catches
+ *  the Docker host's LAN address or a remapped published port. */
+async function rejectControlPlaneTarget(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  h: Pick<HostInput, "protocol" | "forwardHost" | "forwardPort" | "forwardScheme" | "upstreams" | "pathRules">,
+  opts: { probe: boolean },
+): Promise<boolean> {
+  const admin = currentUser(req)?.role === "admin";
+  const err = controlPlaneTargetError(h, { admin });
+  if (err) { reply.code(admin ? 400 : 403).send({ error: err }); return false; }
+  if (!admin && opts.probe && await publishesThisControlPlane(h)) {
+    reply.code(403).send({ error: "That upstream is this NginUX instance (reached through its LAN address or a remapped port). Only an admin may publish the control plane." });
+    return false;
+  }
+  return true;
+}
+
+/** Admin-only gate for a stored host that fronts the control plane (shared
+ *  predicate `frontsControlPlane` in hostschema.ts; the agent tools apply the same rule). */
+function requireControlPlaneHostAdmin(req: FastifyRequest, reply: FastifyReply, h: Pick<ProxyHost, "domain" | "forwardHost" | "forwardPort">): boolean {
+  if (!frontsControlPlane(h) || currentUser(req)?.role === "admin") return true;
+  reply.code(403).send({ error: "Only an admin may change, pause, or remove the service that fronts the NginUX control plane (the sign-in portal)." });
+  return false;
+}
+
 app.get("/api/hosts", async (req) => {
   const u = currentUser(req);
   const hosts = listHosts();
@@ -596,6 +713,7 @@ app.post("/api/hosts", async (req, reply) => {
   }
   const spErr = streamPortError(input);
   if (spErr) return reply.code(400).send({ error: spErr });
+  if (!(await rejectControlPlaneTarget(req, reply, input, { probe: true }))) return;
   snapshot(`Before exposing ${input.name}`, currentUser(req)?.username ?? "system");
   const host = createHost(input);
   // Ensure the host has a cert (self-signed now; upgrade to Let's Encrypt later)
@@ -603,6 +721,10 @@ app.post("/api/hosts", async (req, reply) => {
   if (host.ssl) {
     try { await ensureCert(host.domain); } catch { /* non-fatal */ }
   }
+  // An mTLS host needs its client CA on disk before the first apply: the generator
+  // fails CLOSED (403 for every request) when the CA is missing rather than silently
+  // serving the host without client-certificate verification.
+  if (host.mtls) { try { await ensureClientCA(host.domain); } catch { /* non-fatal */ } }
   const apply = await applyConfig();
   // If nginx rejected the new config, roll the host back out - keeping it would
   // leave a service that breaks nginx on the next restart. Re-apply to restore
@@ -624,6 +746,7 @@ app.put("/api/hosts/:id", async (req, reply) => {
   const existing = getHost(id);
   if (!existing) return reply.code(404).send({ error: "Service not found" });
   if (!requireHostAccess(req, reply, existing, { allowScoped: true })) return;
+  if (!requireControlPlaneHostAdmin(req, reply, existing)) return;
   const parsed = hostInput.partial().safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues });
   if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
@@ -646,6 +769,9 @@ app.put("/api/hosts/:id", async (req, reply) => {
   }
   const spErr = streamPortError(normalized, id);
   if (spErr) return reply.code(400).send({ error: spErr });
+  const targetsChanged = routingChanged || normalized.protocol !== existing.protocol
+    || normalized.upstreams !== existing.upstreams || normalized.pathRules !== existing.pathRules;
+  if (!(await rejectControlPlaneTarget(req, reply, normalized, { probe: targetsChanged }))) return;
   snapshot(`Before updating a service`, currentUser(req)?.username ?? "system");
   const host = updateHost(id, normalized);
   if (!host) return reply.code(404).send({ error: "Service not found" });
@@ -668,17 +794,28 @@ app.delete("/api/hosts/:id", async (req, reply) => {
   if (!requireRole(req, reply, "admin", "editor")) return;
   const { id } = req.params as { id: string };
   const existing = getHost(id);
+  if (existing && !requireControlPlaneHostAdmin(req, reply, existing)) return;
   snapshot(`Before removing a service`, currentUser(req)?.username ?? "system");
   if (!deleteHost(id)) return reply.code(404).send({ error: "Service not found" });
   // deleteHost() already cascaded the host's client_certs + incidents rows. The
   // domain is unique to this host, so its managed cert (DB row + on-disk dir) is
-  // now unreferenced - remove it too. Best-effort: don't fail the delete on it.
-  if (existing) { try { deleteCert(existing.domain); } catch { /* ignore */ } }
+  // now unreferenced - remove it too, UNLESS another host still serves it through
+  // `certDomain` (a shared wildcard): deleting it would break those hosts at the
+  // next reload. Best-effort: don't fail the delete on it.
+  if (existing && !certStillReferenced(existing.domain)) { try { deleteCert(existing.domain); } catch { /* ignore */ } }
   const apply = await applyConfig();
   void syncGitOps(`Remove a service`);
   logEvent({ type: "host.deleted", severity: "warn", actor: currentUser(req)?.username ?? "system", summary: `Removed a service`, ip: clientIp(req), meta: { id } });
   return { ok: true, apply };
 });
+
+/** Is a managed certificate still selected by a remaining host (`certDomain`) or
+ *  served by a remaining host of the same domain? Called AFTER the owning host row
+ *  was deleted, so any match means the cert must stay on disk. */
+function certStillReferenced(domain: string): boolean {
+  const d = domain.toLowerCase();
+  return listHosts().some((h) => h.domain.toLowerCase() === d || (h.certDomain || "").toLowerCase() === d);
+}
 
 // Bulk actions on many services at once (enable/disable/maintenance/delete),
 // with ONE snapshot + ONE nginx reload for the whole batch instead of N. Admin/
@@ -695,6 +832,12 @@ app.post("/api/hosts/batch", async (req, reply) => {
     && ids.some((id) => { const h = getHost(id); return h && !protocolSupportsHttpControls(h.protocol); })) {
     return reply.code(400).send({ error: "Maintenance pages are HTTP/gRPC-only. Pause a TCP/UDP/SNI service instead." });
   }
+  // The portal / control-plane-fronting host is admin territory even in bulk: a
+  // bulk disable, maintenance or delete by an editor would lock every remote admin out.
+  for (const id of ids) {
+    const h = getHost(id);
+    if (h && !requireControlPlaneHostAdmin(req, reply, h)) return;
+  }
   const actor = currentUser(req)?.username ?? "system";
   snapshot(`Bulk ${action} on ${ids.length} service(s)`, actor);
   const previousHosts = listHosts();
@@ -704,7 +847,10 @@ app.post("/api/hosts/batch", async (req, reply) => {
     const h = getHost(id);
     if (!h) continue;
     if (action === "delete") {
-      if (deleteHost(id)) { try { deleteCert(h.domain); } catch { /* best effort */ } affected++; }
+      if (deleteHost(id)) {
+        if (!certStillReferenced(h.domain)) { try { deleteCert(h.domain); } catch { /* best effort */ } }
+        affected++;
+      }
     } else {
       const patch = action === "enable" ? { enabled: true }
         : action === "disable" ? { enabled: false }
@@ -772,6 +918,7 @@ app.post("/api/config/preview", async (req, reply) => {
     }
     const spErr = streamPortError(normalized, id);
     if (spErr) return reply.code(400).send({ error: spErr });
+    if (!(await rejectControlPlaneTarget(req, reply, normalized, { probe: false }))) return;
     candidateHosts = hosts.map((h) => (h.id === id ? normalized : h));
   } else { // create
     const parsed = hostInput.safeParse(host ?? {});
@@ -779,16 +926,23 @@ app.post("/api/config/preview", async (req, reply) => {
     if (!rejectPrivilegedFields(req, reply, parsed.data)) return;
     const capabilityError = protocolCapabilityError(parsed.data);
     if (capabilityError) return reply.code(400).send({ error: capabilityError });
-    const normalized = normalizeProtocolFields(parsed.data);
+    // rejectPrivilegedFields strips a non-admin's empty customNginx placeholder; the
+    // generator needs the field present (an editor's create preview used to 500 here).
+    const normalized = normalizeProtocolFields({ ...parsed.data, customNginx: parsed.data.customNginx ?? "" });
     if (isControlPlaneDomain(normalized.domain, normalized.forwardHost, normalized.forwardPort, normalized.forwardScheme)) {
       return reply.code(409).send({ error: "The public NginUX portal must forward to the exact configured control plane." });
     }
     const spErr = streamPortError(normalized);
     if (spErr) return reply.code(400).send({ error: spErr });
+    if (!(await rejectControlPlaneTarget(req, reply, normalized, { probe: false }))) return;
     const candidate = { ...normalized, id: "__preview__", health: "unknown", certExpiresAt: null, createdAt: "", updatedAt: "" } as ProxyHost;
     candidateHosts = [...hosts, candidate];
   }
-  return previewConfigForHosts(candidateHosts);
+  // Non-admins diff against the config regenerated from the DB, not the on-disk
+  // files: unrelated on-disk drift (another host's admin-only customNginx edit) must
+  // not leak into an editor's preview. Admins see the true on-disk delta.
+  const baseline = currentUser(req)?.role === "admin" ? undefined : buildDesiredConfigs(hosts);
+  return previewConfigForHosts(candidateHosts, baseline);
 });
 
 // per-host mTLS client certificates
@@ -1183,19 +1337,77 @@ app.get("/api/logs/recent", async (req, reply) => {
   // on disk so older IPs still resolve; an unfiltered tail uses the live ring.
   return filter ? await searchLog(filter, clampLimit(limit)) : recentLogs(undefined, clampLimit(limit));
 });
+// ---- SSE connection policy (shared by /api/logs/stream and /api/events/sse) ----
+// Global cap (so streams can't exhaust sockets/memory) PLUS a per-principal cap, so one
+// low-scope token or session can't hog every slot and lock admins out of the live feeds.
+// Slow readers are dropped once their unsent buffer passes SSE_MAX_BUFFER (otherwise an
+// attacker who never reads keeps the process buffering every event for them), and each
+// heartbeat re-checks that the caller's session/token is still valid so revocation also
+// ends streams that were opened before it. (Security audit 2026-10-01.)
 let sseClients = 0;
 const SSE_MAX = Math.min(1000, Math.max(1, Number(process.env.NGINUX_SSE_MAX) || 200));
+const SSE_PER_PRINCIPAL = Math.min(SSE_MAX, Math.max(1, Number(process.env.NGINUX_SSE_PER_PRINCIPAL) || 5));
+const SSE_MAX_BUFFER = 1024 * 1024;
+const ssePerPrincipal = new Map<string, number>();
+const ssePrincipalKey = (req: FastifyRequest): string => {
+  const p = principal(req);
+  if (p?.kind === "user") return `user:${p.user.id}`;
+  if (p?.kind === "agent") return `agent:${p.id}`;
+  return `ip:${clientIp(req)}`;
+};
+type SseWrite = (chunk: string) => void;
+/** Installs the event subscription (given a bounded writer) and returns its unsubscribe. */
+type SseRegister = (install: (write: SseWrite) => () => void) => () => void;
+/** Claim an SSE slot. Returns a registrar, or null (503 already sent). */
+function openSse(req: FastifyRequest, reply: FastifyReply, extraHeaders: Record<string, string> = {}): SseRegister | null {
+  const key = ssePrincipalKey(req);
+  const mine = ssePerPrincipal.get(key) ?? 0;
+  if (sseClients >= SSE_MAX || mine >= SSE_PER_PRINCIPAL) {
+    reply.code(503).send({ error: "Too many open streams." });
+    return null;
+  }
+  sseClients++;
+  ssePerPrincipal.set(key, mine + 1);
+  reply.hijack();
+  reply.raw.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", ...extraHeaders });
+  reply.raw.write(": connected\n\n");
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    sseClients--;
+    const n = (ssePerPrincipal.get(key) ?? 1) - 1;
+    if (n <= 0) ssePerPrincipal.delete(key); else ssePerPrincipal.set(key, n);
+    try { reply.raw.end(); } catch { /* already gone */ }
+    try { reply.raw.destroy(); } catch { /* already gone */ }
+  };
+  const write = (chunk: string) => {
+    if (closed) return;
+    if (reply.raw.writableLength > SSE_MAX_BUFFER) { close(); return; } // slow/absent reader
+    reply.raw.write(chunk);
+  };
+  // Returns a registrar: the caller passes the subscription installer and gets `close`.
+  return (install) => {
+    const unsub = install(write);
+    const hb = setInterval(() => {
+      // Re-validate: a revoked session/token must not keep an already-open stream alive.
+      userCache.delete(req); sessionTokenCache.delete(req);
+      if (!principal(req)) { close(); return; }
+      write(": ping\n\n");
+    }, 25000);
+    hb.unref?.();
+    const finish = () => { clearInterval(hb); try { unsub(); } catch { /* ignore */ } close(); };
+    req.raw.on("close", finish);
+    req.raw.on("error", finish);
+    return finish;
+  };
+}
 
 app.get("/api/logs/stream", (req, reply) => {
   if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return; // live access logs carry client IPs; token needs 'report'
-  if (sseClients >= SSE_MAX) return reply.code(503).send({ error: "Too many open streams." });
-  sseClients++;
-  reply.hijack();
-  reply.raw.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
-  reply.raw.write(": connected\n\n");
-  const unsub = subscribeLog((e) => reply.raw.write(`event: log\ndata: ${JSON.stringify(e)}\n\n`));
-  const hb = setInterval(() => reply.raw.write(": ping\n\n"), 25000);
-  req.raw.on("close", () => { clearInterval(hb); unsub(); sseClients--; });
+  const register = openSse(req, reply);
+  if (!register) return;
+  register((write) => subscribeLog((e) => write(`event: log\ndata: ${JSON.stringify(e)}\n\n`)));
 });
 
 // ---------- auth ----------
@@ -1250,22 +1462,32 @@ function logLoginThrottleOnce(ip: string, username: string, summary: string, aud
 
 /** Cookie Domain for the session cookie - the configured ssoCookieDomain, or
  *  derived from ssoLoginUrl's host (strip the leftmost label), or "" (host-only).
- *  Lets one sign-in cover every subdomain so login-gated services work. */
+ *  Lets one sign-in cover every subdomain so login-gated services work.
+ *  The Domain attribute is only emitted when the REQUEST's own host sits under that
+ *  base: a browser rejects a Set-Cookie whose Domain does not cover the request host
+ *  (which silently broke sign-in via the LAN IP / an unrelated hostname), and a host
+ *  outside the base must never receive a base-wide cookie. (Security audit 2026-10-01.) */
 function authCookieDomain(req?: FastifyRequest): string {
   const s = getSettings();
+  // req.hostname only honors forwarded host data from a trusted proxy.
+  const reqHost = req ? String(req.hostname ?? "").toLowerCase().replace(/^\[?([^\]]*)\]?(?::\d+)?$/, "$1").replace(/\.$/, "") : "";
+  const covers = (domain: string): string => {
+    if (!domain) return "";
+    if (!req) return domain;
+    const base = domain.replace(/^\.+/, "");
+    return reqHost === base || reqHost.endsWith("." + base) ? domain : "";
+  };
   // Multi-realm: if the request's host belongs to a configured realm, scope the
   // cookie to THAT base domain, so a sign-in on a second base domain works.
-  if (req) {
-    // req.hostname only honors forwarded host data from a trusted proxy.
-    const host = req.hostname;
-    const realm = host ? realmForHost(host) : null;
-    if (realm) return realm.cookieDomain;
+  if (reqHost) {
+    const realm = realmForHost(reqHost);
+    if (realm) return covers(realm.cookieDomain);
   }
-  if (s.ssoCookieDomain) return s.ssoCookieDomain.replace(/^\.?/, ".");
+  if (s.ssoCookieDomain) return covers(s.ssoCookieDomain.replace(/^\.?/, "."));
   try {
     const host = new URL(s.ssoLoginUrl).hostname;
     const parts = host.split(".");
-    if (parts.length >= 2) return "." + parts.slice(parts.length > 2 ? 1 : 0).join(".");
+    if (parts.length >= 2) return covers("." + parts.slice(parts.length > 2 ? 1 : 0).join("."));
   } catch { /* ssoLoginUrl unset/invalid */ }
   return "";
 }
@@ -1291,9 +1513,12 @@ function safeLoginRedirect(raw: string | undefined): string | undefined {
     if ((u.protocol === "http:" && u.port && u.port !== "80")
       || (u.protocol === "https:" && u.port && u.port !== "443")) return undefined;
     // Redirects require an exact host row; a wildcard proxy entry must not turn
-    // into a blanket redirect allowlist for a multi-tenant suffix.
+    // into a blanket redirect allowlist for a multi-tenant suffix. The only producer
+    // of `rd` is the login gate on a login-gated HTTP/gRPC host, so require exactly
+    // that: a non-gated (possibly editor-created) host is never a redirect target.
     const host = getHostByDomain(u.hostname);
-    return host?.enabled ? u.href : undefined;
+    const gatedHttp = !!host?.enabled && host.requireLogin && (host.protocol === "http" || host.protocol === "grpc");
+    return gatedHttp ? u.href : undefined;
   } catch {
     return undefined;
   }
@@ -1304,11 +1529,11 @@ app.post("/api/auth/login", async (req, reply) => {
   const { username, password, token, returnUrl } = parsed.data;
   const ip = clientIp(req);
 
-  if (rateLimited("login:global", LOGIN_GLOBAL_MAX, LOGIN_WINDOW_MS)) {
-    logLoginThrottleOnce(ip, username, "Global login-attempt budget reached - throttled", "login:global");
-    return reply.code(429).send({ error: "The sign-in service is temporarily busy. Wait a minute and try again." });
-  }
-
+  // Order matters: the per-source limiters run FIRST so a single IP that is already
+  // throttled does not keep consuming the shared global budget (which would let one
+  // noisy source lock every other user out of sign-in). The global breaker only counts
+  // attempts that passed the per-source limits. (Security audit 2026-10-01.)
+  //
   // Per-IP budget, independent of username: the username is attacker-controlled, so
   // keying the limiter only on ip+username would let one IP get a fresh allowance
   // per guessed username and force unbounded scrypt work. This caps total attempts
@@ -1320,6 +1545,10 @@ app.post("/api/auth/login", async (req, reply) => {
   if (rateLimited(`${ip}:${username}`.toLowerCase(), LOGIN_MAX, LOGIN_WINDOW_MS)) {
     logLoginThrottleOnce(ip, username, "Too many login attempts - throttled");
     return reply.code(429).send({ error: "Too many attempts. Wait a minute and try again." });
+  }
+  if (rateLimited("login:global", LOGIN_GLOBAL_MAX, LOGIN_WINDOW_MS)) {
+    logLoginThrottleOnce(ip, username, "Global login-attempt budget reached - throttled", "login:global");
+    return reply.code(429).send({ error: "The sign-in service is temporarily busy. Wait a minute and try again." });
   }
 
   const row = await checkCredentials(username, password);
@@ -1364,8 +1593,9 @@ app.post("/api/auth/login", async (req, reply) => {
 });
 
 app.post("/api/auth/logout", async (req, reply) => {
-  const tok = parseCookie(req.headers.cookie)[SESSION_COOKIE];
+  const tok = sessionTokenOf(req);
   if (tok) destroySession(tok);
+  else for (const t of parseCookieAll(req.headers.cookie, SESSION_COOKIE)) destroySession(t);
   reply.header("set-cookie", clearCookie(cookieSecure(req.protocol === "https"), authCookieDomain(req)));
   return { ok: true };
 });
@@ -1412,8 +1642,14 @@ app.get("/api/auth/forward", async (req, reply) => {
   // now denies an under-authenticated request instead of admitting it — the exact
   // recurrence guarded against here. (Security audit 2026-07-12.)
   const originalHost = (req.headers["x-original-host"] as string) || (req.headers["x-forwarded-host"] as string);
-  const host = originalHost ? getHostByDomainCached(originalHost.split(":")[0]) : null;
+  // Resolve the row nginx is actually SERVING for this name (enabled http/grpc, exact
+  // then wildcard) - not merely the row with that domain. A disabled or tcp/udp/sni
+  // row must not shadow the covering wildcard whose policy really applies here.
+  const host = originalHost ? getServingHttpHostByDomainCached(originalHost.split(":")[0]) : null;
   if (!host) return reply.code(401).send({ ok: false });
+  // nginx only emits auth_request for requireLogin hosts; a gate check for an
+  // ungated row can't have come from the generated config - deny.
+  if (!host.requireLogin) return reply.code(401).send({ ok: false });
   if (host.require2fa && !u.twofaEnabled) return reply.code(401).send({ ok: false });
   // A scoped user only passes the per-host login gate for hosts in their scope -
   // otherwise one NginUX login would unlock every protected app.
@@ -1469,11 +1705,16 @@ app.post("/api/auth/2fa/verify", async (req, reply) => {
   }
   const { token } = z.object({ token: z.string().min(1).max(64) }).parse(req.body);
   const secret = getPendingTwofaSecret(u.id);
-  if (!secret || !verifyTotp(token, secret)) {
+  const enrolCounter = secret ? verifyTotpCounter(token, secret) : -1;
+  if (!secret || enrolCounter < 0) {
     return reply.code(400).send({ error: "That code didn't match - try the current one." });
   }
   const replacing = u.twofaEnabled;
   const backupCodes = enableTwofa(u.id);
+  // Burn the step used to enrol: the login path rejects any counter <= the stored one, so
+  // the code the user just typed cannot be replayed at the sign-in prompt within its
+  // validity window. (Security audit 2026-10-01.)
+  setLastTotpCounter(u.id, enrolCounter);
   // 2FA assurance is stored on the user, not on each session. Once the factor is
   // enabled/replaced, every earlier cookie would otherwise inherit that stronger
   // state without proving the new factor. Revoke them all and keep only this
@@ -1631,7 +1872,7 @@ app.get("/api/sessions", async (req, reply) => {
   if (!requireAdmin(req, reply)) return;
   // Expose the non-secret sid (used to revoke) and flag the caller's own session;
   // never return the raw token.
-  const myTok = parseCookie(req.headers.cookie)[SESSION_COOKIE];
+  const myTok = sessionTokenOf(req);
   const mySid = myTok ? sessionSid(myTok) : "";
   return listSessions().map((s) => ({
     sid: s.sid, userId: s.userId, username: s.username, device: s.device,
@@ -1695,24 +1936,11 @@ app.get("/api/events/sse", (req, reply) => {
   // (admin/editor session, or a 'report'-scoped token). Without this any session
   // or token gets the full security event stream.
   if (!requireRoleOrScope(req, reply, ["admin", "editor"], "report")) return;
-  if (sseClients >= SSE_MAX) return reply.code(503).send({ error: "Too many open streams." });
-  sseClients++;
-  reply.hijack();
-  reply.raw.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
-  reply.raw.write(": connected\n\n");
-  const unsub = subscribe((e) => {
-    reply.raw.write(`id: ${e.id}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
-  });
-  const heartbeat = setInterval(() => reply.raw.write(": ping\n\n"), 25000);
-  req.raw.on("close", () => {
-    clearInterval(heartbeat);
-    unsub();
-    sseClients--;
-  });
+  const register = openSse(req, reply);
+  if (!register) return;
+  register((write) => subscribe((e) => {
+    write(`id: ${e.id}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
+  }));
 });
 
 // ---------- static SPA (production) ----------

@@ -186,7 +186,9 @@ export async function checkForUpdate(): Promise<UpdateState> {
     state.latestSha = latestSha.toLowerCase();
     state.releaseName = String(rel?.name ?? tag);
     state.notes = String(rel?.body ?? "").slice(0, 4000) || null;
-    state.releaseUrl = String(rel?.html_url ?? "") || null;
+    // The UI renders this as a link: only accept the canonical GitHub release URL shape.
+    const relUrl = String(rel?.html_url ?? "");
+    state.releaseUrl = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/releases\/tag\/[A-Za-z0-9_.-]+$/.test(relUrl) ? relUrl : null;
     state.publishedAt = String(rel?.published_at ?? "") || null;
 
     const cmp = semverCompare(latest, VERSION);

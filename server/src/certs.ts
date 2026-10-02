@@ -121,13 +121,23 @@ export function deleteCert(domain: string): boolean {
   // certificate record. The DB row is the authority for per-domain directories.
   if (isReservedCertDomain(domain) || !getCert(domain)) return false;
   db.prepare("DELETE FROM certificates WHERE domain = ?").run(domain);
-  // Remove the on-disk key/cert too, so any host on this domain falls back to the
-  // shared bootstrap cert on the next config apply instead of a dangling path.
+  // Remove the on-disk SERVER key/cert, so any host on this domain falls back to the
+  // shared bootstrap cert on the next config apply instead of a dangling path. The
+  // per-host mTLS client CA (client-ca.crt/.key/.crl, owned by clientcerts.ts) lives
+  // in the same directory and is NOT a server certificate: deleting it here used to
+  // strip client-certificate verification from an mTLS host as a side effect of
+  // "delete certificate" (security audit 2026-10-01). Leave it; only drop the
+  // directory when nothing else remains.
   try {
     const dir = assertWithin(CERT_DIR, join(CERT_DIR, domain));
     // Do not follow a symlink or delete a same-named file: a certificate occupies
     // a real directory containing fullchain.pem + privkey.pem.
-    if (lstatSync(dir).isDirectory()) rmSync(dir, { recursive: true, force: true });
+    if (lstatSync(dir).isDirectory()) {
+      for (const f of ["fullchain.pem", "privkey.pem", "cert.pem", "chain.pem"]) {
+        rmSync(join(dir, f), { force: true });
+      }
+      if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+    }
   } catch {
     /* nothing to remove */
   }

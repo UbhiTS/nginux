@@ -113,6 +113,6 @@ const run = {
 (async () => {
   if (!cmd || cmd === "help" || cmd === "--help") return console.log(HELP);
   const ls = cmd === "ls" ? "services" : cmd;
-  if (!run[ls]) die(`unknown command: ${cmd}\n${HELP}`);
+  if (!Object.hasOwn(run, ls)) die(`unknown command: ${cmd}\n${HELP}`);
   await run[ls]();
 })();

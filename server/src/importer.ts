@@ -1,7 +1,7 @@
 import { createHost, getHostByDomain } from "./repo.ts";
 import type { NewProxyHost } from "./types.ts";
 import { isDangerousHost, isHost, isHostname } from "./validate.ts";
-import { hostInput, isControlPlaneDomain } from "./hostschema.ts";
+import { controlPlaneTargetError, hostInput, isControlPlaneDomain } from "./hostschema.ts";
 
 interface Parsed {
   domain: string;
@@ -32,7 +32,25 @@ function serverBlocks(text: string): string[] {
   return blocks;
 }
 
+/** Largest nginx.conf the importer will parse. The route body limit is 2 MB; the
+ *  parser is linear but still allocates per block, so refuse anything absurd. */
+export const IMPORT_MAX_BYTES = 1024 * 1024;
+
+/** `listen ... ssl;` detection in LINEAR time. The previous `/listen\s+[^;]*\bssl\b/`
+ *  backtracked catastrophically (~94 s on a 1 MB crafted file: every `listen` run
+ *  of whitespace × every `[^;]*` prefix) - a CPU DoS of the single-threaded control
+ *  plane by anyone allowed to import. Scan each `listen` directive once instead. */
+function listenHasSsl(block: string): boolean {
+  const re = /listen\s+([^;\n]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(block))) {
+    if (/\bssl\b/.test(m[1]) || /^443\b/.test(m[1].trim()) || /:443\b/.test(m[1])) return true;
+  }
+  return false;
+}
+
 export function parseNginxConf(text: string): Parsed[] {
+  if (Buffer.byteLength(text) > IMPORT_MAX_BYTES) throw new Error("nginx.conf is too large to import (1 MiB maximum).");
   const out: Parsed[] = [];
   for (const block of serverBlocks(text)) {
     const nameM = block.match(/server_name\s+([^;]+);/);
@@ -41,7 +59,7 @@ export function parseNginxConf(text: string): Parsed[] {
     const domain = nameM[1].trim().split(/\s+/).find((n) => n !== "_" && !n.startsWith("*"));
     if (!domain) continue;
     const scheme = passM[1].toLowerCase() as "http" | "https";
-    const ssl = /listen\s+[^;]*\bssl\b/.test(block) || /listen\s+443/.test(block);
+    const ssl = listenHasSsl(block);
     // WebSocket upgrade is the give-away that the app needs the ws block.
     const websockets = /proxy_set_header\s+Upgrade\b/i.test(block);
     out.push({
@@ -76,6 +94,10 @@ export function previewNginxConf(text: string): ImportPreview {
     if (!isHost(p.forwardHost) || isDangerousHost(p.forwardHost)) { skipped.push({ domain: p.domain, reason: "invalid forward host" }); continue; }
     if (isControlPlaneDomain(p.domain, p.forwardHost, p.forwardPort, p.forwardScheme)) {
       skipped.push({ domain: p.domain, reason: "conflicts with NginUX portal" }); continue;
+    }
+    // Import is admin-only (HTTP portal forwards allowed); shared rule kept for parity.
+    if (controlPlaneTargetError({ protocol: "http", forwardHost: p.forwardHost, forwardPort: p.forwardPort }, { admin: true })) {
+      skipped.push({ domain: p.domain, reason: "targets the NginUX control plane" }); continue;
     }
     if (getHostByDomain(p.domain)) { skipped.push({ domain: p.domain, reason: "already exists" }); continue; }
     if (toImport.some((d) => d.domain.toLowerCase() === p.domain.toLowerCase())) { skipped.push({ domain: p.domain, reason: "duplicate in file" }); continue; }

@@ -102,6 +102,7 @@ db.exec(`
     backupCodes   TEXT NOT NULL DEFAULT '[]',
     twofaLastCounter INTEGER NOT NULL DEFAULT -1,
     mustChangePassword INTEGER NOT NULL DEFAULT 0,
+    dismissedNotifications TEXT NOT NULL DEFAULT '[]',
     createdAt     TEXT NOT NULL,
     lastLoginAt   TEXT
   );
@@ -287,6 +288,8 @@ function runMigrations(): void {
   `).run();
   // Keep an existing 2FA binding active until its replacement has been proved.
   addColumnIfMissing("users", "twofaPendingSecret", "TEXT");
+  // Per-user persistent notification dismissals across browsers/devices/origins.
+  addColumnIfMissing("users", "dismissedNotifications", "TEXT NOT NULL DEFAULT '[]'");
   // Older webhook-created audit summaries stored the full URL, including path/
   // query credentials. Redact those historical rows once; new events record only
   // scheme + host/port at the route boundary.
@@ -442,13 +445,35 @@ export function getSettings(): Settings {
   return merged as unknown as Settings;
 }
 
+/** Settings a non-admin (editor/readonly/scoped user, read-scope agent) may see with
+ *  their real value: the operational context the UI needs to render service forms and
+ *  dashboards. Everything else is returned at its DEFAULT value (shape preserved) and
+ *  credential keys are masked — an allowlist, so a newly added setting is private until
+ *  deliberately exposed. (Security audit 2026-10-01.) */
+export const NON_ADMIN_SETTING_KEYS = [
+  "instanceName", "baseDomain", "theme", "homeCountry", "dnsProvider", "ssoLoginUrl",
+  "agentAutoApprove", "require2faForManagers", "updateCheckEnabled", "acmeStaging",
+  "publicIp", "gatewayIp",
+] as const;
+
 /** Mask credential fields for non-admin callers. A configured secret becomes a
- *  "set" placeholder so the UI can show it exists without leaking the value. */
+ *  "set" placeholder so the UI can show it exists without leaking the value. Keys
+ *  outside NON_ADMIN_SETTING_KEYS are reset to their defaults (never the stored value). */
 export function redactSettings(s: Settings): Settings {
-  const out = { ...s } as unknown as Record<string, unknown>;
+  const src = s as unknown as Record<string, unknown>;
+  const out = { ...DEFAULT_SETTINGS } as unknown as Record<string, unknown>;
+  for (const k of NON_ADMIN_SETTING_KEYS) if (k in src) out[k] = src[k];
   for (const k of SECRET_SETTING_KEYS) {
-    out[k] = String(out[k] ?? "") ? "••••••••" : "";
+    out[k] = String(src[k] ?? "") ? "••••••••" : "";
   }
+  return out as unknown as Settings;
+}
+
+/** Admin-only variant for backup exports without secrets: EVERY setting is kept (so a
+ *  restore round-trips), only the credential keys are replaced by the "set" placeholder. */
+export function maskSecretSettings(s: Settings): Settings {
+  const out = { ...s } as unknown as Record<string, unknown>;
+  for (const k of SECRET_SETTING_KEYS) out[k] = String(out[k] ?? "") ? "••••••••" : "";
   return out as unknown as Settings;
 }
 

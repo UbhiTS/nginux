@@ -1,3 +1,47 @@
+# NginUX v0.1.22
+
+Full adversarial security review (eleven independent audit passes across auth/sessions, nginx generation, the agent gateway, certs/crypto/supply chain, observability, REST routes, the web SPA and the container/CI pipeline). Every confirmed finding is fixed here and pinned by a regression test in `server/test/sec-audit-v0122.test.ts` (33 new cases; 353 server + 337 web tests green).
+
+## Security Hardening
+
+### Critical
+- **Percent-encoded API prefix bypassed the auth guard**: the `preHandler` guard and the `Cache-Control: no-store` hook keyed on the raw URL prefix `/api`, while the router dispatched on the decoded path. `GET /%61pi/hosts` therefore reached handlers unauthenticated. Both hooks now key on the decoded path (`guardPath`/`isApiRequest`), and `userRoleAtLeast` fails closed on an unknown role.
+
+### High
+- **Control-plane self-exposure through managed services**: an editor could publish the LAN-only UI/API to the internet (and receive admins' session cookies on an attacker-named host) by pointing a service at `127.0.0.1:6767`, at `NGINUX_CONTROL_URL`, at this instance behind a LAN IP, or via a TCP/SNI stream, an upstream pool entry or a path rule. A shared `controlPlaneTargetError` (in `hostschema.ts`) now refuses stream, pool and path-rule targets for everyone and HTTP/gRPC primaries for non-admins; it is enforced identically by REST create/update/batch/preview, MCP tools (`create_service`/`update_service`/`set_service_enabled`/`delete_service` and queued approvals, which execute as a non-admin), backup restore and `nginx.conf` import. Non-admins can no longer edit, pause or delete the host that fronts the control plane. Detection of "this instance behind another address" uses a per-boot `instance` id that `/api/health` now returns (`NGINUX_SELF_PROBE=0` disables only that live probe).
+- **Stream listeners could shadow nginx or the control plane**: TCP/SNI streams may no longer `listen` on `80`, `443`, `PORT` or the `NGINUX_CONTROL_URL` port (UDP is exempt). Previously a `listen 443` stream passed validation and broke the HTTP data plane at reload.
+- **Forward-auth resolved a row nginx was not serving**: a disabled exact-domain row (or a stream row with the same name) could shadow the enabled wildcard host that actually serves the request, skipping its `require2fa`/scope policy; a `requireLogin=false` row also admitted callers. The gate now uses `getServingHttpHostByDomainCached` (enabled http/grpc rows only, then the serving `*.parent`) and returns 401 for ungated rows.
+
+### Medium
+- **mTLS without a client CA failed open**: a host with `mtls=true` whose `client-ca.crt` was missing (for example after `DELETE /api/certificates/:domain`, which also removed the per-host CA) was generated without `ssl_verify_client`. The generator now emits `location / { return 403; }` instead, `deleteCert` keeps `client-ca.*`, the CA is provisioned on create when `mtls` is set, and a certificate still referenced by a host cannot be deleted.
+- **Non-admin `GET /api/settings` was a denylist**: every new setting key leaked to editors/readonly/scoped users unless someone remembered to redact it. `redactSettings` is now an allowlist of operational keys (`instanceName`, `baseDomain`, `theme`, `homeCountry`, `dnsProvider`, `ssoLoginUrl`, `agentAutoApprove`, `require2faForManagers`, `updateCheckEnabled`, `acmeStaging`, `publicIp`, `gatewayIp`); everything else is returned at its default. Backup export and the `update_settings` tool use the new `maskSecretSettings` (old behaviour) so restores still round-trip.
+- **Cookie `Domain` emitted for look-alike / unrelated hosts**: signing in via a LAN IP or a host that merely ended in the base-domain string (`evil-example.com` vs `.example.com`) set `Domain=.example.com`. `authCookieDomain` now emits `Domain=` only when the request host equals or is a subdomain of the base; this also fixes LAN-IP sign-in when an SSO login URL is configured. SSO realms match by DNS-label suffix (most specific first) and only fall back to the registrable domain when exactly one realm matches, so sibling realms stay independent.
+- **2FA enrolment code replay**: the TOTP step used to finish `/api/auth/2fa/verify` could be replayed at sign-in inside the same window. Enrolment now burns its counter.
+- **Duplicate `nginux_session` cookies**: a sibling app setting a stale `nginux_session` for the parent domain could hide the live one. `parseCookieAll` (max 8) returns every value and the first LIVE session wins.
+- **Login limiter order**: a throttled IP consumed the shared global budget, letting one source lock out every other operator; order is now per-IP → per-IP+user → global.
+- **Login redirect** (`safeLoginRedirect`) only targets enabled, `requireLogin` http/grpc hosts; `/api/notifications` only names hosts a scoped user may see; `clientIp` ignores a non-IP `req.ip`.
+- **Agent gateway**: agents can no longer set `certDomain` (`FORBIDDEN_TOOL_FIELDS`); `sanitizeHostPatch` builds a null-prototype object and skips `__proto__`/`constructor`/`prototype`; tool lookup uses `Object.hasOwn`; read-tier tool calls no longer write `agent.tool_called` audit rows (an unbounded-audit-growth / log-flood primitive for any `read` token); approval summaries describe the change; Fastify runs with `onProtoPoisoning`/`onConstructorPoisoning` set to `error`.
+- **Validators & generator**: `isIpOrCidr` rejects `%zone` ids and non-numeric masks; `isLocationPath` rejects `..` and malformed `%` escapes; `hasNginxMetachars` adds `$` and `\`; `htmlEscape` encodes `$`/`\` (maintenance page); `validCertDomain` accepts hostnames only; `isCustomHeaderLine` rejects control characters; presets are looked up with `Object.hasOwn`; IPv6 upstreams are bracketed everywhere; `X-Forwarded-Host` is pinned to `$host` in `location /` and in every path-rule block; a host fronting the control plane never emits custom response headers.
+- **Bans**: IP/CIDR validated at the sink (`addBan`, `replaceAllBans`, `writeBannedConf`), the auto-ban subscriber ignores `login.failed` events whose source is not an IP, and reasons are capped at 200 chars.
+- **Notifications**: Discord payloads send `allowed_mentions: { parse: [] }`, Slack text escapes `&<>`, Telegram/Slack `topic`/`chat` ids are masked like other credentials, and delivery failures are reported as a category (`timeout`, `unreachable`, `tls error`, `rejected (authentication)`, `rejected`) instead of echoing the remote error body.
+- **Misc**: `releaseUrl` from GitHub metadata must match `https://github.com/<owner>/<repo>/releases/tag/<tag>`; `isDangerousHost` also blocks the RFC 8215 local NAT64 prefix `64:ff9b:1::/48`; syslog URLs require port 1–65535; the CLI's command table is looked up with `Object.hasOwn`.
+
+## Performance & Robustness
+
+- **Metrics pipeline bounds**: request-derived keys are clipped before they become map keys (host 253 / path 256 / user-agent 256 / ip 64 / country 8 / method 16) and per-host buckets are capped at 200 hosts, so an internet client spraying unique values can no longer grow the control plane's memory without limit.
+- **SSE policy** shared by `/api/logs/stream` and `/api/events/sse`: global cap (`NGINUX_SSE_MAX`), per-principal cap (`NGINUX_SSE_PER_PRINCIPAL`, default 5), 1 MiB backpressure cut-off and heartbeat re-validation of the session/token so revoked principals are disconnected.
+- **Importer**: `nginx.conf` input is capped at 1 MiB and the `listen … ssl` detection is linear (the previous regex went super-linear on long whitespace runs).
+- **Config apply** wraps `writeAllConfigs` so a write failure rolls back instead of leaving a half-written `conf.d`.
+
+## Behaviour changes
+
+- TCP/SNI streams cannot use ports `80`, `443` or the control-plane port (UDP unaffected). The SNI form now suggests `8443`.
+- Only admins may point an HTTP/gRPC service's primary upstream at the control plane; streams, pools and path rules never can. Set `NGINUX_SELF_PROBE=0` to disable the live self-detection probe (static loopback checks remain).
+- Non-admins receive only the allowlisted operational settings from `GET /api/settings`.
+- The session cookie carries `Domain=` only on hosts under the configured base domain.
+- Agents (MCP tools) can no longer set `certDomain`.
+- New env knobs: `NGINUX_SSE_PER_PRINCIPAL`, `NGINUX_SELF_PROBE` (see README).
+
 # NginUX v0.1.21
 
 Adversarial security, performance, and state-consistency hardening release.

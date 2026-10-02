@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -47,7 +48,8 @@ const ACME_CHALLENGE_LOCATION = `    location ^~ /.well-known/acme-challenge/ {
 /** Generate a stream (TCP/UDP) server block. Lives in the nginx `stream {}` context. */
 export function generateStreamConfig(h: ProxyHost): string {
   const udp = h.protocol === "udp";
-  const targets = [`${h.forwardHost}:${h.forwardPort}`, ...h.upstreams.split("\n").map((s) => s.trim()).filter(Boolean)];
+  const targets = [upstreamAddr(h.forwardHost, h.forwardPort), ...h.upstreams.split("\n").map((s) => s.trim()).filter(Boolean)
+    .map((t) => { const c = t.lastIndexOf(":"); return c > 0 ? upstreamAddr(t.slice(0, c), t.slice(c + 1)) : t; })];
   let pass = targets[0];
   let pool = "";
   if (targets.length > 1) {
@@ -73,9 +75,21 @@ export interface ApplyResult {
 
 /** HTML-escape for any user string reflected into a generated HTML response.
  *  Entities also neutralise quotes that would otherwise break the surrounding
- *  nginx single-quoted string. */
+ *  nginx single-quoted string, and `$` / `\` - nginx's `return code "text"` is a
+ *  complex value, so a literal `$http_cookie` or `$arg_x` would be expanded PER
+ *  REQUEST, after this escaping ran, reflecting request data unescaped into the
+ *  page. The name validator rejects both characters too; this is the sink's own
+ *  guarantee for legacy rows. (Security audit 2026-10-01.) */
 const htmlEscape = (s: string): string =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+    .replace(/\$/g, "&#36;").replace(/\\/g, "&#92;");
+
+/** `host:port` as nginx wants it in proxy_pass / server / grpc_pass: a bare IPv6
+ *  literal must be bracketed (`[::1]:3000`), everything else is emitted verbatim. */
+const upstreamAddr = (host: string, port: number | string): string =>
+  `${isIP(host.replace(/^\[|\]$/g, "")) === 6 ? `[${host.replace(/^\[|\]$/g, "")}]` : host}:${port}`;
+/** The TLS server name for proxy_ssl_name / grpc_ssl_name: never bracketed. */
+const tlsName = (host: string): string => host.replace(/^\[|\]$/g, "");
 
 /** Aggregate all SNI passthrough hosts into one stream config (route TLS by SNI,
  *  no termination) using ssl_preread + a map per listen port. */
@@ -89,7 +103,7 @@ export function generateSniPassthrough(hosts: ProxyHost[]): string {
   const blocks: string[] = ["# Managed by NginUX - SNI / TLS passthrough (no termination)"];
   for (const [port, list] of byPort) {
     const v = `sni_pass_${port}`;
-    const entries = list.map((h) => `    ${h.domain} ${h.forwardHost}:${h.forwardPort};`).join("\n");
+    const entries = list.map((h) => `    ${h.domain} ${upstreamAddr(h.forwardHost, h.forwardPort)};`).join("\n");
     blocks.push(`map $ssl_preread_server_name $${v} {
     hostnames;
     # Unknown or absent SNI must fail closed. Routing it to the first configured
@@ -126,7 +140,7 @@ export function generateHostConfig(h: ProxyHost): string {
   const portalSelfHost = isControlPlanePortalDomain(h.domain);
   const upstream = portalSelfHost
     ? CONTROL_URL.replace(/\/+$/, "")
-    : `${h.forwardScheme}://${h.forwardHost}:${h.forwardPort}`;
+    : `${h.forwardScheme}://${upstreamAddr(h.forwardHost, h.forwardPort)}`;
   const lines: string[] = [];
 
   lines.push(`# Managed by NginUX - ${h.name} (${h.domain})`);
@@ -188,11 +202,20 @@ ${ACME_CHALLENGE_LOCATION}    location / {
 
   const clientCa = join(certDir, h.domain, "client-ca.crt");
   const clientCrl = join(certDir, h.domain, "client-ca.crl");
-  const mtlsBlock = h.mtls && h.ssl && existsSync(clientCa)
+  const haveClientCa = existsSync(clientCa);
+  const mtlsBlock = h.mtls && h.ssl && haveClientCa
     ? `
     ssl_verify_client on;
     ssl_client_certificate ${clientCa};${existsSync(clientCrl) ? `\n    ssl_crl ${clientCrl};` : ""}`
     : "";
+  // mTLS is a posture promise. If the host asks for it but its client CA is not on
+  // disk (a host created without ensureClientCA, a restored backup, a deleted cert
+  // directory), nginx must NOT quietly serve the app to anyone with a browser - that
+  // is the exact failure the operator believed they had excluded. Fail closed: the
+  // app locations below return 403 until the CA exists and the config is re-applied.
+  // The write paths provision the CA (ensureClientCA) so this is a backstop, not the
+  // steady state. (Security audit 2026-10-01.)
+  const mtlsFailClosed = h.mtls && h.ssl && !haveClientCa;
   const sslBlock = h.ssl
     ? `
     ssl_certificate     ${certPath};
@@ -270,8 +293,19 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   if (h.hsts && h.ssl) {
     managedHeaders.push(`        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;`);
   }
+  // Only the exact configured control-plane target may receive the session
+  // cookie. For a public portal, `proxyPass` was pinned to CONTROL_URL above;
+  // the user-entered NAS/LAN target is never used and therefore cannot collect
+  // the bearer. A domain/port heuristic alone would not provide that guarantee.
+  const proxiesControlPlane = portalSelfHost
+    || isControlPlaneTarget(h.forwardHost, h.forwardPort, h.forwardScheme);
   // custom response headers ("Name: value" per line) - also add_header, so same scope.
-  for (const line of splitLines(h.customHeaders)) {
+  // NEVER on a host that fronts the control plane: those responses are the admin
+  // API's, delivered with the admin's session cookie, and an editor-supplied
+  // `Access-Control-Allow-Origin` / `Allow-Credentials` pair would let any third-party
+  // page read them cross-origin. The control plane sets its own security headers.
+  // (Security audit 2026-10-01.)
+  for (const line of proxiesControlPlane ? [] : splitLines(h.customHeaders)) {
     const idx = line.indexOf(":");
     // Validate again at the sink so a legacy/pre-validation DB row cannot expand
     // nginx variables (notably $http_cookie) or escape the quoted directive.
@@ -316,12 +350,6 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   // close this nginx string), so it can't inject HTML or break out of the directive.
   const safeName = htmlEscape(h.name);
 
-  // Only the exact configured control-plane target may receive the session
-  // cookie. For a public portal, `proxyPass` was pinned to CONTROL_URL above;
-  // the user-entered NAS/LAN target is never used and therefore cannot collect
-  // the bearer. A domain/port heuristic alone would not provide that guarantee.
-  const proxiesControlPlane = portalSelfHost
-    || isControlPlaneTarget(h.forwardHost, h.forwardPort, h.forwardScheme);
   // Suppress the cookie strip ONLY when the ENTIRE effective upstream set is the control
   // plane (extraTargets is emptied for such hosts above) — never when a load-balancer pool
   // could carry the session cookie to an extra, possibly attacker-chosen, target.
@@ -330,29 +358,40 @@ ${ACME_CHALLENGE_LOCATION}    location / {
   const grpcCookieStrip = keepSessionCookie ? "" : `\n        grpc_set_header Cookie $backend_cookie;`;
   const proxyTlsBlock = proxyPass.startsWith("https://") ? `
         proxy_ssl_server_name on;
-        proxy_ssl_name ${h.forwardHost};
+        proxy_ssl_name ${tlsName(h.forwardHost)};
         proxy_ssl_verify ${h.upstreamTlsVerify ? "on" : "off"};${h.upstreamTlsVerify ? `
         proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
         proxy_ssl_verify_depth 4;` : ""}` : "";
   const grpcTlsBlock = h.forwardScheme === "https" ? `
         grpc_ssl_server_name on;
-        grpc_ssl_name ${h.forwardHost};
+        grpc_ssl_name ${tlsName(h.forwardHost)};
         grpc_ssl_verify ${h.upstreamTlsVerify ? "on" : "off"};${h.upstreamTlsVerify ? `
         grpc_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
         grpc_ssl_verify_depth 4;` : ""}` : "";
 
-  const locationBody = h.maintenanceMode
-    ? `        default_type text/html;${headerBlock}
-        return 503 '<!doctype html><html><head><meta charset="utf-8"><title>Be right back</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}h1{font-size:22px}</style></head><body><div><h1>🔧 Be right back</h1><p>${safeName} is down for maintenance.</p></div></body></html>';`
-    : h.protocol === "grpc" && !portalSelfHost
-    ? `        grpc_pass ${h.forwardScheme === "https" ? "grpcs" : "grpc"}://${extraTargets.length ? proxyPass.replace(/^https?:\/\//, "") : `${h.forwardHost}:${h.forwardPort}`};
-        grpc_set_header Host $host;${grpcTlsBlock}${grpcCookieStrip}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
-`
-    : `        proxy_pass ${proxyPass};
+  // X-Forwarded-Host is pinned to nginx's own $host so the upstream (including the
+  // control plane, whose cookie realm + CSRF check read req.hostname) never sees a
+  // client-chosen value forwarded from a trusted loopback hop.
+  const forwardedHeaders = `
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;${proxyTlsBlock}${cookieStrip}${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;`;
+
+  const locationBody = mtlsFailClosed
+    ? `        # mTLS requested but the client CA is not provisioned yet - refuse rather than
+        # serve the app without client-certificate verification.
+        return 403;
+`
+    : h.maintenanceMode
+    ? `        default_type text/html;${headerBlock}
+        return 503 '<!doctype html><html><head><meta charset="utf-8"><title>Be right back</title><style>body{font-family:system-ui;background:#0d1117;color:#e6edf3;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}h1{font-size:22px}</style></head><body><div><h1>🔧 Be right back</h1><p>${safeName} is down for maintenance.</p></div></body></html>';`
+    : h.protocol === "grpc" && !portalSelfHost
+    ? `        grpc_pass ${h.forwardScheme === "https" ? "grpcs" : "grpc"}://${extraTargets.length ? proxyPass.replace(/^https?:\/\//, "") : upstreamAddr(h.forwardHost, h.forwardPort)};
+        grpc_set_header Host $host;${grpcTlsBlock}${grpcCookieStrip}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
+`
+    : `        proxy_pass ${proxyPass};${forwardedHeaders}${proxyTlsBlock}${cookieStrip}${wsBlock}${authBlock}${geoBlock}${rateLimitDirective}${bandwidthDirective}${headerBlock}${customNginx}
 ${extra ? extra + "\n" : ""}`;
 
   // Per-path routing: send specific paths to different backends. These are
@@ -383,7 +422,8 @@ ${extra ? extra + "\n" : ""}`;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;${pathCookieStrip}${pathProtections}
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;${pathCookieStrip}${pathProtections}
     }
 `;
   }).join("");
@@ -578,10 +618,14 @@ export interface ConfigPreview {
   files: ConfigFileDiff[];
 }
 
-/** Diff the config a proposed host list WOULD produce against what's live now. */
-export function previewConfigForHosts(hosts: ProxyHost[]): ConfigPreview {
+/** Diff the config a proposed host list WOULD produce against what's live now.
+ *  `baseline` (default: the on-disk managed configs) lets non-admin callers diff
+ *  against a config set regenerated from the DB instead: on-disk drift in OTHER
+ *  hosts' files (an admin's customNginx edit not yet applied, a hand-edited file)
+ *  would otherwise surface inside an editor's preview. */
+export function previewConfigForHosts(hosts: ProxyHost[], baseline?: Map<string, string>): ConfigPreview {
   const desired = buildDesiredConfigs(hosts);
-  const live = readManagedConfigs();
+  const live = baseline ?? readManagedConfigs();
   const files: ConfigFileDiff[] = [];
   const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
@@ -636,7 +680,19 @@ export function applyConfig(): Promise<ApplyResult> {
  * rather than failing - the real validation happens in the container.
  */
 async function applyConfigInner(): Promise<ApplyResult> {
-  const { rollback } = writeAllConfigs();
+  let rollback: () => void;
+  try {
+    ({ rollback } = writeAllConfigs());
+  } catch (err) {
+    // A generator/IO exception here must look like a FAILED apply, not a rejected
+    // promise: every write route does `await applyConfig()` and reverts its DB
+    // mutation only on `{ok:false, nginxAvailable:true}`. A throw used to surface as
+    // a 500 with the offending row left in place - so one bad host (e.g. a
+    // malformed preset) wedged every later apply. buildDesiredConfigs() runs before
+    // any file is touched, so nothing is half-written when it throws.
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ok: false, nginxAvailable: true, message: `Could not generate nginx configuration: ${detail}` };
+  }
 
   if (!(await nginxInstalled())) {
     // In production nginx must be present; refuse to claim success when we

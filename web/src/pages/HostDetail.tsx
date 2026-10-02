@@ -717,11 +717,11 @@ function EditForm({ draft, setDraft, onSave, onCancel, saving, error, certs, set
             <option value="sni">SNI / TLS passthrough</option>
           </select>
           {(draft.protocol === "tcp" || draft.protocol === "udp" || draft.protocol === "sni") && (
-            <input className="input" style={{ maxWidth: 160 }} type="number" placeholder={draft.protocol === "sni" ? "443" : "listen port"} value={draft.listenPort || ""} onChange={(e) => set({ listenPort: Number(e.target.value) })} />
+            <input className="input" style={{ maxWidth: 160 }} type="number" placeholder={draft.protocol === "sni" ? "8443" : "listen port"} value={draft.listenPort || ""} onChange={(e) => set({ listenPort: Number(e.target.value) })} />
           )}
         </div>
-        {(draft.protocol === "tcp" || draft.protocol === "udp") && <div className="hint">nginx listens on this port and forwards to the internal target.</div>}
-        {draft.protocol === "sni" && <div className="hint">Routes TLS by SNI ({draft.domain}) without terminating - forwards encrypted to the target.</div>}
+        {(draft.protocol === "tcp" || draft.protocol === "udp") && <div className="hint">nginx listens on this port and forwards to the internal target.{draft.protocol === "tcp" && " Ports 80, 443 and the NginUX control-plane port are owned by the HTTP proxy and cannot be used."}</div>}
+        {draft.protocol === "sni" && <div className="hint">Routes TLS by SNI ({draft.domain}) without terminating - forwards encrypted to the target. Ports 80 and 443 belong to the HTTP proxy, so pick a dedicated port (e.g. 8443) and forward it from your router.</div>}
         {!httpControls && <div className="state-note error" style={{ marginTop: 10 }}><Icon.alert /><div>Raw passthrough cannot use NginUX login, 2FA, mTLS termination, country lock, HTTP headers, or request limits. Use a separate base domain from the shared login cookie.</div></div>}
       </div>
       <div className="field">

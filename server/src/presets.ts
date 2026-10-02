@@ -210,5 +210,7 @@ export const PRESETS: Record<string, Preset> = {
 };
 
 export function getPreset(id: string): Preset {
-  return PRESETS[id] ?? PRESETS.custom;
+  // Own-key lookup: `PRESETS["__proto__"]` / `"constructor"` are truthy inherited
+  // values, not presets, and would make the generator throw on `.extraDirectives`.
+  return Object.hasOwn(PRESETS, id) ? PRESETS[id] : PRESETS.custom;
 }

@@ -231,9 +231,12 @@ test("PUT /api/hosts/:id: port-only edit that repoints the portal domain off the
   saveSettings({ ssoLoginUrl: "" }); // restore default so later tests aren't affected
 });
 
-test("POST /api/auth/login only returns redirects to enabled configured services", async () => {
-  createHost(makeHost({ id: "login-rd", name: "redirect target", domain: "safe-rd.example.com", enabled: true }));
-  const wildcard = createHost(makeHost({ id: "login-wildcard", name: "wildcard target", domain: "*.github.io", enabled: true }));
+test("POST /api/auth/login only returns redirects to enabled, login-gated configured services", async () => {
+  // The only producer of ?rd= is the nginx login gate, which exists solely on
+  // login-gated HTTP/gRPC hosts - so that is exactly the redirect allowlist (v0.1.22).
+  createHost(makeHost({ id: "login-rd", name: "redirect target", domain: "safe-rd.example.com", enabled: true, requireLogin: true }));
+  const ungated = createHost(makeHost({ id: "login-ungated", name: "ungated", domain: "open.example.com", enabled: true, requireLogin: false }));
+  const wildcard = createHost(makeHost({ id: "login-wildcard", name: "wildcard target", domain: "*.github.io", enabled: true, requireLogin: true }));
   const username = `rd_${Math.random().toString(36).slice(2)}`;
   await createUser({ username, password: "correct horse battery staple", role: "admin" });
 
@@ -248,7 +251,14 @@ test("POST /api/auth/login only returns redirects to enabled configured services
   });
   assert.equal(external.statusCode, 200);
   assert.equal(external.json().redirectTo, undefined, "a wildcard on a multi-tenant suffix must not authorize redirects");
+
+  const notGated = await post("/api/auth/login", undefined, {
+    username, password: "correct horse battery staple", returnUrl: "https://open.example.com/anything",
+  });
+  assert.equal(notGated.statusCode, 200);
+  assert.equal(notGated.json().redirectTo, undefined, "a host without the login gate never produced this rd - refuse it");
   deleteHost(wildcard.id);
+  deleteHost(ungated.id);
 });
 
 // ---------------------------------------------------------------------------

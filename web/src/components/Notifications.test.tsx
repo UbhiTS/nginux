@@ -4,10 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { Notifications } from "./Notifications.tsx";
 import { api } from "../api.ts";
 
-// The toast stack only reaches the backend via api.notifications() (mount +
-// 60s poll). Dismiss/Ignore are handled entirely client-side, so that's the
-// only method we need to stub.
-vi.mock("../api.ts", () => ({ api: { notifications: vi.fn() } }));
+// The toast stack reaches the backend via api.notifications() (mount + 60s poll)
+// and persists dismissible notice dismissals per-user via api.dismissNotifications()
+// in addition to localStorage.
+vi.mock("../api.ts", () => ({
+  api: {
+    notifications: vi.fn(),
+    dismissNotifications: vi.fn().mockResolvedValue({ ok: true, dismissed: [] }),
+  },
+}));
 
 type Notif = {
   id: string;
@@ -85,8 +90,26 @@ describe("Notifications", () => {
     expect(infoToast).toHaveAttribute("role", "status");
   });
 
-  it("hides a toast when Dismiss is clicked (no persistence)", async () => {
-    mockNotifications([warning]);
+  it("persists a dismissible toast both in localStorage and per-user via the API when Dismiss is clicked", async () => {
+    mockNotifications([info]);
+    render(<Notifications />);
+
+    const dismiss = await screen.findByRole("button", { name: "Dismiss" });
+    expect(dismiss).toHaveAttribute("title", "Dismiss — won't show again");
+
+    await userEvent.click(dismiss);
+
+    await waitFor(() =>
+      expect(screen.queryByText("New version available")).not.toBeInTheDocument(),
+    );
+    expect(
+      JSON.parse(localStorage.getItem("nginux_ignored_notifications") ?? "[]"),
+    ).toContain("n-info");
+    expect(api.dismissNotifications).toHaveBeenCalledWith(["n-info"]);
+  });
+
+  it("hides a non-dismissible critical notification only for the current view without persisting", async () => {
+    mockNotifications([critical]);
     render(<Notifications />);
 
     const dismiss = await screen.findByRole("button", { name: "Dismiss" });
@@ -95,42 +118,13 @@ describe("Notifications", () => {
     await userEvent.click(dismiss);
 
     await waitFor(() =>
-      expect(screen.queryByText("Certificate expiring soon")).not.toBeInTheDocument(),
+      expect(screen.queryByText("Proxy is down")).not.toBeInTheDocument(),
     );
-    // Dismiss is in-memory only: it must not write to the ignore store.
     expect(localStorage.getItem("nginux_ignored_notifications")).toBeNull();
+    expect(api.dismissNotifications).not.toHaveBeenCalled();
   });
 
-  it("hides a toast and persists the id when Don't show again is clicked", async () => {
-    mockNotifications([info]);
-    render(<Notifications />);
-
-    // The permanent-suppress meaning now lives in the button label (was "Ignore",
-    // with the meaning hidden in a tooltip).
-    const ignore = await screen.findByRole("button", { name: "Don't show again" });
-    expect(ignore).toHaveAttribute("title", "Suppressed for good on this browser");
-
-    await userEvent.click(ignore);
-
-    await waitFor(() =>
-      expect(screen.queryByText("New version available")).not.toBeInTheDocument(),
-    );
-    // Ignore is durable: the id lands in the persisted suppression set.
-    expect(
-      JSON.parse(localStorage.getItem("nginux_ignored_notifications") ?? "[]"),
-    ).toContain("n-info");
-  });
-
-  it("hides the suppress action for a non-dismissible notification but keeps Dismiss", async () => {
-    mockNotifications([critical]);
-    render(<Notifications />);
-
-    await screen.findByText("Proxy is down");
-    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Don't show again" })).not.toBeInTheDocument();
-  });
-
-  it("filters out notifications whose id was previously ignored", async () => {
+  it("filters out notifications whose id was previously ignored and syncs them to the server", async () => {
     localStorage.setItem("nginux_ignored_notifications", JSON.stringify(["n-info"]));
     mockNotifications([info, warning]);
     render(<Notifications />);
@@ -138,6 +132,7 @@ describe("Notifications", () => {
     // The still-active warning shows; the persisted-ignored info never does.
     expect(await screen.findByText("Certificate expiring soon")).toBeInTheDocument();
     expect(screen.queryByText("New version available")).not.toBeInTheDocument();
+    expect(api.dismissNotifications).toHaveBeenCalledWith(["n-info"]);
   });
 
   it("keeps a persistent, empty polite live region mounted when there are no notifications", async () => {

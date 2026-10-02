@@ -52,3 +52,47 @@ test("admin can read the gated routes", async () => {
   const r = await app.inject({ method: "GET", url: "/api/config/versions", headers: { cookie } });
   assert.equal(r.statusCode, 200);
 });
+
+test("POST /api/notifications/dismiss persists per-user dismissals and never suppresses non-dismissible notices", async () => {
+  const { createHost, replaceAllHosts } = await import("../src/repo.ts");
+  const { saveSettings } = await import("../src/db.ts");
+  const { makeHost } = await import("./helpers.ts");
+
+  replaceAllHosts([]);
+  saveSettings({ ssoLoginUrl: "https://auth.example.com/nginux-login", ssoCookieDomain: ".example.com", ssoForwardSecret: "" });
+  // Triggers a dismissible warning (forward-secret-missing) and a non-dismissible
+  // critical notice (stream-shared-cookie:<id>) at the same time.
+  const webHost = createHost(makeHost({ domain: "app.example.com", ssl: false, requireLogin: true }));
+  const streamHost = createHost(makeHost({ domain: "raw.example.com", protocol: "sni", listenPort: 8443, ssl: false }));
+
+  const adminA = cookieFor(makeUser("admin"));
+  const adminB = cookieFor(makeUser("admin"));
+
+  const initialRes = await app.inject({ method: "GET", url: "/api/notifications", headers: { cookie: adminA } });
+  assert.equal(initialRes.statusCode, 200);
+  const initial = initialRes.json() as Array<{ id: string; dismissible: boolean }>;
+  assert.ok(initial.some((n) => n.id === "forward-secret-missing" && n.dismissible === true));
+  const criticalId = `stream-shared-cookie:${streamHost.id}`;
+  assert.ok(initial.some((n) => n.id === criticalId && n.dismissible === false));
+
+  // Admin A dismisses both the dismissible warning and attempts to dismiss the non-dismissible critical notice.
+  const dismissRes = await app.inject({
+    method: "POST",
+    url: "/api/notifications/dismiss",
+    headers: { cookie: adminA },
+    payload: { ids: ["forward-secret-missing", criticalId, "port-forward-reminder"] },
+  });
+  assert.equal(dismissRes.statusCode, 200);
+
+  // Admin A no longer receives the dismissible warning, but STILL receives the non-dismissible critical notice.
+  const afterA = (await app.inject({ method: "GET", url: "/api/notifications", headers: { cookie: adminA } })).json() as Array<{ id: string }>;
+  assert.equal(afterA.some((n) => n.id === "forward-secret-missing"), false);
+  assert.equal(afterA.some((n) => n.id === criticalId), true);
+
+  // Admin B is unaffected by Admin A's dismissal.
+  const afterB = (await app.inject({ method: "GET", url: "/api/notifications", headers: { cookie: adminB } })).json() as Array<{ id: string }>;
+  assert.equal(afterB.some((n) => n.id === "forward-secret-missing"), true);
+
+  replaceAllHosts([]);
+  void webHost;
+});

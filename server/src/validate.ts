@@ -40,12 +40,16 @@ export function isHostPort(s: string): boolean {
   return port >= 1 && port <= 65535 && isHost(m[1]);
 }
 
-/** An IPv4/IPv6 address or CIDR (for allow/deny lists and bans). */
+/** An IPv4/IPv6 address or CIDR (for allow/deny lists and bans). The mask must be
+ *  plain decimal digits: `Number()` would also accept `""`, `1e1`, `0x8`, `+8`, all
+ *  of which nginx rejects - and a rejected ban entry wedges `nginx -t` for every
+ *  later apply. IPv6 zone ids (`fe80::1%eth0`) are likewise refused. */
 export function isIpOrCidr(s: string): boolean {
-  if (!s || /[\s;{}'"\\]/.test(s)) return false;
+  if (!s || /[\s;{}'"\\%]/.test(s)) return false;
   const [addr, cidr, extra] = s.split("/");
   if (extra !== undefined) return false;
   if (cidr !== undefined) {
+    if (!/^\d{1,3}$/.test(cidr)) return false;
     const bits = Number(cidr);
     const max = addr.includes(":") ? 128 : 32;
     if (!Number.isInteger(bits) || bits < 0 || bits > max) return false;
@@ -61,14 +65,18 @@ export function isHeaderName(s: string): boolean {
   return /^[A-Za-z0-9-]{1,128}$/.test(s);
 }
 
-/** A URL path prefix for per-path routing (no nginx metacharacters). */
+/** A URL path prefix for per-path routing (no nginx metacharacters, no `..`
+ *  segments, and `%` only as a well-formed percent-escape). */
 export function isLocationPath(s: string): boolean {
-  return /^[A-Za-z0-9/_.~%-]{1,512}$/.test(s) && s.startsWith("/");
+  return /^[A-Za-z0-9/_.~%-]{1,512}$/.test(s) && s.startsWith("/")
+    && !/(^|\/)\.\.(\/|$)/.test(s) && !/%(?![0-9A-Fa-f]{2})/.test(s);
 }
 
-/** Reject any string that could break out of an nginx directive/block. */
+/** Reject any string that could break out of an nginx directive/block, or that
+ *  nginx would expand per request inside a quoted "complex value" (`$var`) or
+ *  treat as an escape (`\`). */
 export function hasNginxMetachars(s: string): boolean {
-  return /[;{}\n\r]/.test(s);
+  return /[;{}\n\r$\\]/.test(s);
 }
 
 // ---- canonical splitters (ONE definition; the validators AND the nginx
@@ -114,6 +122,9 @@ export function isDangerousHost(host: string): boolean {
     const a = parseInt(hex[1], 16), b = parseInt(hex[2], 16);
     h = `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`;
   }
+  // RFC 8215 local-use NAT64 prefix (64:ff9b:1::/48): any address under it is a
+  // translator-side alias for some IPv4 host, so never let it be an outbound target.
+  if (/^64:ff9b:1:/.test(h)) return true;
   const nat64Zero = h.match(/^64:ff9b::([0-9a-f]{1,4})?$/);
   if (nat64Zero) {
     const b = parseInt(nat64Zero[1] || "0", 16);

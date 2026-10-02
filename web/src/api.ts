@@ -90,6 +90,11 @@ export const api = {
       body: JSON.stringify({ host, port }),
     }),
   notifications: () => req<AppNotification[]>("/notifications"),
+  dismissNotifications: (ids: string[]) =>
+    req<{ ok: boolean; dismissed: string[] }>("/notifications/dismiss", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
   presets: () => req<Preset[]>("/presets"),
   settings: () => req<Settings>("/settings"),
   saveSettings: (patch: Partial<Settings>) =>

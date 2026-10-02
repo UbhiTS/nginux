@@ -167,6 +167,34 @@ export function deleteUser(id: string): boolean {
   return removed;
 }
 
+const MAX_DISMISSED_NOTIFICATIONS = 200;
+const MAX_NOTIFICATION_ID_LEN = 256;
+
+/** Read the list of notification IDs this user has permanently dismissed. */
+export function getDismissedNotifications(userId: string): string[] {
+  const r = db.prepare("SELECT dismissedNotifications FROM users WHERE id = ?").get(userId) as Row | undefined;
+  if (!r?.dismissedNotifications) return [];
+  try {
+    const parsed = JSON.parse(String(r.dismissedNotifications));
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Record one or more notification IDs as dismissed for this user (bounded + deduplicated). */
+export function dismissNotificationsForUser(userId: string, ids: string[]): string[] {
+  const clean = ids
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.length <= MAX_NOTIFICATION_ID_LEN);
+  if (!clean.length) return getDismissedNotifications(userId);
+  const current = getDismissedNotifications(userId);
+  const merged = [...new Set([...current, ...clean])].slice(-MAX_DISMISSED_NOTIFICATIONS);
+  db.prepare("UPDATE users SET dismissedNotifications = ? WHERE id = ?")
+    .run(JSON.stringify(merged), userId);
+  return merged;
+}
+
 // ---------- 2FA ----------
 export function beginTwofaSetup(userId: string): { secret: string } {
   const secret = generateSecret();
@@ -387,6 +415,24 @@ export function parseCookie(header: string | undefined): Record<string, string> 
     // 500 every authenticated request from that browser - fall back to the raw value.
     const raw = v.join("=");
     try { out[k] = decodeURIComponent(raw); } catch { out[k] = raw; }
+  }
+  return out;
+}
+
+/** Every value sent for `name`, in header order. A browser sends ALL cookies whose
+ *  Domain/Path match, so a sibling app behind the proxy (or a stale host-only cookie)
+ *  can add a second `nginux_session`; callers try each until one resolves to a live
+ *  session instead of trusting whichever happened to be last. Bounded to 8 values so a
+ *  hostile header cannot turn one request into many session lookups. */
+export function parseCookieAll(header: string | undefined, name: string): string[] {
+  const out: string[] = [];
+  if (!header) return out;
+  for (const part of header.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k !== name) continue;
+    const raw = v.join("=");
+    try { out.push(decodeURIComponent(raw)); } catch { out.push(raw); }
+    if (out.length >= 8) break;
   }
   return out;
 }

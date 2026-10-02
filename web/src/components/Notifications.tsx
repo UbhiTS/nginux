@@ -12,12 +12,22 @@ function loadIgnored(): Set<string> {
   }
 }
 
+function persistIgnored(ids: Iterable<string>): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...ids]));
+  } catch {
+    /* private browsing / quota */
+  }
+}
+
 /** Top-right toast stack for actionable problems (proxy down, unreachable
  *  services, temporary certs, …). Polls the control plane.
- *  - Dismiss  → hides until the next session (in-memory; shows up next time).
- *  - Ignore   → suppressed for good on this browser (persisted; until the
- *               underlying condition changes and the id changes).
- *  Critical, non-dismissible notices can only be dismissed, never ignored. */
+ *  - Dismissible notices (`n.dismissible === true`) are suppressed permanently
+ *    when dismissed, persisted BOTH per-user on the server (`/api/notifications/dismiss`)
+ *    and per-browser in `localStorage` (until the underlying condition changes
+ *    and produces a new notification id).
+ *  - Critical, non-dismissible notices (`n.dismissible === false`) hide only for
+ *    the current page view so an unresolved proxy outage still warns on reload. */
 export function Notifications() {
   const [items, setItems] = useState<AppNotification[]>([]);
   const [ignored, setIgnored] = useState<Set<string>>(loadIgnored);
@@ -25,7 +35,15 @@ export function Notifications() {
 
   const load = useCallback(async () => {
     try {
-      setItems(await api.notifications());
+      const list = await api.notifications();
+      setItems(list);
+      // Backfill: if this browser already ignored a dismissible notice in
+      // localStorage before per-user server persistence existed, sync it up.
+      const local = loadIgnored();
+      const unsynced = list.filter((n) => n.dismissible && local.has(n.id)).map((n) => n.id);
+      if (unsynced.length) {
+        void Promise.resolve(api.dismissNotifications?.(unsynced)).catch(() => {});
+      }
     } catch {
       /* a transient failure shouldn't blow up the shell; retry next tick */
     }
@@ -37,14 +55,17 @@ export function Notifications() {
     return () => clearInterval(t);
   }, [load]);
 
-  const dismiss = (id: string) => setDismissed((prev) => new Set(prev).add(id));
-
-  const ignore = (id: string) => {
+  const dismiss = (n: AppNotification) => {
+    if (!n.dismissible) {
+      setDismissed((prev) => new Set(prev).add(n.id));
+      return;
+    }
     setIgnored((prev) => {
-      const next = new Set(prev).add(id);
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
+      const next = new Set(prev).add(n.id);
+      persistIgnored(next);
       return next;
     });
+    void Promise.resolve(api.dismissNotifications?.([n.id])).catch(() => {});
   };
 
   const visible = items.filter((n) => !ignored.has(n.id) && !dismissed.has(n.id));
@@ -63,14 +84,13 @@ export function Notifications() {
             <div className="toast-title">{n.title}</div>
             <div className="toast-msg">{n.message}</div>
             <div className="toast-actions">
-              <button className="toast-btn" title="Hide for now - shows up again next time" onClick={() => dismiss(n.id)}>
+              <button
+                className="toast-btn"
+                title={n.dismissible ? "Dismiss — won't show again" : "Hide for now - shows up again next time"}
+                onClick={() => dismiss(n)}
+              >
                 Dismiss
               </button>
-              {n.dismissible && (
-                <button className="toast-btn subtle" title="Suppressed for good on this browser" onClick={() => ignore(n.id)}>
-                  Don't show again
-                </button>
-              )}
             </div>
           </div>
         </div>
