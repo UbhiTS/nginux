@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import pkg from "../../package.json";
 import { routeHash, type Route } from "../App.tsx";
 import type { ProxyHost } from "../types.ts";
 import type { AuthUser } from "../api.ts";
@@ -98,7 +99,11 @@ export function Sidebar({ hosts, route, navigate, theme, user, onLogout, open = 
       <div className="brand">
         <BrandLogo className="brand-logo" />
         <div className="brand-name">
-          NginUX<small>Secure ingress, simplified</small>
+          <div className="brand-title">
+            NginUX
+            <span className="brand-ver" title={`NginUX v${pkg.version}`}>v{pkg.version}</span>
+          </div>
+          <small>Secure ingress, simplified</small>
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import pkg from "../../package.json";
 import { Sidebar } from "./Sidebar.tsx";
 import type { ProxyHost } from "../types.ts";
 import type { AuthUser } from "../api.ts";
@@ -132,6 +133,8 @@ describe("Sidebar", () => {
     // The signed-in user is shown in the footer.
     expect(screen.getByText("tarun")).toBeInTheDocument();
     expect(screen.getByText("admin")).toBeInTheDocument();
+    // Top-left brand header shows the app version badge next to NginUX.
+    expect(screen.getByText(`v${pkg.version}`)).toBeInTheDocument();
   });
 
   it("marks the active route with the active class and aria-current", () => {

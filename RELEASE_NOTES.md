@@ -1,3 +1,11 @@
+# NginUX v0.1.24
+
+Top-left sidebar header version badge (`v0.1.24`).
+
+## UI
+
+- **Sidebar brand version badge**: added a compact monospace version pill (`v0.1.24`) next to `NginUX` in the top-left sidebar header so operators can confirm the running container version at a glance from any screen.
+
 # NginUX v0.1.23
 
 30-day access-log retention and full rotated-chain log search across the Traffic Map, Live Access Log, and per-service analytics.
