@@ -281,7 +281,7 @@ export function SettingsPage({
               <Field label="Max log size (MB)" hint={<>Rotate an nginx log once it passes this size. <b>0</b> disables rotation.</>}>
                 <input className="input" type="number" min={0} value={settings.logMaxMb} onChange={(e) => update({ logMaxMb: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
               </Field>
-              <Field label="Rotated copies to keep" hint={<>Older copies beyond this are deleted. <b>0</b> just truncates.</>}>
+              <Field label="Rotated copies to keep" hint={<>Rotated files are retained up to 30 days (and searched by 7d/30d views). <b>0</b> just truncates.</>}>
                 <input className="input" type="number" min={0} value={settings.logKeepFiles} onChange={(e) => update({ logKeepFiles: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
               </Field>
             </div>
@@ -289,7 +289,7 @@ export function SettingsPage({
               <Icon.info />
               <span>
                 {settings.logMaxMb > 0
-                  ? <>Caps each on-disk log at about <b>{settings.logMaxMb * (settings.logKeepFiles + 1)} MB</b> (access, stream, error). The live traffic dashboards are in-memory, so rotation never affects them.</>
+                  ? <>Caps each on-disk log at about <b>{settings.logMaxMb * (settings.logKeepFiles + 1)} MB</b> across rotated files (pruned after 30 days). Filtering an IP on the 7d/30d traffic map searches the full retained log chain.</>
                   : <>Rotation is <b>off</b> - the nginx access/error logs will grow unbounded on the data volume.</>}
               </span>
             </div>

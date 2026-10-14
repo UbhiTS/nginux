@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, statSync, createReadStream, watchFile, openSync,
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listHosts } from "./repo.ts";
-import { readLinesReverse } from "./logtail.ts";
+import { listLogFiles, readLogChainReverse } from "./logtail.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ACCESS_LOG = process.env.NGINX_ACCESS_LOG ?? join(__dirname, "..", "data", "logs", "access.log");
@@ -246,54 +246,63 @@ export function ingest(e: LogEntry): void {
 }
 
 // ---------- queries ----------
+function filterTokens(filter: string): string[] {
+  return filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function entryMatchesTokens(e: LogEntry, tokens: string[]): boolean {
+  const host = e.host.toLowerCase();
+  const path = e.path.toLowerCase();
+  const ip = e.ip.toLowerCase();
+  const status = String(e.status);
+  const method = e.method.toLowerCase();
+  const country = e.country.toLowerCase();
+  return tokens.every((f) =>
+    host.includes(f) ||
+    path.includes(f) ||
+    ip.includes(f) ||
+    status === f ||
+    method === f ||
+    country === f,
+  );
+}
+
 export function recentLogs(filter?: string, limit = 200): LogEntry[] {
   let out = ring.slice(-limit).reverse();
   if (filter) {
-    const f = filter.toLowerCase();
-    out = out.filter((e) =>
-      e.host.toLowerCase().includes(f) ||
-      e.path.toLowerCase().includes(f) ||
-      e.ip.includes(f) ||
-      String(e.status) === f ||
-      e.method.toLowerCase() === f,
-    );
+    const tokens = filterTokens(filter);
+    if (tokens.length) out = out.filter((e) => entryMatchesTokens(e, tokens));
   }
   return out;
 }
 
-/** Search the PERSISTED access log (on disk) for lines matching `filter`,
- *  newest-first, up to `limit`. The in-memory ring only holds the last few
- *  hundred lines, so filtering it for an IP that the traffic map surfaced from
- *  the longer-window aggregates would often find nothing even though the request
- *  is recorded on disk. Reads a bounded tail so a huge log can't stall the
- *  request, and a cheap substring pre-filter avoids parsing non-matching lines. */
+/** Search the PERSISTED access log chain (`access.log`, `access.log.1`, …) for
+ *  lines matching `filter`, newest-first, up to `limit`. The in-memory ring only
+ *  holds the last few hundred lines, so filtering it for an IP that the 7d/30d
+ *  traffic map surfaced from the hour rollups would find nothing unless we walk
+ *  the persisted + rotated log files across the 30-day retention window. */
 export async function searchLog(filter: string, limit = 200): Promise<LogEntry[]> {
-  const f = filter.trim().toLowerCase();
-  if (!f) return recentLogs(undefined, limit);
-  const matches = (e: LogEntry) =>
-    e.host.toLowerCase().includes(f) || e.path.toLowerCase().includes(f) ||
-    e.ip.includes(f) || String(e.status) === f || e.method.toLowerCase() === f;
+  const tokens = filterTokens(filter);
+  if (!tokens.length) return recentLogs(undefined, limit);
   const out: LogEntry[] = [];
   const seen = new Set<string>();
   const take = (e: LogEntry) => { const k = `${e.ts}|${e.ip}|${e.path}|${e.status}`; if (!seen.has(k)) { seen.add(k); out.push(e); } };
   // Freshest matches from the in-memory ring (also covers dev, where demo traffic
   // is ingested in memory and never written to disk).
-  for (let i = ring.length - 1; i >= 0 && out.length < limit; i--) if (matches(ring[i])) take(ring[i]);
-  // Then the persisted access log - full history up to retention, newest-first,
-  // via the async bounded reverse reader. It streams the tail in chunks and we
-  // stop as soon as we have `limit` matches, so the up-to-32MB read never blocks
-  // the event loop and usually touches only a few KB. A cheap lowercase-substring
-  // pre-filter skips obvious non-matches before the JSON.parse.
+  for (let i = ring.length - 1; i >= 0 && out.length < limit; i--) {
+    if (entryMatchesTokens(ring[i], tokens)) take(ring[i]);
+  }
+  // Then the persisted access log chain (`access.log` -> `.1` -> `.2` …) newest-first,
+  // via the async bounded reverse reader. It streams chunks and stops as soon as we
+  // have `limit` matches, and a cheap lowercase-substring pre-filter skips obvious
+  // non-matches before JSON.parse.
   try {
     if (out.length < limit) {
-      // Clamp the interactive-search tail: a filter matching nothing would otherwise
-      // never hit the early-break and drain the full 32 MB (a low-priv 'report' token
-      // could amplify a tiny GET into a 32 MB disk+CPU scan). 4 MB still covers the
-      // recent window for interactive search. (Security audit 2026-07-12.)
-      const SEARCH_MAX_BYTES = 4 * 1024 * 1024;
-      for await (const t of readLinesReverse(ACCESS_LOG, SEARCH_MAX_BYTES)) {
+      const SEARCH_MAX_BYTES = 256 * 1024 * 1024;
+      for await (const t of readLogChainReverse(ACCESS_LOG, SEARCH_MAX_BYTES)) {
         if (out.length >= limit) break;
-        if (!t.toLowerCase().includes(f)) continue;
+        const lower = t.toLowerCase();
+        if (!tokens.every((tok) => lower.includes(tok))) continue;
         try {
           const j = JSON.parse(t);
           const e: LogEntry = {
@@ -301,7 +310,7 @@ export async function searchLog(filter: string, limit = 200): Promise<LogEntry[]
             status: Number(j.status ?? 0), bytes: Number(j.bytes ?? 0), bytesIn: Number(j.bytes_in ?? 0),
             ip: j.ip ?? "-", country: j.country ?? "", ua: j.ua ?? "", ms: Math.round(Number(j.ms ?? 0) * 1000) / 1000,
           };
-          if (matches(e)) take(e);
+          if (entryMatchesTokens(e, tokens)) take(e);
         } catch { /* skip malformed line */ }
       }
     }
@@ -445,7 +454,7 @@ export async function hostSummary(domain: string, range: string) {
   // for recent windows on a quiet-enough instance.
   try {
     if (!ringCoversWindow(cutoff)) {
-    for await (const t of readLinesReverse(ACCESS_LOG)) {
+    for await (const t of readLogChainReverse(ACCESS_LOG)) {
       if (!t.toLowerCase().includes(dom)) continue; // cheap pre-filter before parsing
       try {
         const j = JSON.parse(t);
@@ -715,18 +724,31 @@ export function prometheus(): string {
  *  Returns how many lines were replayed. Best-effort. */
 export function replayAccessLog(maxBytes = 64 * 1024 * 1024): number {
   try {
-    if (!existsSync(ACCESS_LOG)) return 0;
-    const size = statSync(ACCESS_LOG).size;
-    if (size <= 0) return 0;
-    const start = size > maxBytes ? size - maxBytes : 0;
-    const len = size - start;
-    const fd = openSync(ACCESS_LOG, "r");
-    const buf = Buffer.allocUnsafe(len);
-    try { readSync(fd, buf, 0, len, start); } finally { closeSync(fd); }
-    const lines = buf.toString("utf8").split("\n");
-    if (start > 0) lines.shift(); // tail-trimmed: drop the partial first line
+    const files = listLogFiles(ACCESS_LOG); // newest-first: [access.log, access.log.1, ...]
+    if (!files.length) return 0;
+    // Choose the newest slices across the rotated chain up to `maxBytes`, then
+    // replay them OLDEST-to-newest so ring + time buckets advance chronologically.
+    const slices: { file: string; start: number; len: number }[] = [];
+    let remaining = maxBytes;
+    for (const file of files) {
+      if (remaining <= 0) break;
+      let size = 0;
+      try { size = statSync(file).size; } catch { continue; }
+      if (size <= 0) continue;
+      const take = Math.min(size, remaining);
+      slices.push({ file, start: size - take, len: take });
+      remaining -= take;
+    }
+    slices.reverse();
     let n = 0;
-    for (const line of lines) { if (line) { parseLine(line); n++; } }
+    for (const { file, start, len } of slices) {
+      const fd = openSync(file, "r");
+      const buf = Buffer.allocUnsafe(len);
+      try { readSync(fd, buf, 0, len, start); } finally { closeSync(fd); }
+      const lines = buf.toString("utf8").split("\n");
+      if (start > 0) lines.shift(); // tail-trimmed: drop the partial first line
+      for (const line of lines) { if (line) { parseLine(line); n++; } }
+    }
     return n;
   } catch { return 0; }
 }

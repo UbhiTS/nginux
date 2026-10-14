@@ -15,6 +15,34 @@ const LOG_DIR = process.env.NGINX_LOG_DIR ?? dirname(ACCESS_LOG);
 const NGINX_BIN = process.env.NGINX_BIN ?? "nginx";
 const LOG_FILES = ["access.log", "stream.log", "error.log"];
 
+/** Default time-based retention horizon for rotated logs (matches the 30d analytics range). */
+export const LOG_RETENTION_DAYS = 30;
+export const LOG_RETENTION_MS = LOG_RETENTION_DAYS * 86400_000;
+
+/** Remove rotated `.N` copies that are either beyond `keep` or older than `maxAgeMs`. */
+export function pruneOldRotatedLogs(
+  file: string,
+  keep: number,
+  maxAgeMs: number = LOG_RETENTION_MS,
+  logDir: string = LOG_DIR,
+): number {
+  const path = join(logDir, file);
+  const cutoff = Date.now() - maxAgeMs;
+  let removed = 0;
+  for (let i = 1; i <= 50; i++) {
+    const candidate = `${path}.${i}`;
+    try {
+      if (!existsSync(candidate)) continue;
+      const st = statSync(candidate);
+      if (i > keep || (maxAgeMs > 0 && st.mtimeMs < cutoff)) {
+        rmSync(candidate, { force: true });
+        removed++;
+      }
+    } catch { /* ignore race */ }
+  }
+  return removed;
+}
+
 /** Rotate one log file if it's over `maxBytes`. `keep` = how many .N copies to
  *  retain (0 = truncate in place, no history). Returns true if it rotated. */
 function rotateOne(file: string, maxBytes: number, keep: number): boolean {
@@ -53,7 +81,10 @@ export function rotateLogsNow(): number {
   const maxBytes = maxMb * 1024 * 1024;
   const keep = Math.max(0, Math.floor(Number(s.logKeepFiles) || 0));
   let rotated = 0;
-  for (const f of LOG_FILES) if (rotateOne(f, maxBytes, keep)) rotated++;
+  for (const f of LOG_FILES) {
+    if (rotateOne(f, maxBytes, keep)) rotated++;
+    pruneOldRotatedLogs(f, keep);
+  }
   // Make nginx close + reopen its logs by path so it writes to the fresh files.
   // Best-effort: nginx may not be running (e.g. dev) - ignore failures.
   if (rotated) execFile(NGINX_BIN, ["-s", "reopen"], () => {});

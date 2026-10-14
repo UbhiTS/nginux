@@ -54,3 +54,39 @@ export async function* readLinesReverse(
     await fh.close();
   }
 }
+
+/** Existing log files in a rotation chain, newest-first: `[basePath, basePath.1, basePath.2, …]`. */
+export function listLogFiles(basePath: string, maxRotated = 50): string[] {
+  const out: string[] = [];
+  if (existsSync(basePath)) out.push(basePath);
+  for (let i = 1; i <= maxRotated; i++) {
+    const rotated = `${basePath}.${i}`;
+    if (existsSync(rotated)) out.push(rotated);
+  }
+  return out;
+}
+
+/** Stream complete lines newest-first across `basePath` AND its rotated `.1 .. .N`
+ *  copies, up to `maxTotalBytes` across the chain. Lets 7d/30d IP searches and
+ *  per-host analytics reach back across log rotations without stopping at the
+ *  current live file. */
+export async function* readLogChainReverse(
+  basePath: string,
+  maxTotalBytes: number = 256 * 1024 * 1024,
+  chunkSize: number = DEFAULT_CHUNK,
+  maxRotated = 50,
+): AsyncGenerator<string> {
+  let remaining = maxTotalBytes;
+  for (const file of listLogFiles(basePath, maxRotated)) {
+    if (remaining <= 0) break;
+    let size = 0;
+    try { size = statSync(file).size; } catch { continue; }
+    if (size <= 0) continue;
+    const budget = Math.min(size, remaining);
+    remaining -= budget;
+    for await (const line of readLinesReverse(file, budget, chunkSize)) {
+      yield line;
+    }
+  }
+}
+

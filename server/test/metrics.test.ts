@@ -339,3 +339,48 @@ test("trafficSeries 7d covers the full window (ceil rounding), including ~155h-o
   const sum = series.data.reduce((a, b) => a + b, 0);
   assert.ok(sum >= 1, "a ~155h-old point must fall inside the ceil-rounded 7d series (floor rounding dropped it)");
 });
+
+test("searchLog, replayAccessLog, and hostSummary traverse rotated access.log.1 / access.log.2 across 30d", async () => {
+  const accessLog = process.env.NGINX_ACCESS_LOG as string;
+  const oldIp = "198.51.100.250";
+  const rotHost = "rotated30d.example.com";
+  const tenDaysAgo = new Date(Date.now() - 10 * 86400_000).toISOString();
+  const twentyDaysAgo = new Date(Date.now() - 20 * 86400_000).toISOString();
+  writeFileSync(`${accessLog}.1`, JSON.stringify({
+    time: tenDaysAgo, host: rotHost, method: "GET", path: "/ten-days",
+    status: 200, bytes: 321, bytes_in: 64, ip: oldIp, country: "DE", ms: 0.015, ua: "Mozilla",
+  }) + "\n");
+  writeFileSync(`${accessLog}.2`, JSON.stringify({
+    time: twentyDaysAgo, host: rotHost, method: "POST", path: "/twenty-days",
+    status: 403, bytes: 123, bytes_in: 32, ip: oldIp, country: "DE", ms: 0.025, ua: "Mozilla",
+  }) + "\n");
+
+  // Single-IP filter finds both rotated entries newest-first.
+  const hits = await metrics.searchLog(oldIp);
+  assert.equal(hits.length, 2, "searchLog must traverse access.log.1 and access.log.2");
+  assert.equal(hits[0].path, "/ten-days");
+  assert.equal(hits[1].path, "/twenty-days");
+
+  // Multi-token filter (host + IP + status) narrows across rotated files.
+  const hostAndStatus = await metrics.searchLog(`${rotHost} ${oldIp} 403`);
+  assert.equal(hostAndStatus.length, 1);
+  assert.equal(hostAndStatus[0].path, "/twenty-days");
+
+  // Advance the 500-entry ring to current time (evicting the 2026-01-01 seed rows)
+  // so ringCoversWindow(30d) is false and hostSummary walks the rotated files on disk.
+  const nowIso = new Date().toISOString();
+  for (let i = 0; i < 505; i++) {
+    metrics.ingest({
+      ts: nowIso, host: "noise.example.com", method: "GET", path: `/${i}`,
+      status: 200, bytes: 10, bytesIn: 5, ip: "203.0.113.1", country: "US", ua: "x", ms: 1,
+    });
+  }
+  const hs30 = await metrics.hostSummary(rotHost, "30d");
+  assert.equal(hs30.totalRequests, 2);
+  assert.equal(hs30.topIps[0]?.key, oldIp);
+
+  // replayAccessLog also replays the rotated chain into the 30d range summary.
+  metrics.replayAccessLog();
+  const range30 = metrics.rangeSummary("30d");
+  assert.ok(range30.topCountries.some((c) => c.key === "DE" && c.topIps.some((t) => t.ip === oldIp)));
+});

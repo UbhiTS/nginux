@@ -164,5 +164,26 @@ describe("Logs", () => {
     // Typing a filter narrows the view and is reflected in the URL.
     await userEvent.type(screen.getByPlaceholderText(/Filter host, IP, status, path/), "media");
     await waitFor(() => expect(window.location.hash).toBe("#/logs/filter=media"));
+    await waitFor(() => expect(api.recentLogs).toHaveBeenCalledWith("media", 200));
+  });
+
+  it("queries persisted logs on IP click and keeps historical matches when unrelated SSE lines arrive", async () => {
+    const oldHit = makeLine({ ts: "2026-09-25T12:00:00Z", ip: "203.0.113.7", path: "/from-20d-ago" });
+    vi.mocked(api.recentLogs).mockImplementation(async (filter?: string) =>
+      filter === "203.0.113.7" ? [oldHit] : [],
+    );
+    render(<Logs />);
+    await waitFor(() => expect(api.metricsSummary).toHaveBeenCalled());
+
+    // Click the IP in the Top source IPs list.
+    await userEvent.click(await screen.findByText("203.0.113.7"));
+    expect(await screen.findByText("/from-20d-ago")).toBeInTheDocument();
+
+    // Unrelated live SSE traffic from another IP must not evict the filtered IP's history.
+    for (let i = 0; i < 5; i++) {
+      lastStream().emit("log", makeLine({ ts: `2026-10-14T00:00:0${i}Z`, ip: "198.51.100.99", path: `/noise-${i}` }));
+    }
+    expect(screen.getByText("/from-20d-ago")).toBeInTheDocument();
+    expect(screen.queryByText("/noise-0")).not.toBeInTheDocument();
   });
 });

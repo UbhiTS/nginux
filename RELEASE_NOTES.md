@@ -1,3 +1,18 @@
+# NginUX v0.1.23
+
+30-day access-log retention and full rotated-chain log search across the Traffic Map, Live Access Log, and per-service analytics.
+
+## Observability & Log Retention
+
+- **30-day access-log retention (`logKeepFiles = 6` + age pruning)**: raised default `logKeepFiles` from `2` to `6` (`50 MB` x 7 files = up to `350 MB` on disk) and added `pruneOldRotatedLogs()` inside `rotateLogsNow()` to automatically remove rotated `.N` archives older than 30 days (`LOG_RETENTION_DAYS = 30`).
+- **Full rotated-chain reverse search (`readLogChainReverse`)**: `searchLog()` (`/api/logs/recent?q=...`) and `hostSummary()` now stream newest-first across `access.log` and all rotated `.1 .. .N` files (up to `256 MB`) instead of stopping at the last `4 MB` of `access.log`. Queries also support multi-token whitespace-separated matching (`host`, `path`, `ip`, `status`, `method`, `country`).
+- **Rotated-chain startup replay**: `replayAccessLog()` now replays across rotated `.N` files oldest-to-newest up to `maxBytes`, preserving the `7d` and `30d` Traffic Map and timeseries across container restarts even immediately after a log rotation.
+- **Live Access Log server-backed filter**: clicking any source IP on the `7d` or `30d` Traffic Map (or typing in the filter / opening `#/logs/range=30d&filter=...`) now queries `/api/logs/recent?q=<filter>&limit=200` across the 30-day rotated log chain and merges matches into the Live Access Log view. While a filter is active, incoming SSE `"log"` events from non-matching IPs are ignored so live traffic never evicts filtered historical hits.
+
+## Supply Chain
+
+- Upgraded transitive dev dependencies `shell-quote` (`>=1.11.0`, GHSA-pqg4-j6r4-53mv) and `source-map-js` (`>=1.2.2`, GHSA-68fv-2mgg-jv7q).
+
 # NginUX v0.1.22
 
 Full adversarial security review (eleven independent audit passes across auth/sessions, nginx generation, the agent gateway, certs/crypto/supply chain, observability, REST routes, the web SPA and the container/CI pipeline). Every confirmed finding is fixed here and pinned by a regression test in `server/test/sec-audit-v0122.test.ts` (33 new cases; 353 server + 337 web tests green).

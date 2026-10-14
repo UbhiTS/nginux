@@ -2,10 +2,11 @@
 // synchronous 32MB access-log read. Verified against a naive reverse-split.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, utimesSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readLinesReverse } from "../src/logtail.ts";
+import { listLogFiles, readLinesReverse, readLogChainReverse } from "../src/logtail.ts";
+import { pruneOldRotatedLogs } from "../src/logrotate.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "logtail-"));
 const write = (name: string, content: string) => { const p = join(dir, name); writeFileSync(p, content); return p; };
@@ -59,6 +60,38 @@ test("maxBytes trims the tail and drops the resulting partial first line", async
 test("empty / missing file yields nothing", async () => {
   assert.deepEqual(await collect(write("empty.log", "")), []);
   assert.deepEqual(await collect(join(dir, "nope.log")), []);
+});
+
+test("readLogChainReverse walks access.log -> .1 -> .2 newest-first and honors maxTotalBytes", async () => {
+  const base = write("chain.log", "live-1\nlive-2\n");
+  write("chain.log.1", "rot1-a\nrot1-b\n");
+  write("chain.log.2", "rot2-x\nrot2-y\n");
+  assert.equal(listLogFiles(base).length, 3);
+
+  const all: string[] = [];
+  for await (const line of readLogChainReverse(base)) all.push(line);
+  assert.deepEqual(all, ["live-2", "live-1", "rot1-b", "rot1-a", "rot2-y", "rot2-x"]);
+
+  // Budget that covers only the live file + .1 (each is 14 bytes) stops before .2.
+  const bounded: string[] = [];
+  for await (const line of readLogChainReverse(base, 28)) bounded.push(line);
+  assert.deepEqual(bounded, ["live-2", "live-1", "rot1-b", "rot1-a"]);
+});
+
+test("pruneOldRotatedLogs removes rotated files older than 30 days or past keep count", () => {
+  const base = write("prune.log", "live\n");
+  const r1 = write("prune.log.1", "fresh\n");
+  const r2 = write("prune.log.2", "stale-35d\n");
+  const r3 = write("prune.log.3", "beyond-keep\n");
+  const oldSec = Math.floor((Date.now() - 35 * 86400_000) / 1000);
+  utimesSync(r2, oldSec, oldSec);
+
+  const removed = pruneOldRotatedLogs("prune.log", 2, 30 * 86400_000, dir);
+  assert.equal(removed, 2, "removes both the >30d file (.2) and the >keep file (.3)");
+  assert.equal(existsSync(base), true);
+  assert.equal(existsSync(r1), true);
+  assert.equal(existsSync(r2), false);
+  assert.equal(existsSync(r3), false);
 });
 
 process.on("exit", () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ } });

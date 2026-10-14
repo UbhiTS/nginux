@@ -415,7 +415,7 @@ const DEFAULT_SETTINGS: Settings = {
   ssoRealms: "",
   ssoForwardSecret: "",
   logMaxMb: 50,
-  logKeepFiles: 2,
+  logKeepFiles: 6,
 };
 
 // Settings fields that hold third-party credentials - never expose these to a

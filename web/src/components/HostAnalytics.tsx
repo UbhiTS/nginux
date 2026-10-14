@@ -187,32 +187,67 @@ export function HostAnalytics({ domain }: { domain: string }) {
  *  in-progress text selection); with a stable id it inserts just the new row. */
 type KeyedLine = { id: number; entry: LogEntry };
 
+function matchesHostLogFilter(e: LogEntry, f: string): boolean {
+  if (!f) return true;
+  return (
+    e.ip.toLowerCase().includes(f) ||
+    e.path.toLowerCase().includes(f) ||
+    String(e.status) === f ||
+    e.method.toLowerCase() === f ||
+    (e.country ?? "").toLowerCase() === f
+  );
+}
+
 function HostLiveLog({ domain, filter, onClearFilter }: { domain: string; filter: string; onClearFilter: () => void }) {
   const [lines, setLines] = useState<KeyedLine[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false); pausedRef.current = paused;
+  const filterRef = useRef(filter); filterRef.current = filter;
   const seqRef = useRef(0);
   const dom = domain.toLowerCase();
+  const f = filter.trim().toLowerCase();
 
   useEffect(() => {
-    let alive = true;
-    api.recentLogs(domain, 150)
-      .then((ls) => { if (alive) setLines(ls.filter((e) => e.host.toLowerCase() === dom).map((entry) => ({ id: seqRef.current++, entry }))); })
-      .catch(() => {});
     const es = new EventSource("/api/logs/stream", { withCredentials: true });
     es.addEventListener("log", (e) => {
       if (pausedRef.current) return;
       try {
         const entry: LogEntry = JSON.parse((e as MessageEvent).data);
         if (entry.host.toLowerCase() !== dom) return; // this service only
+        const activeFilter = filterRef.current.trim().toLowerCase();
+        if (activeFilter && !matchesHostLogFilter(entry, activeFilter)) return;
         setLines((p) => [{ id: seqRef.current++, entry }, ...p].slice(0, 200));
       } catch { /* ignore */ }
     });
     return () => es.close();
-  }, [domain]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dom]);
 
-  const f = filter.trim().toLowerCase();
-  const shown = f ? lines.filter(({ entry: e }) => e.ip.includes(f) || e.path.toLowerCase().includes(f) || String(e.status) === f) : lines;
+  useEffect(() => {
+    let alive = true;
+    const query = f ? `${domain} ${f}` : domain;
+    api.recentLogs(query, 150)
+      .then((ls) => {
+        if (!alive) return;
+        const forHost = ls.filter((e) => e.host.toLowerCase() === dom && matchesHostLogFilter(e, f));
+        setLines((prev) => {
+          const kept = prev.filter(({ entry }) => matchesHostLogFilter(entry, f));
+          const seen = new Set<string>();
+          const merged: KeyedLine[] = [];
+          for (const item of [...forHost.map((entry) => ({ id: seqRef.current++, entry })), ...kept]) {
+            const k = `${item.entry.ts}|${item.entry.ip}|${item.entry.path}|${item.entry.status}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            merged.push(item);
+            if (merged.length >= 200) break;
+          }
+          return merged;
+        });
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [domain, dom, f]);
+
+  const shown = f ? lines.filter(({ entry: e }) => matchesHostLogFilter(e, f)) : lines;
 
   return (
     <div className="card-pad">

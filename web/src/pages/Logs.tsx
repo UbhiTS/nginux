@@ -19,6 +19,33 @@ type Metric = (typeof METRICS)[number];
 interface LogsView { range: string; metric: Metric; filter: string; }
 const DEFAULT_VIEW: LogsView = { range: "1h", metric: "requests", filter: "" };
 
+function matchesLogFilter(e: LogEntry, rawFilter: string): boolean {
+  const tokens = rawFilter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const host = e.host.toLowerCase();
+  const path = e.path.toLowerCase();
+  const ip = e.ip.toLowerCase();
+  const status = String(e.status);
+  const method = e.method.toLowerCase();
+  const country = (e.country ?? "").toLowerCase();
+  return tokens.every((f) =>
+    host.includes(f) || path.includes(f) || ip.includes(f) || status === f || method === f || country === f,
+  );
+}
+
+function mergeLogLines(incoming: LogEntry[], existing: LogEntry[], limit = 200): LogEntry[] {
+  const seen = new Set<string>();
+  const out: LogEntry[] = [];
+  for (const e of [...incoming, ...existing]) {
+    const k = `${e.ts}|${e.ip}|${e.path}|${e.status}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(e);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 function readView(): LogsView {
   // Everything after "#/logs/" is our encoded params; tolerate a bare "#/logs".
   const seg = window.location.hash.replace(/^#\/?logs\/?/, "");
@@ -64,8 +91,10 @@ export function Logs() {
   const [homeCountry, setHomeCountry] = useState("");
   const [blockedTop, setBlockedTop] = useState<Record<string, "busy" | "done">>({});
   const pausedRef = useRef(false);
+  const filterRef = useRef(filter);
   const logCardRef = useRef<HTMLDivElement>(null);
   pausedRef.current = paused;
+  filterRef.current = filter;
 
   // Mirror range/metric/filter into the URL hash whenever they change.
   useEffect(() => { writeView({ range, metric, filter }); }, [range, metric, filter]);
@@ -101,25 +130,41 @@ export function Logs() {
   useEffect(() => {
     api.geoipStatus().then(setGeoip).catch(() => {});
     api.settings().then((s) => setHomeCountry(s.homeCountry || "")).catch(() => {});
-    api.recentLogs(undefined, 100).then(setLines).catch(() => {});
     const es = new EventSource("/api/logs/stream", { withCredentials: true });
     es.addEventListener("log", (e) => {
       if (pausedRef.current) return;
       try {
-        // Keep every line; the filter is applied at render so changing it (or
-        // clicking a map IP) instantly re-filters what's already on screen.
         const entry: LogEntry = JSON.parse((e as MessageEvent).data);
+        // While a filter (e.g. a 30d map IP) is active, ignore non-matching live
+        // traffic so background requests don't push the filtered IP's history off screen.
+        const activeFilter = filterRef.current.trim();
+        if (activeFilter && !matchesLogFilter(entry, activeFilter)) return;
         setLines((p) => [entry, ...p].slice(0, 200));
       } catch { /* ignore */ }
     });
     return () => es.close();
   }, []);
 
+  // Query the persisted 30-day log chain on the server whenever `filter` is set
+  // (via map/top-IP click, deep link, or typing in the search box), and restore
+  // the unfiltered tail when cleared.
+  useEffect(() => {
+    let alive = true;
+    const q = filter.trim();
+    api.recentLogs(q || undefined, q ? 200 : 100)
+      .then((fetched) => {
+        if (!alive) return;
+        setLines((prev) => q ? mergeLogLines(fetched, prev.filter((e) => matchesLogFilter(e, q)), 200) : mergeLogLines(fetched, prev, 200));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [filter]);
+
   // Click an IP on the traffic map -> filter the log to it, pull its history,
   // and scroll the live log into view.
   const pickIp = (ip: string) => {
     setFilter(ip);
-    api.recentLogs(ip, 200).then(setLines).catch(() => {});
+    api.recentLogs(ip, 200).then((fetched) => setLines((prev) => mergeLogLines(fetched, prev.filter((e) => matchesLogFilter(e, ip)), 200))).catch(() => {});
     setTimeout(() => logCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
   // Block an IP globally (writes the shared nginx deny-list -> all services).
@@ -136,7 +181,7 @@ export function Logs() {
 
   const f = filter.trim().toLowerCase();
   const shown = f
-    ? lines.filter((e) => e.host.toLowerCase().includes(f) || e.path.toLowerCase().includes(f) || e.ip.includes(f) || String(e.status) === f)
+    ? lines.filter((e) => matchesLogFilter(e, f))
     : lines;
 
   // Country needs the GeoIP database (nginx resolves the source IP → country only
